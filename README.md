@@ -41,7 +41,7 @@ Restart Pi and begin a new, persistent, text-only session. Then run:
 
 The doctor checks whether the extension loaded, whether the host and session are supported, and whether requests can continue. It does not call a model or alter the session.
 
-Work as usual. When Pi has enough earlier history to compact, you can run `/compact`. The same checked handover also runs when a completed turn reaches Pi's compaction threshold. After a checkpoint, `/compaction-status` shows its state and the agent can use `context_history` to search or read earlier entries on the current branch.
+Work as usual. When Pi has enough earlier history to compact, you can run `/compact`. The same checked handover also runs when a completed turn reaches Pi's compaction threshold, or earlier when the next turn could leave the writer no room for it. After a checkpoint, `/compaction-status` shows its state and the agent can use `context_history` to search or read earlier entries on the current branch.
 
 If Pi says `Nothing to compact (session too small)`, there simply is not enough older history yet. That is not an installation failure.
 

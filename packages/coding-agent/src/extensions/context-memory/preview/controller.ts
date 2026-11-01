@@ -62,6 +62,7 @@ import {
 	workNotes,
 	writerSources,
 } from "../../../../../compaction-core/src/work-notes.ts";
+import { sessionHandoverTokens } from "../../../../../compaction-core/src/writer.ts";
 import { type MemoryConfig, memoryBudget, SESSION_WRITER, selectNoteBudget, textTokens } from "../config.ts";
 import { PROJECT_CODES } from "../events.ts";
 import { CONTEXT_KEEP_NONE, CONTEXT_MEMORY_KIND, CONTEXT_MEMORY_VERSION, isRecord } from "../identity.ts";
@@ -188,9 +189,24 @@ export function piReserveTokens(
 	return value;
 }
 
-/** Pi's own token estimate, four characters per token, so the request guards and Pi's threshold share a scale. */
+/** Pi's character estimate, four characters per token, for text no response has measured yet. */
 function piTokens(text: string): number {
 	return Math.ceil(text.length / 4);
+}
+
+/**
+ * Pi's own count of the current context, the figure its compaction trigger reads: the last response's reported
+ * usage plus an estimate of what followed it. Absent until a response reports usage, as right after a checkpoint.
+ * Four characters a token overstates English prose by about a tenth and serialized code by more, so guards that
+ * estimated alone stopped requests well before Pi's trigger.
+ */
+export function measuredContextTokens(ctx: Pick<ExtensionContext, "getContextUsage">): number | undefined {
+	try {
+		const tokens = ctx.getContextUsage()?.tokens;
+		return typeof tokens === "number" && Number.isFinite(tokens) && tokens > 0 ? tokens : undefined;
+	} catch {
+		return undefined;
+	}
 }
 
 /**
@@ -374,6 +390,10 @@ export class PreviewMemoryController {
 	private readonly activeCompactions = new Set<string>();
 	private readonly stagedCompactions = new Set<string>();
 	private readonly compactionStartedAt = new Map<string, number>();
+	/** Per session: the checkpoint interval in which makeRoom last started a compaction. */
+	private readonly roomRequested = new Map<string, string>();
+	/** Per session: Pi's measured context at the last settled turn, so makeRoom can allow for a turn of that size. */
+	private readonly settledTokens = new Map<string, number>();
 	readonly hostVersion: string;
 	private activeTools: () => Tool[] = () => [];
 	/** Per session, like every other state here, so status never mixes one session's calls with another's metrics. */
@@ -1052,8 +1072,9 @@ export class PreviewMemoryController {
 			if (view) projected = applyReduction(projected, view);
 			assertToolPairs(projected);
 			const estimate =
+				measuredContextTokens(ctx) ??
 				projected.reduce((sum, message) => sum + estimateTokens(message), 0) +
-				(carriesSystemPrompt(projected) ? 0 : piTokens(ctx.getSystemPrompt()));
+					(carriesSystemPrompt(projected) ? 0 : piTokens(ctx.getSystemPrompt()));
 			const limit = requestLimit(ctx.model);
 			if (estimate > limit) throw new Error("CONTEXT_INPUT_TOO_LARGE");
 			headroom = limit - estimate;
@@ -1128,8 +1149,11 @@ export class PreviewMemoryController {
 			) {
 				throw new Error("CONTEXT_RECOVERY_MISSING: the provider payload lost the validated checkpoint");
 			}
-			// JSON escaping and tool schemas sit outside Pi's estimate, so only a payload beyond the window is stopped here.
-			if (piTokens(serialized ?? "") > ctx.model.contextWindow) throw new Error("CONTEXT_PAYLOAD_TOO_LARGE");
+			// Pi's measured count already holds the system prompt and tool schemas as the provider counted them. Before a
+			// response has reported usage, the serialized request stands in, JSON escaping included, so only a payload
+			// beyond the window is stopped.
+			if ((measuredContextTokens(ctx) ?? piTokens(serialized ?? "")) > ctx.model.contextWindow)
+				throw new Error("CONTEXT_PAYLOAD_TOO_LARGE");
 		});
 	}
 
@@ -1149,6 +1173,65 @@ export class PreviewMemoryController {
 				.find((message) => message.role !== "system");
 			return last?.role === "assistant" && (last.stopReason === "stop" || last.stopReason === "length");
 		} catch {
+			return false;
+		}
+	}
+
+	/**
+	 * The session writer continues the session's own context, so its handover needs room beside it: the note's output
+	 * reserve and the handover request. Pi's default reserve leaves 16,384 tokens, which on a 272,000-token route is
+	 * less than a handover takes, so a session that reached Pi's trigger could not compact. A settled turn whose
+	 * context, with one more turn, would leave the handover no room starts the compaction /compact would, once per
+	 * checkpoint interval. One more turn is Pi's default reserve or the growth of the turn just settled, whichever is
+	 * larger: on GPT-6 Luna a turn that read four source files added 21,000 tokens and reached the request guard
+	 * mid-turn. Returns whether it started one. A failure takes the usual path; when Pi's own trigger sits lower it
+	 * runs first and leaves nothing to do here.
+	 */
+	makeRoom(ctx: ExtensionContext): boolean {
+		try {
+			if (!this.config || this.configError || this.config.writerModel !== SESSION_WRITER || !ctx.model) return false;
+			// A one-shot run exits once its turn settles, before a compaction started here could finish; Pi's own
+			// trigger runs inside the turn and is left to it.
+			if (ctx.mode === "print" || ctx.mode === "json") return false;
+			const tokens = measuredContextTokens(ctx);
+			const window = ctx.model.contextWindow;
+			const sessionId = ctx.sessionManager.getSessionId();
+			const settled = this.settledTokens.get(sessionId);
+			if (tokens === undefined) this.settledTokens.delete(sessionId);
+			else this.settledTokens.set(sessionId, tokens);
+			if (tokens === undefined || tokens < window / 2) return false;
+			const nextTurn = Math.max(
+				DEFAULT_COMPACTION_SETTINGS.reserveTokens,
+				settled === undefined ? 0 : tokens - settled,
+			);
+			if (this.activeCompactions.has(sessionId) || this.safeInactive(ctx) || !this.thresholdReady(ctx)) return false;
+			const branch = ctx.sessionManager.getBranch();
+			const interval = checkpointInterval(branch);
+			if (this.roomRequested.get(sessionId) === interval) return false;
+			const records = asRecords(branch);
+			const previous = latestMemory(records);
+			const uncovered = writerSources(records, previous);
+			const policy = selectNoteBudget(
+				this.config,
+				memoryBudget(ctx.model, this.config).threshold,
+				compactedSourceTokens(uncovered),
+				previous ? Math.ceil(noteBytes(previous.memory.note) / 3) : 0,
+			);
+			const handover = sessionHandoverTokens({
+				maxOutputTokens: ctx.model.maxTokens,
+				previous: previous?.memory.note,
+				increments: workNotes(records, previous?.memory.coveredThrough).map((item) => item.note),
+				uncovered,
+				branch: records,
+				noteTokens: policy.hardTokens,
+				baseNoteTokens: policy.baseTokens,
+			});
+			if (tokens + nextTurn + handover <= window) return false;
+			this.roomRequested.set(sessionId, interval);
+			ctx.compact();
+			return true;
+		} catch {
+			// Advisory: Pi's own trigger and /compact remain.
 			return false;
 		}
 	}
@@ -1179,13 +1262,17 @@ export class PreviewMemoryController {
 			const last = [...projection.messages].reverse().find((message) => message.role !== "system");
 			const completed = last?.role === "assistant" && (last.stopReason === "stop" || last.stopReason === "length");
 			const readback: PreviewReadback = {};
-			const recovering =
-				this.stickyFailures.has(ctx.sessionManager.getSessionId()) ||
-				this.store.status(ctx.sessionManager, branchHash, readback).state !== "ready";
+			// status() latches a newly observed failure and fills the readback a retry's begin() reuses; a failure
+			// already sticky in this process skips it, as it always has.
+			if (!this.stickyFailures.has(ctx.sessionManager.getSessionId()))
+				this.store.status(ctx.sessionManager, branchHash, readback);
+			// A turn that ended on a provider error, an abort or a stopped request is over, not running: it is kept
+			// whole after the checkpoint, so /compact may follow it at once. Requiring a recorded failure first paused
+			// the session for nothing, as when a request guard's own notice said to run /compact.
 			const terminated =
 				last?.role === "user" ||
 				(last?.role === "assistant" && (last.stopReason === "error" || last.stopReason === "aborted"));
-			if (!last || !(completed || (recovering && terminated)) || ctx.hasPendingMessages()) {
+			if (!last || !(completed || terminated) || ctx.hasPendingMessages()) {
 				throw new Error("CONTEXT_TOOL_BOUNDARY: manual compaction requires a completed turn with no queued input");
 			}
 			if (!ctx.model || !ctx.sessionManager.getLeafId()) throw new Error("CONTEXT_NO_MODEL_OR_SOURCE");
@@ -1225,7 +1312,16 @@ export class PreviewMemoryController {
 				compactedSourceTokens(asRecords(released)),
 				previous ? Math.ceil(noteBytes(previous.memory.note) / 3) : 0,
 			);
-			const projectedMessages = [...projection.messages];
+			let projectedMessages = [...projection.messages];
+			// The unfinished turn stays verbatim after the checkpoint, so the session writer's prefix ends before it.
+			// Ending it on that turn's unanswered request led the writer to answer the request instead of writing the
+			// note. The prefix still continues the session's earlier requests, so the cache holds.
+			if (interrupted !== undefined) {
+				const first = projection.entries.find((entry) => entry.sourceEntry.id === branch[interrupted].id)
+					?.messages[0];
+				const at = first ? projectedMessages.indexOf(first) : -1;
+				if (at >= 0) projectedMessages = projectedMessages.slice(0, at);
+			}
 			while (projectedMessages.length) {
 				const tail = projectedMessages[projectedMessages.length - 1];
 				if (tail.role === "assistant" && (tail.stopReason === "error" || tail.stopReason === "aborted")) {
@@ -1240,14 +1336,17 @@ export class PreviewMemoryController {
 			);
 			assertToolPairs(prefixMessages);
 			const sessionWriter = this.config.writerModel === SESSION_WRITER;
-			// The session's ID travels with the prefix, as Pi sends it with each of the session's requests.
+			// The session's ID travels with the prefix, as Pi sends it with each of the session's requests. Pi's measured
+			// count describes the whole current context, so it stands for the prefix only when nothing was cut from it.
+			const measuredTokens = interrupted === undefined ? measuredContextTokens(ctx) : undefined;
 			const prefix = carriesSystemPrompt(prefixMessages)
-				? { messages: prefixMessages, sessionId: attempt.sessionId }
+				? { messages: prefixMessages, sessionId: attempt.sessionId, measuredTokens }
 				: {
 						systemPrompt: ctx.getSystemPrompt(),
 						messages: prefixMessages,
 						tools: this.activeTools(),
 						sessionId: attempt.sessionId,
+						measuredTokens,
 					};
 			this.lastProgress.delete(attempt.sessionId);
 			const submission = this.preparation?.enabled

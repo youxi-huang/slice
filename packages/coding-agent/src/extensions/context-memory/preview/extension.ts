@@ -249,7 +249,9 @@ export default function contextMemoryPreview(pi: ExtensionAPI): void {
 	);
 	pi.on(
 		"agent_settled",
-		live((_event, ctx) => controller.prepare(ctx)),
+		live((_event, ctx) => {
+			if (!controller.makeRoom(ctx)) controller.prepare(ctx);
+		}),
 	);
 	pi.on(
 		"session_before_switch",

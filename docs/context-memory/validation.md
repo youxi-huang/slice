@@ -1,5 +1,189 @@
 # Validation record
 
+## First use on GPT-6 Luna at Pi's defaults: the trigger, the README path, writer settings, recovery and native compaction, 2026-11-01 UTC
+
+A real-provider run, recorded apart from the synthetic evidence below. Official Pi 1.4.0 with
+`openai/gpt-6-luna` on OpenAI's API at Pi's default thinking level, `medium`, unless a row says otherwise, and every
+other Pi and Slice setting at its default. The README's path used the published `extension-v0.7.2`
+(`stock-preview+src.ae7bb53ee105c16a`), installed with `pi install` from GitHub into an empty `HOME`; everything
+else used the tree at `2b6b10f` (`stock-preview+src.8c7a262add61d776`), whose writer and request guards are the
+release's. Sessions ran in Pi's RPC mode through a local relay that counted each request's usage and refused new
+ones at the limits; bench runs held their own. The maintainer approved 700 requests, 150 minutes and $4; the runs,
+with the re-runs after the fixes below, used 696 requests, 101 minutes and about $1.25 at catalog prices.
+
+### Pi's default trigger on a 272k model: the preview stops requests first
+
+Two sessions grew turn by turn toward Pi's trigger, 272,000 - 16,384 = 255,616 tokens. One pasted English
+Markdown from this repository and Pi's documentation as user messages, about 15,000 tokens a turn; in the other
+the model read three upstream TypeScript files a turn with Pi's `read` tool.
+
+| Session | Last request sent | Stopped by | Pi's figure for the next | First `/compact` | Second `/compact` |
+| --- | ---: | --- | ---: | --- | --- |
+| Prose | 222,091 tokens | `CONTEXT_INPUT_TOO_LARGE` before the turn's first request | 237,232 | `CONTEXT_TOOL_BOUNDARY`, requests paused | `CONTEXT_WRITER_CAPACITY` with no request sent; still paused |
+| Code | 224,393 tokens in 1,054,392 bytes of JSON | `CONTEXT_PAYLOAD_TOO_LARGE` after the turn's three reads | 239,847 | `CONTEXT_TOOL_BOUNDARY`, requests paused | Committed in 9 s; the writer read 224,390 of 245,136 tokens from cache |
+
+**Neither session reached Pi's trigger, so no automatic compaction ran.** Pi decides from the usage OpenAI
+reports; the preview's two guards estimate four characters per token. `CONTEXT_INPUT_TOO_LARGE` sets that estimate
+of the projected messages against the same 255,616 line: the prose session's 1,030,655 characters came to 257,664
+estimated tokens before the system prompt, against Pi's 237,232. `CONTEXT_PAYLOAD_TOO_LARGE` sets an estimate of
+the serialized request against the whole window: escaped code ran to 4.70 bytes of JSON per token, so 224,393
+tokens read as 263,598 and the next request, after three more reads, as more than 272,000. The existing
+default-settings scenario reports 115,000 tokens of usage over a short transcript, so its estimates never approach
+either line.
+
+**Following the notice paused the session.** Both notices end `Run /compact`. Run at once, `/compact` found the
+stopped turn unfinished and paused requests durably with `CONTEXT_TOOL_BOUNDARY`, "A turn or tool call is still
+unfinished. Let it finish, then run /compact", though nothing was running. A second `/compact` may follow a
+terminated turn once a failure is recorded. In the code session it committed, and the model then answered which
+three files the first message had asked for, with four `context_history` searches. In the prose session the
+session writer's request did not fit: the prefix by Pi's estimate, the writer's 12,000-token output reserve and the
+handover instruction exceeded 272,000, and the notice asks for a writer with a larger window, which Luna in Pi does
+not have. That session cannot compact.
+
+The core's own arithmetic gives the same line offline. With a writer that cannot exceed a 272,000-token window, a
+first compaction fits at Pi's trigger only while the branch holds about 400 entries or fewer, at most 257,064
+tokens of prefix with 150 entries and 254,714 with 600, and a later compaction, carrying the previous note and its
+evidence, never fits: 249,556 with 150 entries.
+
+### The same sessions with the capacity profile
+
+Both sessions ran again from the start with the 272k route's profile from
+`scripts/context-memory-pressure-profile.mjs --context 272000 --output 32000 --model openai/gpt-6-luna`: Pi's
+`reserveTokens` 68,000 and `keepRecentTokens` 15,000 for Luna, and `keepRecentTokens` 15,000 in
+`pi-context-memory.json`, which moves Pi's trigger to 204,000.
+
+| Session | Pi's trigger ran at | Result |
+| --- | ---: | --- |
+| Prose | 209,651 | Committed in 20 s, 209,528 tokens read from cache; two more turns ran normally |
+| Code | 209,148 | `CONTEXT_NOTE_SCOPE` three times, the last two after `/compact`; the session stays paused |
+
+The guards no longer fired, and the prose session compacted as Pi's native compaction would have. The code
+session failed on a citation. Each note listed every turn's three tool outputs by ID, and each time it wrote
+`96c685d6` for the entry `96a685d6`, one character off an ID that exists. The first attempt also cited fourteen
+assistant entries that hold only tool calls. A cited ID that names no entry refuses the note, no repair covers it,
+and each retry continues the same cached prefix, so the same note came back. One session.
+
+### A paused session answers the message it stopped
+
+Earlier attempts at the two sessions above ran side by side and together passed the organization's limit of
+2,000,000 tokens per minute; OpenAI ended a turn with a rate-limit error inside a successful stream, and Pi did
+not retry. `/compact` then paused the session with `CONTEXT_TOOL_BOUNDARY`. A question sent next through RPC was stopped, but
+Pi had recorded it; in the terminal UI the preview returns input typed into a paused session to the editor. Pi
+leaves the errored and aborted replies out of a request, so the writer's handover followed an unanswered user
+question, as it would follow the request a rate limit cut off. On the second and third `/compact` Luna answered that question in 237 and 437 output
+tokens, "Part 3 was about operational guidance…", instead of writing a note, and each attempt ended
+`CONTEXT_NOTE_INVALID`. After Esc during a compaction, the stopped "Did that work?" did not prevent the next
+`/compact` from committing, so the outcome depends on what was asked.
+
+### The README's first use, in English and Chinese
+
+`pi install git:github.com/youxi-huang/slice@extension-v0.7.2` took 3.6 s into an empty `HOME`, and Pi used its
+default agent directory. The work was a small invented Node project with a failing test, a 2,600-line log and a
+requirements file; for the Chinese session the requirements were in Chinese with full-width punctuation, and every
+message was in Chinese. The model read, edited and ran tests with Pi's own tools.
+
+| | English | Chinese |
+| --- | ---: | ---: |
+| Context after the seven task turns | 13,971 | 22,962 |
+| `/compact` before the session grew | `Nothing to compact` four times | `Nothing to compact` four times |
+| Compaction after printing 2,100 log lines | 107,560 to 2,833, 14.0 s | 93,382 to 2,476, 13.7 s |
+| Writer input read from cache | 107,524 of 112,111 | 93,301 of 98,192 |
+| Questions after compaction: the test's original `FAIL` line, the check before the fix, a log value | 3 of 3 | 3 of 3 |
+| Questions after `pi -c`: the first port asked for and why it changed, the first `ERROR` line verbatim | 2 of 2 | 2 of 2 |
+
+Luna searched the log with `rg` rather than reading it, so the task alone never left history old enough for Pi to
+compact. `Nothing to compact (session too small)` is expected and documented, but the doctor answered `manual
+/compact: unknown - Ready to try` each time. After compaction the question about the original `FAIL` line and the
+check before the fix, neither still on disk, came back through `context_history`: four searches in English, and in
+Chinese a list of edits and four searches, the first in Chinese, the rest in English. The log value was read from
+the file again. The Chinese note quoted the user's ruling, full-width commas, full stop and “” quotation marks
+included, and passed the quotation check without repair: 2,835 bytes and 12 facts under a hard limit of 12,000
+bytes.
+
+### Writer settings a new user may choose
+
+`--mode writer` on P1 to P3 with `--cache cold`. Mini and nano ran through `--provider relay` pointed at
+`https://api.openai.com/v1`.
+
+| Writer | Committed | Refused | Pause, median | Cost | Current facts cited | Carried facts cited |
+| --- | ---: | --- | ---: | ---: | ---: | ---: |
+| Luna, `medium` | 16 of 16 | none | 15.7 s | $0.074 | 134 of 136 | 94 of 110 |
+| Luna, `off` | 16 of 16 | none | 7.7 s | $0.068 | 131 of 136 | 69 of 110 |
+| `gpt-5.4-mini`, `medium` | 8 of 8, one after a quotation repair | none | 27.1 s | $0.351 | 63 of 68 | 39 of 55 |
+| `gpt-5.4-nano`, `medium` | 5 of 8 | 2 `CONTEXT_NOTE_INVALID`, 1 `CONTEXT_NOTE_REPAIR_LOSS` | 14.4 s | $0.073 | 32 of 44 | 13 of 47 |
+
+Pi's default level wrote every note on its first call, with no repair. `off` halved the pause but carried a
+quarter fewer earlier facts into the next note. Nano's two
+invalid notes failed the schema for reasons other than missing sources.
+
+### Recovery from common mistakes
+
+| What happened | What the user saw | What followed |
+| --- | --- | --- |
+| Esc 2.5 s into the writer | `CONTEXT_COMPACTION_CANCELLED`, requests paused, `Run /compact to try again` | A message sent next was stopped; the next `/compact` committed and retrieval worked |
+| `writerModel` names a model Pi does not have | A warning at start; the doctor's `writer: blocked` names the fix and the restart | Requests were not paused; after the fix and a restart `/compact` committed |
+| The connection dropped on the writer's request | `CONTEXT_WRITER_FAILED`, "The writer didn't return a usable note" | The next `/compact` committed |
+| Four turns on `deepseek/deepseek-flash`, then `/model` to Luna | Nothing | `/compact` committed with Luna as the writer, 51,523 of 54,358 tokens from cache, and the pre-fix `FAIL` line came back through `context_history` |
+
+The dropped connection was reported as an unusable note, which points a user at the model rather than the network.
+
+### Slice against Pi's native compaction
+
+The bench gained `--arm native`, which runs a `probes` chain with no package loaded, so Pi's own compaction
+summarizes each cut with the same model and settings and each probe answers from Pi's summary. Both arms ran P1 to
+P3 with Luna at `medium` and `--cache cold`: Slice with `context_history` only, as a session has it, and native with
+no tools. Slice stopped at its 230-request limit with ten of P3's probes unstarted; the table pairs the 65 probes
+both arms answered.
+
+| Fixture | Slice | Native | Only Slice right | Only native right |
+| --- | ---: | ---: | ---: | ---: |
+| P1 | 26 of 30 | 22 of 30 | 6 | 2 |
+| P2 | 16 of 17 | 14 of 17 | 3 | 1 |
+| P3, first two cuts | 15 of 18 | 7 of 18 | 8 | 0 |
+| All | 57 of 65 | 43 of 65 | 17 | 3 |
+
+Slice gave no wrong answer; native gave two and answered unknown to 25 of its 75 probes. Slice's eight
+probes without a passing answer were three stopped at the six-round limit, two units that timed out, one unknown
+and two requests OpenAI refused with "Invalid prompt: your prompt was flagged as potentially violating our usage
+policy" after `context_history` had brought invented fixture text into them. All seven Slice compactions committed
+on their first attempt. Slice made 171 retrieval calls for 65 questions and used 235 requests and $0.088; native
+used 91 requests and $0.030. Pi kept the last entries of an unfinished turn verbatim and summarized the rest in a
+second call. One run each, on invented fixtures.
+
+### What this shows
+
+- On a 272k model at Pi's defaults the preview's own guards stop requests about 16,000 to 18,000 tokens before
+  Pi's trigger, by Pi's own count, so no automatic compaction runs. The notice's advice then pauses the session
+  once more, and a prose session cannot compact at all. A new Luna user meets this in the first long session.
+- The capacity profile keeps the guards from firing, but a tool-heavy session then stopped on a citation one
+  character off an existing ID, three times in a row. Refusing an unknown ID is right; that nothing repairs it and
+  that a retry repeats it leaves the user with no way forward but a new session.
+- A turn cut off by a provider error, or a message an RPC client sends into a paused session, stands unanswered,
+  and the session writer can answer it instead of writing a note.
+- Below those lines the README's path works in English and in Chinese: installation, compaction, retrieval and
+  reopening, with the writer reading its input from the session's cache.
+- Pi's default `medium` committed all sixteen P1 to P3 notes on the first call, in about 16 s each; nano refused
+  three of eight.
+- Paired with Pi's native compaction on the same model, Slice answered 57 of 65 against 43, with no wrong answer,
+  most of the difference on P3's exact values.
+
+### After the fixes
+
+The request guards now read Pi's measured count, the preview starts compaction at a settled turn before the
+session writer's handover stops fitting, `/compact` follows a terminated turn at once with the writer's prefix
+ending at the last completed turn, and sources outside the branch are dropped when every fact keeps a readable
+one and no `supersedes` ID is out of scope (see the changelog). With preview `stock-preview+src.20b65b3116304702`, before the next-turn allowance followed
+the last turn's growth, both default-settings sessions ran again from the start:
+
+| Session | What happened | Compaction |
+| --- | --- | --- |
+| Prose, 15,000 tokens a turn | After turn 18 the preview started the compaction itself, below Pi's trigger | 251,801 to about 3,000 in 29 s; the writer's request was 254,195 tokens; the session went on |
+| Code, four files a turn | Turn 12 settled at 239,128, just under the line; turn 13 added 21,000 tokens and `CONTEXT_INPUT_TOO_LARGE` stopped its second request | One `/compact` at once committed in 25 s, 260,301 to 24,398, with 238,943 tokens read from cache |
+
+No session paused, and neither needed a second `/compact`. The code session's turn was larger than the 16,384
+tokens the line then allowed for; the line now allows for a next turn as large as the one just settled, which
+would have started compaction after turn 12. That change is covered by a regression, not by a further run.
+
 ## Host-run cost limit inside a turn on OpenCode and DSH, 2026-10-30 UTC
 
 A real-provider run, recorded apart from the synthetic evidence below: the

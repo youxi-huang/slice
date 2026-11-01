@@ -95,6 +95,15 @@ far past the line, near its 922,000-token input limit. Keep measured requests be
 tokens on every host, and size capacity profiles from that line rather than
 from the model's full window ([capacity profiles](context-pressure.md)).
 
+## Rate limit
+
+On 2026-11-01 the maintainer's organization allowed GPT-6 Luna 2,000,000 tokens per
+minute. Every request counts its whole context, cached tokens included, so two
+sessions near 220,000 tokens that each send a request every few seconds pass the
+limit within a minute. OpenAI then ends the turn with a rate-limit error inside a
+successful stream, and Pi does not retry it. Run long sessions one at a time, or
+space their requests so that their contexts sum to less than the limit each minute.
+
 ## Prompt cache
 
 Pi's OpenAI provider sends the session's ID as `prompt_cache_key`, and the

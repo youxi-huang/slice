@@ -355,8 +355,8 @@ which this section carries verbatim in substance).
 ### The pipeline
 
 A candidate answer passes these stages in order; the first failure refuses
-with its class, and no stage ever rewrites content other than the two listed
-mechanical steps (envelope removal and line folding):
+with its class, and no stage ever rewrites content other than the three listed
+mechanical steps (envelope removal, citation pruning and line folding):
 
 1. **Parse.** The answer must be one JSON value, after stripping an optional
    Markdown code fence. A response that did not stop normally or that
@@ -374,7 +374,12 @@ mechanical steps (envelope removal and line folding):
    must name a readable record on the branch; otherwise `CONTEXT_NOTE_SCOPE`
    (`validateNoteContent`). `scope-diagnostics.ts` `diagnoseScope`
    distinguishes, as counts only, IDs that name no record from records with
-   no readable text.
+   no readable text. Before refusing, `withoutOutOfScope` prunes such IDs from
+   `sources` when every fact keeps at least one readable source and no
+   `supersedes` ID is out of scope, and the pruned candidate passes the
+   pipeline again (`writer.ts` `writeMemory`); it adds nothing and changes no
+   text, quote, `supersedes` or remaining source. Otherwise the refusal
+   stands. Status counts the pruned IDs as `scopeDropped`.
 5. **Quotation.** Every fact's `quote` must occur character for character in
    at least one cited source's normalized text; otherwise
    `CONTEXT_NOTE_QUOTE` (`validateNoteContent`). `quote-diagnostics.ts`
@@ -518,7 +523,13 @@ tampered rendering refuses with `CONTEXT_RECOVERY_MISSING`
 (`controller.ts` `PreviewMemoryController.context` and `.beforeRequest`) —
 and requests beyond the usable window refuse with `CONTEXT_INPUT_TOO_LARGE`
 (the guard, with the limit from `guards.ts` `requestLimit`) or
-`CONTEXT_PAYLOAD_TOO_LARGE` (the payload check in `.beforeRequest`). The
+`CONTEXT_PAYLOAD_TOO_LARGE` (the payload check in `.beforeRequest`). Both
+measure the context as the host's own compaction trigger does: by the
+provider's reported usage once a response has reported it (`controller.ts`
+`measuredContextTokens`), by a character estimate before. A host whose
+session writer continues the session's context also starts compaction at a
+settled turn before the handover stops fitting (`.makeRoom`, sized by
+`writer.ts` `sessionHandoverTokens`). The
 reference store additionally uses adapter-local classes (prefixed
 `CONTEXT_PREVIEW_`) for faults of its own marker and readback machinery;
 those are adapter identifiers outside this specification's closed set, and

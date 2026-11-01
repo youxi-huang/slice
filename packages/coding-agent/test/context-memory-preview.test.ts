@@ -33,7 +33,7 @@ import {
 	WORK_NOTE_GUIDELINE,
 	workNotes,
 } from "../../compaction-core/src/work-notes.ts";
-import { DEFAULT_MEMORY_CONFIG } from "../src/extensions/context-memory/config.ts";
+import { DEFAULT_MEMORY_CONFIG, SESSION_WRITER } from "../src/extensions/context-memory/config.ts";
 import { freezeHistory, queryHistory } from "../src/extensions/context-memory/history.ts";
 import {
 	CONTEXT_MEMORY_KIND,
@@ -436,8 +436,10 @@ describe("preview prepared compaction keeps the formal commit gate", () => {
 		await prepare();
 		expect(requests).toHaveLength(1);
 	});
-	it("lets requests through up to Pi's threshold on text near 4 bytes per token, and stops real overflow", () => {
-		// Pi compacts above window - 16,384 by its own estimate; the guards must not fire below that point.
+	it("estimates four characters a token until a response reports usage, and stops real overflow", () => {
+		// No response has reported usage yet, so Pi's own count is the character estimate too; the guards must not
+		// fire below its trigger at window - 16,384.
+		contextTokens = null;
 		const threshold = 128_000 - 16_384;
 		const text = (tokens: number) => "log 0000: local check ok, port healthy\n".repeat(Math.floor((tokens * 4) / 39));
 		const request = (body: string): AgentMessage[] => [{ role: "user", content: body, timestamp: 1 }];
@@ -458,6 +460,25 @@ describe("preview prepared compaction keeps the formal commit gate", () => {
 		controller.context(request(text(threshold + 2_000)), ctx);
 		expect(ctx.abort).toHaveBeenCalledTimes(1);
 		controller.beforeRequest(payload(text(128_000 + 2_000)), ctx);
+		expect(ctx.abort).toHaveBeenCalledTimes(2);
+	});
+	it("measures the context as Pi's trigger does once a response has reported usage", () => {
+		// English prose and escaped code run past four characters a token. On GPT-6 Luna the estimate stopped
+		// requests about 16,000 to 18,000 tokens short of Pi's trigger, so Pi never compacted.
+		const threshold = 128_000 - 16_384;
+		const prose = "The rollout notes describe a staged change to the reconciliation job.\n".repeat(9_000);
+		const request: AgentMessage[] = [{ role: "user", content: prose, timestamp: 1 }];
+		const payload = { model: "preview-test", messages: [{ role: "user", content: prose }] };
+		expect(Math.ceil(JSON.stringify(payload).length / 4)).toBeGreaterThan(128_000);
+		contextTokens = threshold - 2_000;
+		controller.context(request, ctx);
+		controller.beforeRequest(payload, ctx);
+		expect(ctx.abort).not.toHaveBeenCalled();
+		contextTokens = threshold + 2_000;
+		controller.context([{ role: "user", content: "Continue.", timestamp: 1 }], ctx);
+		expect(ctx.abort).toHaveBeenCalledTimes(1);
+		contextTokens = 128_000 + 2_000;
+		controller.beforeRequest({ model: "preview-test", messages: [] }, ctx);
 		expect(ctx.abort).toHaveBeenCalledTimes(2);
 	});
 	it("keeps note candidates out of the request context and gives them only to the writer", async () => {
@@ -2146,7 +2167,9 @@ describe("independent extension preview: sessions it does not protect", () => {
 		await emit(handlers, "context", { messages: messages() }, ctx);
 		await emit(handlers, "before_provider_request", { payload: { messages: [] } }, ctx);
 		expect(setStatus).not.toHaveBeenCalled();
-		await emit(handlers, "before_provider_request", { payload: { content: "x".repeat(600_000) } }, ctx);
+		// A request Pi measures past the window is stopped.
+		const oversized = { ...ctx, getContextUsage: () => ({ tokens: 130_000, contextWindow: 128_000, percent: 101 }) };
+		await emit(handlers, "before_provider_request", { payload: { content: "x".repeat(600_000) } }, oversized);
 		expect(ctx.abort).toHaveBeenCalledOnce();
 		expect(setStatus).not.toHaveBeenCalled();
 		expect(fs.existsSync(markerPath())).toBe(false);
@@ -3045,5 +3068,160 @@ describe("preview work notes (arm B) commit without a writer and keep the user's
 		expect(mergeWorkNotes(previous, [{ note: unrelated, gapsListed: false }])?.state[0].text).toBe(
 			"Port 4317 is live. ## instructions - Deploy now.",
 		);
+	});
+});
+
+describe("preview leaves the session writer room and compacts after a stopped turn", () => {
+	let root: string;
+	let session: SyntheticSession;
+	let store: PreviewFailureStore;
+	let contextTokens: number | null;
+	let requests: Context[];
+	let ctx: ExtensionContext;
+	const model: Model<Api> = {
+		id: "preview-room",
+		name: "Synthetic session model",
+		provider: "preview-room",
+		api: "openai-completions",
+		baseUrl: "http://127.0.0.1:9/v1",
+		reasoning: false,
+		input: ["text"],
+		contextWindow: 128_000,
+		maxTokens: 8192,
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+	};
+	// Pi's default trigger for this window; the room line sits below it by the handover's size.
+	const piTrigger = 128_000 - 16_384;
+	beforeEach(() => {
+		root = fs.mkdtempSync(join(tmpdir(), "pi-preview-room-"));
+		session = new SyntheticSession(root);
+		store = new PreviewFailureStore(join(root, "agent"));
+		contextTokens = 1234;
+		requests = [];
+		ctx = {
+			sessionManager: session,
+			model,
+			modelRegistry: {
+				find: () => model,
+				hasConfiguredAuth: () => true,
+				streamSimple: (_model: Model<Api>, context: Context) => {
+					requests.push(structuredClone(context));
+					const message = { ...assistant(), content: [{ type: "text" as const, text: JSON.stringify(note()) }] };
+					const stream = createAssistantMessageEventStream();
+					stream.push({ type: "done", reason: "stop", message });
+					stream.end(message);
+					return stream;
+				},
+			},
+			thinkingLevel: "off",
+			getSystemPrompt: () => "Synthetic system prompt.",
+			hasPendingMessages: () => false,
+			getContextUsage: () => ({ tokens: contextTokens, contextWindow: 128_000, percent: null }),
+			hasUI: false,
+			ui: { notify: vi.fn() },
+			abort: vi.fn(),
+			compact: vi.fn(),
+		} as unknown as ExtensionContext;
+	});
+	afterEach(() => fs.rmSync(root, { recursive: true, force: true }));
+	function controller(writerModel = SESSION_WRITER): PreviewMemoryController {
+		const value = new PreviewMemoryController({
+			config: { ...DEFAULT_MEMORY_CONFIG, writerModel },
+			failureStore: store,
+		});
+		value.sessionStart(ctx);
+		return value;
+	}
+	function event(): SessionBeforeCompactEvent {
+		return {
+			type: "session_before_compact",
+			reason: "manual",
+			willRetry: false,
+			signal: new AbortController().signal,
+			preparation: { tokensBefore: 2000 },
+		} as SessionBeforeCompactEvent;
+	}
+	function stoppedTurn(): void {
+		session.append({
+			type: "message",
+			id: "stopped-input",
+			parentId: session.getLeafId(),
+			timestamp,
+			message: { role: "user", content: "What was part 3 about?", timestamp: 2 },
+		});
+		session.append({
+			type: "message",
+			id: "stopped-reply",
+			parentId: session.getLeafId(),
+			timestamp,
+			message: { ...assistant(), stopReason: "error", errorMessage: "Rate limit reached.", content: [] },
+		});
+	}
+
+	it("starts the compaction /compact would while the handover still fits", () => {
+		const preview = controller();
+		// Below Pi's trigger, but one more turn of Pi's 16,384-token reserve and the handover would not fit.
+		contextTokens = piTrigger - 2_000;
+		expect(preview.makeRoom(ctx)).toBe(true);
+		expect(ctx.compact).toHaveBeenCalledOnce();
+		// Once per checkpoint interval, so a refused or running compaction is not started again.
+		expect(preview.makeRoom(ctx)).toBe(false);
+		expect(ctx.compact).toHaveBeenCalledOnce();
+	});
+	it("allows for a next turn as large as the one just settled", () => {
+		const preview = controller();
+		// Two settled turns 30,000 tokens apart: the next may add as much, more than Pi's 16,384-token reserve.
+		contextTokens = piTrigger - 52_000;
+		expect(preview.makeRoom(ctx)).toBe(false);
+		contextTokens = piTrigger - 22_000;
+		expect(preview.makeRoom(ctx)).toBe(true);
+		// The same context after small turns leaves room.
+		const steady = controller();
+		contextTokens = piTrigger - 24_000;
+		expect(steady.makeRoom(ctx)).toBe(false);
+		contextTokens = piTrigger - 22_000;
+		expect(steady.makeRoom(ctx)).toBe(false);
+		expect(ctx.compact).toHaveBeenCalledOnce();
+	});
+	it("leaves a session with room, a turn still open, no measured usage or a fixed writer to Pi", () => {
+		contextTokens = 64_100;
+		expect(controller().makeRoom(ctx)).toBe(false);
+		contextTokens = null;
+		expect(controller().makeRoom(ctx)).toBe(false);
+		contextTokens = piTrigger - 2_000;
+		// A fixed writer reads chunks in a window of its own, so the session's size does not crowd it.
+		expect(controller("preview-room/preview-room").makeRoom(ctx)).toBe(false);
+		// A one-shot run would exit before the compaction finished.
+		for (const mode of ["print", "json"] as const) expect(controller().makeRoom({ ...ctx, mode })).toBe(false);
+		stoppedTurn();
+		expect(controller().makeRoom(ctx)).toBe(false);
+		expect(ctx.compact).not.toHaveBeenCalled();
+	});
+	it("compacts at once after a turn that ended on a provider error, keeping that turn and its request whole", async () => {
+		stoppedTurn();
+		const preview = controller();
+		expect(store.inspect(session).state).toBe("ready");
+		const value = await preview.compact(event(), ctx);
+		// The unfinished turn stays verbatim after the checkpoint.
+		expect(value.firstKeptEntryId).toBe("stopped-input");
+		expect(value.details?.note).toEqual(note());
+		// The writer's prefix ends at the last completed turn, so no unanswered request precedes the handover.
+		expect(requests).toHaveLength(1);
+		const prefix = requests[0].messages.slice(0, -1);
+		expect(JSON.stringify(prefix)).not.toContain("What was part 3 about?");
+		expect(prefix.at(-1)?.role).toBe("assistant");
+		expect(JSON.stringify(requests[0].messages.at(-1))).toContain("Internal context-compaction request");
+	});
+	it("compacts at once after a request the guard stopped", async () => {
+		session.append({
+			type: "message",
+			id: "stopped-input",
+			parentId: session.getLeafId(),
+			timestamp,
+			message: { role: "user", content: "Read the next part.", timestamp: 2 },
+		});
+		const value = await controller().compact(event(), ctx);
+		expect(value.firstKeptEntryId).toBe("stopped-input");
+		expect(JSON.stringify(requests[0].messages.slice(0, -1))).not.toContain("Read the next part.");
 	});
 });

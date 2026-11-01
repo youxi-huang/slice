@@ -103,6 +103,12 @@ export interface SessionPrefix {
 	tools?: readonly Tool[];
 	/** The session's ID, which Pi sends with every request of the session. */
 	sessionId?: string;
+	/**
+	 * Pi's count of this context from the provider's reported usage, when the prefix is the whole current context and a
+	 * response has reported usage. Four characters a token overstates English prose by about a tenth, so the estimate
+	 * alone can refuse a handover that fits.
+	 */
+	measuredTokens?: number;
 }
 
 export interface WriteMemoryOptions {
@@ -190,12 +196,13 @@ function piTransport(options: WriteMemoryOptions): WriterTransport<PiWriterReque
 		maxOutputTokens: model.maxTokens,
 		...(role === "session" && prefix
 			? {
-					// Same estimator Pi uses for context accounting, so images count at their flat estimate, not as
-					// base64 text.
+					// The provider's count when Pi has one; otherwise Pi's estimator, so images count at their flat
+					// estimate, not as base64 text.
 					prefixTokens: () =>
+						prefix.measuredTokens ??
 						textTokens(prefix.systemPrompt ?? "") +
-						prefix.messages.reduce((sum, message) => sum + estimateTokens(message), 0) +
-						textTokens(JSON.stringify(prefix.tools ?? [])),
+							prefix.messages.reduce((sum, message) => sum + estimateTokens(message), 0) +
+							textTokens(JSON.stringify(prefix.tools ?? [])),
 				}
 			: {}),
 		request: (request: WriterRequest): PiWriterRequest => {

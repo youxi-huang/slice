@@ -518,7 +518,7 @@ describe("secret filter", () => {
 });
 
 describe("excerpts in the preview", () => {
-	function context(session: Session, window = model.contextWindow): ExtensionContext {
+	function context(session: Session, window = model.contextWindow, tokens: number | null = 1234): ExtensionContext {
 		const value = {
 			sessionManager: session,
 			hasUI: false,
@@ -528,7 +528,7 @@ describe("excerpts in the preview", () => {
 			modelRegistry: { find: () => undefined, hasConfiguredAuth: () => false },
 			thinkingLevel: "off",
 			getSystemPrompt: () => SYSTEM_PROMPT,
-			getContextUsage: () => ({ tokens: 1234, contextWindow: window, percent: 1 }),
+			getContextUsage: () => ({ tokens, contextWindow: window, percent: 1 }),
 			hasPendingMessages: () => false,
 			waitForIdle: async () => {},
 		};
@@ -643,7 +643,8 @@ describe("excerpts in the preview", () => {
 		const messages = near.messages();
 		const estimate =
 			messages.reduce((sum, message) => sum + estimateTokens(message), 0) + Math.ceil(SYSTEM_PROMPT.length / 4);
-		const tight = context(near, DEFAULT_COMPACTION_SETTINGS.reserveTokens + estimate + 10);
+		// Pi measures the request at its estimate; the window leaves ten tokens of headroom.
+		const tight = context(near, DEFAULT_COMPACTION_SETTINGS.reserveTokens + estimate + 10, estimate);
 		const limited = controller({ enabled: true });
 		limited.sessionStart(tight);
 		expect(limited.context(messages, tight)).toBe(messages);

@@ -48,7 +48,7 @@ import {
 	schemaCounts,
 	schemaFailureMessage,
 } from "./schema-diagnostics.ts";
-import { diagnoseScope, type ScopeCounts } from "./scope-diagnostics.ts";
+import { diagnoseScope, type ScopeCounts, withoutOutOfScope } from "./scope-diagnostics.ts";
 import {
 	applySourcesRepair,
 	type CitableEvidence,
@@ -167,6 +167,8 @@ export interface WriterProgress {
 	quotations?: QuoteCounts;
 	/** Citations of the first candidate refused on scope that name no entry or an unreadable one; counts only. */
 	scope?: ScopeCounts;
+	/** Source IDs dropped from candidates because they named no entry or an unreadable one. */
+	scopeDropped?: number;
 	/** Facts without sources in the first candidate refused on the schema, by section; counts only. */
 	schema?: SchemaCounts;
 	/** The compaction's one repair, when it ran: for note size, quotations or missing sources. */
@@ -529,6 +531,7 @@ export async function writeMemory<TRequest, TResponse extends WriterResponse>(
 	const calls: WriterCallDetail[] = [];
 	let quotations: QuoteCounts | undefined;
 	let scope: ScopeCounts | undefined;
+	let scopeDropped = 0;
 	let schema: SchemaCounts | undefined;
 	let repairKind: WriterProgress["repairKind"];
 	let quotationRepair: QuoteRepairOutcome | undefined;
@@ -545,6 +548,7 @@ export async function writeMemory<TRequest, TResponse extends WriterResponse>(
 			...(usages.length ? { usage: sumMemoryUsage(usages) } : {}),
 			...(quotations ? { quotations: { ...quotations } } : {}),
 			...(scope ? { scope: structuredClone(scope) } : {}),
+			...(scopeDropped ? { scopeDropped } : {}),
 			...(schema ? { schema: structuredClone(schema) } : {}),
 			...(repairKind ? { repairKind } : {}),
 			...(quotationRepair ? { quotationRepair: { ...quotationRepair } } : {}),
@@ -678,6 +682,16 @@ export async function writeMemory<TRequest, TResponse extends WriterResponse>(
 			// The schema check precedes the scope and quotation checks, so the value is a complete note in both.
 			if (error instanceof Error && error.message.startsWith("CONTEXT_NOTE_SCOPE")) {
 				scope ??= diagnoseScope(value as MemoryNote, options.branch);
+				// A citation that names no entry, such as an ID one character off, or an entry with nothing to read is
+				// not evidence. On GPT-6 Luna one such ID beside three valid ones refused the whole note and came back on
+				// every retry. When every fact keeps a valid source and no supersedes ID is out of scope, the note is
+				// checked again without those sources; otherwise the refusal stands. Nothing is added here.
+				const pruned = withoutOutOfScope(value as MemoryNote, options.branch);
+				if (pruned) {
+					scopeDropped += pruned.dropped;
+					report();
+					return validateCandidate(pruned.note, repaired);
+				}
 				report();
 				throw error;
 			}
@@ -947,6 +961,31 @@ async function writeWithSession<TRequest, TResponse extends WriterResponse>(
 	signal.throwIfAborted();
 	const note = await accept(response);
 	return { note, chunkCount: 1 };
+}
+
+/**
+ * What the session writer's handover adds to the session's own context: the output it reserves and the smallest
+ * handover request, the one the capacity check above falls back to, with bare manifest IDs and no quotable block.
+ * A host that starts compaction while its context plus this figure still fits the window leaves the writer room.
+ */
+export function sessionHandoverTokens(
+	options: Pick<
+		WriteMemoryOptions,
+		"previous" | "increments" | "uncovered" | "branch" | "noteTokens" | "baseNoteTokens" | "activeRequests"
+	> & { maxOutputTokens: number },
+): number {
+	const noteTokens = Math.min(options.noteTokens, MAX_NOTE_TOKENS);
+	const writeOptions: WriteMemoryOptions = {
+		...options,
+		config: { noteRepair: false },
+		noteTokens,
+		baseNoteTokens: Math.min(options.baseNoteTokens ?? noteTokens, noteTokens),
+		signal: new AbortController().signal,
+	};
+	const sources = options.uncovered.filter((entry) => sourceText(entry).length > 0);
+	return (
+		outputBudget(options.maxOutputTokens, noteTokens) + textTokens(handoverInstruction(writeOptions, sources, 0, []))
+	);
 }
 
 export interface QuotableOriginal {
