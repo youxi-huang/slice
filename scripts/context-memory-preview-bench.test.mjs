@@ -155,6 +155,10 @@ test("--provider openai is a provider run on the official API, and the long-rout
 		[["--mode", "probes", "--probe-conditions", "tools"], /--probe-conditions takes history, none or both/],
 		[["--mode", "writer", "--max-input-tokens", "0"], /--max-input-tokens must be positive/],
 		[["--mode", "writer", "--max-input-tokens", "many"], /--max-input-tokens must be positive/],
+		// The native control arm loads no package, so it has no context_history and no writer to measure.
+		[["--mode", "probes", "--arm", "pi"], /--arm must be slice or native/],
+		[["--mode", "probes", "--arm", "native"], /--arm native serves only --mode probes with --probe-conditions none/],
+		[["--mode", "writer", "--arm", "native", "--probe-conditions", "none"], /--arm native serves only --mode probes/],
 	]) {
 		const result = bench(...flags);
 		assert.notEqual(result.status, 0, flags.join(" "));

@@ -42,6 +42,8 @@ import { checkpointRecords, equivalenceLine, errorClasses } from "./context-memo
 // rounds on a 272k route. --probe-conditions history runs only the condition with context_history, as a session has it.
 // --compactions-only, in probes mode, runs a chain's warm-ups and compactions and no probe, for a run that measures the
 // writer alone after the probes were measured.
+// --arm native, in probes mode with --probe-conditions none, loads no package: Pi's own compaction summarizes each cut
+// and the probes answer from its summary. It is the control a Slice run's history condition compares with.
 // --max-input-tokens N stops the run once any request reports more than N input tokens, fresh, cached and
 // cache-written together, as OpenAI prices a request against its long-context line. No unit starts after it.
 // Output files hold counts, codes and timings. answers.jsonl keeps the synthetic probe replies for inspection.
@@ -76,7 +78,7 @@ function argument(name, fallback) {
 	if (index >= 0 && args[index + 1] !== undefined) return args[index + 1];
 	if (fallback !== undefined) return fallback;
 	throw new Error(
-		`Missing ${name}. Usage: node --experimental-strip-types ${script} --package-dir <package> --stock-root <official Pi> --output-dir <dir> --mode writer|probes|smoke|repair [--provider loopback|deepseek|deepseek-local|openai|relay --base-url https://... [--relay-model provider/id --relay-id id]] [--fixtures P1,P2,P3] [--attempts 8] [--chain-attempts 4] [--cache warm|cold|session] [--cuts 1,3,5] [--probe-conditions history,none] [--compactions-only] [--max-input-tokens N] [--thinking high] [--concurrency 1] [--label name] [--session-settings ${SESSION_SWITCHES.join("|")}=on|off,...] [--control label] [--keep-sessions] [--unit-minutes 10] [--max-requests N --max-minutes N --max-cost-usd N] [--equivalence-out <file>]`,
+		`Missing ${name}. Usage: node --experimental-strip-types ${script} --package-dir <package> --stock-root <official Pi> --output-dir <dir> --mode writer|probes|smoke|repair [--provider loopback|deepseek|deepseek-local|openai|relay --base-url https://... [--relay-model provider/id --relay-id id]] [--fixtures P1,P2,P3] [--attempts 8] [--chain-attempts 4] [--cache warm|cold|session] [--cuts 1,3,5] [--probe-conditions history,none] [--compactions-only] [--max-input-tokens N] [--thinking high] [--concurrency 1] [--label name] [--arm slice|native] [--session-settings ${SESSION_SWITCHES.join("|")}=on|off,...] [--control label] [--keep-sessions] [--unit-minutes 10] [--max-requests N --max-minutes N --max-cost-usd N] [--equivalence-out <file>]`,
 	);
 }
 
@@ -327,7 +329,9 @@ async function worker() {
 	const cwd = action.cwd;
 	mkdirSync(agentDir, { recursive: true });
 	mkdirSync(cwd, { recursive: true });
-	writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ packages: [packageDir], cacheWarming: "off", defaultTools: [], compaction: { keepRecentTokens: 0 } }));
+	// The native arm loads no package, so Pi's own compaction summarizes each cut with the same model and settings.
+	const native = action.arm === "native";
+	writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ packages: native ? [] : [packageDir], cacheWarming: "off", defaultTools: [], compaction: { keepRecentTokens: 0 } }));
 	let commandOutput;
 	const diagnostics = [];
 	for (const level of ["log", "warn", "error"]) {
@@ -456,8 +460,8 @@ async function worker() {
 	const loader = new stock.DefaultResourceLoader({ cwd, agentDir, settingsManager, noSkills: true, noPromptTemplates: true, noThemes: true, noContextFiles: true });
 	await loader.reload();
 	const loaded = loader.getExtensions();
-	if (loaded.errors.length || !loaded.extensions.some((extension) => extension.path.startsWith(packageDir)))
-		throw new Error(`The preview package did not load: ${JSON.stringify(loaded.errors).slice(0, 300)}`);
+	if (loaded.errors.length || loaded.extensions.some((extension) => extension.path.startsWith(packageDir)) === native)
+		throw new Error(native ? "The native arm loaded the preview package" : `The preview package did not load: ${JSON.stringify(loaded.errors).slice(0, 300)}`);
 	const sessionManager = stock.SessionManager.open(action.sessionFile);
 	const thinkingLevel = action.provider === "loopback" ? "off" : action.thinking;
 	const { session } = await stock.createAgentSession({ cwd, agentDir, modelRuntime: runtime, model, thinkingLevel, sessionManager, settingsManager, resourceLoader: loader, noTools: "builtin" });
@@ -479,23 +483,33 @@ async function worker() {
 		const contextBytes = condensedBytes(readLines(action.sessionFile));
 		const started = performance.now();
 		let error;
+		let compacted;
 		try {
-			await session.compact();
+			compacted = await session.compact();
 		} catch (cause) {
 			error = String(cause?.message ?? cause).slice(0, 200);
 		}
-		const after = await status();
+		const after = native ? {} : await status();
 		const writer = after.lastWriter ?? {};
+		// Pi's own checkpoint: the session's last entry is a compaction this package did not write.
+		const nativeCheckpoint = native ? readLines(action.sessionFile).at(-1) : undefined;
 		result = {
-			ok: error === undefined && after.lastCompaction?.diskConfirmed === true,
+			ok: error === undefined && (native ? nativeCheckpoint?.type === "compaction" && nativeCheckpoint.details?.kind !== "pi-context-memory" : after.lastCompaction?.diskConfirmed === true),
+			...(native && nativeCheckpoint?.type === "compaction" ? { nativeSummaryBytes: Buffer.byteLength(nativeCheckpoint.summary ?? "") } : {}),
 			...(error ? { error } : {}),
 			code: after.code ?? null,
 			ms: Math.round(performance.now() - started),
-			writerCalls: writer.writerCalls ?? 0,
+			// Pi summarizes a split turn in a second call.
+			writerCalls: native ? (compacted ? (nativeCheckpoint?.summary?.includes("**Turn Context (split turn):**") ? 2 : 1) : 0) : (writer.writerCalls ?? 0),
 			phases: (writer.writerCallDetails ?? []).map((call) => call.phase),
 			// Per call: the effort asked for, the reasoning the request carried, how it ended, the schema envelope
 			// removed from its note and its tokens; input is null when the call carried no usage report.
-			calls: (writer.writerCallDetails ?? []).map((call) => ({ phase: call.phase, ms: call.ms ?? null, effort: call.effort ?? null, sent: call.sent ?? null, stopReason: call.stopReason ?? null, envelope: call.envelope ?? null, input: call.usage?.input ?? null, cacheRead: call.usage?.cacheRead ?? null, cacheWrite: call.usage?.cacheWrite ?? null, output: call.usage?.output ?? null, reasoning: call.usage?.reasoning ?? null })),
+			// The native arm's summary is one entry, so --max-input-tokens and largestInput see Pi's own call too.
+			calls: native
+				? compacted?.usage
+					? [{ phase: "native", ms: null, effort: null, sent: null, stopReason: null, envelope: null, input: compacted.usage.input ?? null, cacheRead: compacted.usage.cacheRead ?? null, cacheWrite: compacted.usage.cacheWrite ?? null, output: compacted.usage.output ?? null, reasoning: compacted.usage.reasoning ?? null }]
+					: []
+				: (writer.writerCallDetails ?? []).map((call) => ({ phase: call.phase, ms: call.ms ?? null, effort: call.effort ?? null, sent: call.sent ?? null, stopReason: call.stopReason ?? null, envelope: call.envelope ?? null, input: call.usage?.input ?? null, cacheRead: call.usage?.cacheRead ?? null, cacheWrite: call.usage?.cacheWrite ?? null, output: call.usage?.output ?? null, reasoning: call.usage?.reasoning ?? null })),
 			// `complete` when the compaction committed a prepared candidate instead of calling the writer.
 			path: after.lastCompaction?.path ?? null,
 			repairKind: writer.repairKind ?? null,
@@ -505,7 +519,7 @@ async function worker() {
 			quotationRepair: writer.quotationRepair ?? null,
 			toolCalls: writer.toolCallResponses ?? 0,
 			toolCallDeclined: writer.toolCallDeclined ?? false,
-			usage: writer.usage ?? null,
+			usage: native ? (compacted?.usage ?? null) : (writer.usage ?? null),
 			pauseMs: after.lastCompaction?.pauseMs ?? null,
 			// /compaction-status's content-free reduction counts over the branch, null while previewReduction is off.
 			reduction: after.reduction ?? null,
@@ -566,7 +580,7 @@ async function worker() {
 					return { operation: block.arguments?.operation ?? "invalid", entryId: typeof block.arguments?.entryId === "string" ? block.arguments.entryId : null, callBytes: Buffer.byteLength(JSON.stringify({ tool: block.name, arguments: block.arguments })), returnedBytes: Buffer.byteLength(returned) };
 				}),
 		);
-		const after = await status();
+		const after = native ? {} : await status();
 		result = {
 			activeTools,
 			reached: rounds > 0,
@@ -623,6 +637,11 @@ async function parent() {
 	const compactionsOnly = args.includes("--compactions-only");
 	const maxInputTokens = args.includes("--max-input-tokens") ? Number(argument("--max-input-tokens")) : Number.POSITIVE_INFINITY;
 	const label = argument("--label", "run");
+	// --arm native runs the same chain with Pi's own compaction and no package: the control a Slice run compares with.
+	const arm = argument("--arm", "slice");
+	if (!["slice", "native"].includes(arm)) throw new Error("--arm must be slice or native");
+	if (arm === "native" && (mode !== "probes" || probeConditions.join() !== "none"))
+		throw new Error("--arm native serves only --mode probes with --probe-conditions none: without the package there is no context_history");
 	const unitMinutes = Number(argument("--unit-minutes", "10"));
 	if (!(unitMinutes > 0)) throw new Error("--unit-minutes must be positive");
 	// The preview switches a run sets, such as previewReduction=on for a candidate, written into every unit's
@@ -711,7 +730,7 @@ async function parent() {
 		// prefix after a few hundred tokens; a warm run shares one directory, as one user's session does.
 		const cwd = join(runDir, "cwd", cache === "cold" ? id : "shared");
 		writeUnitSettings(agentDir, unitSettings);
-		const encoded = Buffer.from(JSON.stringify({ ...action, cwd, ...(action.provider === "relay" ? { baseUrl, relay } : {}), ...(equivalenceOut ? { equivalence: true } : {}) })).toString("base64url");
+		const encoded = Buffer.from(JSON.stringify({ ...action, arm, cwd, ...(action.provider === "relay" ? { baseUrl, relay } : {}), ...(equivalenceOut ? { equivalence: true } : {}) })).toString("base64url");
 		const child = spawn(process.execPath, [script, "--worker", "--action", encoded, "--package-dir", packageDir, "--stock-root", stockRoot], { cwd: runDir, env: environment(agentDir), stdio: ["ignore", "pipe", "pipe"] });
 		let stdout = "";
 		let stderr = "";
@@ -906,7 +925,7 @@ async function parent() {
 	}
 
 	const shown = Object.fromEntries(Object.entries(limits).map(([name, value]) => [name, Number.isFinite(value) ? value : "unlimited"]));
-	const report = { label, mode, provider, model: provider === "loopback" ? LOOPBACK.id : relay ? `${relay.model.provider}/${relay.id}` : `${MEASURED[provider].provider}/${MEASURED[provider].id}`, ...(relay && relay.id !== relay.model.id ? { catalogModel: `${relay.model.provider}/${relay.model.id}` } : {}), ...(baseUrl ? { endpoint: new URL(baseUrl).host } : provider === "openai" ? { endpoint: OPENAI_HOST } : {}), thinking, cache, ...(cuts ? { cuts } : {}), ...(mode === "probes" ? { probeConditions, compactionsOnly } : {}), ...(mode === "writer" || mode === "repair" ? { attempts } : {}), ...(mode === "probes" ? { chainAttempts } : {}), concurrency, build: build.buildId ?? build.build ?? null, piVersion: hostVersion, fixtures, sessionSettings, unitSettings: Object.keys(unitSettings).length ? unitSettings : null, control, limits: { ...shown, inputTokensPerRequest: Number.isFinite(maxInputTokens) ? maxInputTokens : "unlimited" } };
+	const report = { label, mode, provider, model: provider === "loopback" ? LOOPBACK.id : relay ? `${relay.model.provider}/${relay.id}` : `${MEASURED[provider].provider}/${MEASURED[provider].id}`, ...(relay && relay.id !== relay.model.id ? { catalogModel: `${relay.model.provider}/${relay.model.id}` } : {}), ...(baseUrl ? { endpoint: new URL(baseUrl).host } : provider === "openai" ? { endpoint: OPENAI_HOST } : {}), thinking, cache, arm, ...(cuts ? { cuts } : {}), ...(mode === "probes" ? { probeConditions, compactionsOnly } : {}), ...(mode === "writer" || mode === "repair" ? { attempts } : {}), ...(mode === "probes" ? { chainAttempts } : {}), concurrency, build: build.buildId ?? build.build ?? null, piVersion: hostVersion, fixtures, sessionSettings, unitSettings: Object.keys(unitSettings).length ? unitSettings : null, control, limits: { ...shown, inputTokensPerRequest: Number.isFinite(maxInputTokens) ? maxInputTokens : "unlimited" } };
 
 	if (mode === "smoke") {
 		// One small request through the history conversion: the opening turn of P1 and a one-word reply.
@@ -1105,7 +1124,7 @@ async function parent() {
 				}
 				const results = await compactAt(fixture, k, provider, file);
 				results.forEach((result, attempt) => {
-					const row = { fixture: id, cut: k + 1, attempt: attempt + 1, ...measure, ok: result.ok, code: result.code, writerCalls: result.writerCalls, repairKind: result.repairKind, quotations: result.quotations, scope: result.scope ?? null, schema: result.schema ?? null, quotationRepair: result.quotationRepair, toolCalls: result.toolCalls ?? 0, toolCallDeclined: result.toolCallDeclined ?? false, calls: result.calls ?? [], path: result.path ?? null, pauseMs: result.pauseMs, usage: result.usage, reduction: result.reduction ?? null, crashed: result.crashed ?? false, journal: result.journal ?? [], note: noteRow(fixture, k, result.note) };
+					const row = { fixture: id, cut: k + 1, attempt: attempt + 1, ...measure, ok: result.ok, code: result.code, writerCalls: result.writerCalls, repairKind: result.repairKind, quotations: result.quotations, scope: result.scope ?? null, schema: result.schema ?? null, quotationRepair: result.quotationRepair, toolCalls: result.toolCalls ?? 0, toolCallDeclined: result.toolCallDeclined ?? false, calls: result.calls ?? [], path: result.path ?? null, pauseMs: result.pauseMs, usage: result.usage, reduction: result.reduction ?? null, crashed: result.crashed ?? false, journal: result.journal ?? [], note: noteRow(fixture, k, result.note), ...(result.nativeSummaryBytes !== undefined ? { nativeSummaryBytes: result.nativeSummaryBytes } : {}) };
 					compactions.push(row);
 					record("compactions.jsonl", row);
 				});

@@ -157,6 +157,15 @@ apply, `summary.json` names the relay's host under `endpoint`, and writer rows a
 usage of its own: compare refusals, notes and probe scores with other runs, but not its cache share or cost, which
 are catalog estimates over the relay's counts.
 
+`--arm native` runs the same `probes` chain with no package loaded, so Pi's own compaction summarizes each cut with the
+same model, thinking level and settings, and each probe then answers from Pi's summary. Without the package there is
+no `context_history`, so it takes only `--mode probes --probe-conditions none`; anything else is refused before a
+file is read. Pi chooses its own cut inside each span: it keeps the last entries of an unfinished turn verbatim and
+summarizes the rest in a second call, which the row counts under `writerCalls`. Compaction rows carry
+`nativeSummaryBytes` in place of `note`, and the summary call's usage counts toward `--max-input-tokens`. Compare a
+native run with a Slice run's `history` condition on the same fixtures, model and thinking level: that pair is what a
+user gets with and without the package. The default `--arm slice` is every other run.
+
 ### Token-overhead report
 
 Writer and probes runs end `summary.json` with `overhead` (report `0.6-overhead-report.1`), which `overhead.ts`
