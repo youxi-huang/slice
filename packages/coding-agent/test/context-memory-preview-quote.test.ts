@@ -20,6 +20,7 @@ import { diagnoseSchema, schemaCounts, schemaFailureMessage } from "../../compac
 import { diagnoseScope } from "../../compaction-core/src/scope-diagnostics.ts";
 import { applySourcesRepair, SOURCES_REPAIR_RULES } from "../../compaction-core/src/sources-repair.ts";
 import { validateWorkNote } from "../../compaction-core/src/work-notes.ts";
+import { sessionHandoverTokens } from "../../compaction-core/src/writer.ts";
 import { DEFAULT_MEMORY_CONFIG, SESSION_WRITER, textTokens } from "../src/extensions/context-memory/config.ts";
 import { type MemoryNote, type NoteFact, noteSchema, validateNote } from "../src/extensions/context-memory/notes.ts";
 import {
@@ -690,6 +691,26 @@ describe("session writer quotable originals", () => {
 		await writeMemory(tight.options);
 		expect(tight.instructions[0]).not.toContain("Quotable user messages");
 		expect(tight.instructions[0]).toContain("u1 user: Keep the service on port 4317. Do not touch vendor/.");
+	});
+
+	it("sizes the prefix by Pi's measured count, up to the line sessionHandoverTokens gives", async () => {
+		// The prefix holds one short message: by estimate alone either request would fit.
+		const handover = sessionHandoverTokens({
+			maxOutputTokens: model.maxTokens,
+			increments: [],
+			uncovered: asRecords(sessionBranch),
+			branch: asRecords(sessionBranch),
+			noteTokens: 2000,
+		});
+		const fits = sessionHarness(128_000);
+		fits.options.prefix = { ...fits.options.prefix!, measuredTokens: 128_000 - handover };
+		await writeMemory(fits.options);
+		expect(fits.instructions).toHaveLength(1);
+		expect(fits.instructions[0]).not.toContain("Quotable user messages");
+		const over = sessionHarness(128_000);
+		over.options.prefix = { ...over.options.prefix!, measuredTokens: 128_000 - handover + 1 };
+		await expect(writeMemory(over.options)).rejects.toThrow("CONTEXT_WRITER_CAPACITY");
+		expect(over.requests).not.toHaveBeenCalled();
 	});
 });
 

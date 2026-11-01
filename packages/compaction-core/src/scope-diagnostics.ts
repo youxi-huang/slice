@@ -44,3 +44,31 @@ export function diagnoseScope(note: MemoryNote, branch: readonly SessionRecord[]
 	}
 	return { missing: missing.size, unreadable: unreadable.size, inSupersedes: superseding.size, unreadableKinds };
 }
+
+/**
+ * The note without the sources the scope check refuses: IDs that name no entry on the branch, or an entry with
+ * nothing to read. Nothing is added; each fact's text, quote, supersedes and remaining sources stay as written.
+ * Undefined when nothing is dropped, when a fact would be left with no source, so that its evidence would be unknown,
+ * or when a `supersedes` ID is out of scope: which entry a fact replaces is a claim of its own, and the refusal stands.
+ */
+export function withoutOutOfScope(
+	note: MemoryNote,
+	branch: readonly SessionRecord[],
+): { note: MemoryNote; dropped: number } | undefined {
+	const byId = new Map(branch.map((entry) => [entry.id, entry]));
+	const readable = (id: string) => {
+		const entry = byId.get(id);
+		return entry !== undefined && sourceText(entry).length > 0;
+	};
+	const pruned = structuredClone(note);
+	let dropped = 0;
+	for (const section of noteSections)
+		for (const item of pruned[section]) {
+			if (item.supersedes?.some((id) => !readable(id))) return undefined;
+			const sources = item.sources.filter(readable);
+			if (!sources.length) return undefined;
+			dropped += item.sources.length - sources.length;
+			item.sources = sources;
+		}
+	return dropped ? { note: pruned, dropped } : undefined;
+}

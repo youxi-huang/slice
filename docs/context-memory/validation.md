@@ -8,8 +8,8 @@ other Pi and Slice setting at its default. The README's path used the published 
 (`stock-preview+src.ae7bb53ee105c16a`), installed with `pi install` from GitHub into an empty `HOME`; everything
 else used the tree at `2b6b10f` (`stock-preview+src.8c7a262add61d776`), whose writer and request guards are the
 release's. Sessions ran in Pi's RPC mode through a local relay that counted each request's usage and refused new
-ones at the limits; bench runs held their own. The maintainer approved 700 requests, 150 minutes and $4; the runs
-used 650 requests, 70 minutes and about $1.12 at catalog prices.
+ones at the limits; bench runs held their own. The maintainer approved 700 requests, 150 minutes and $4; the runs,
+with the re-runs after the fixes below, used 696 requests, 101 minutes and about $1.25 at catalog prices.
 
 ### Pi's default trigger on a 272k model: the preview stops requests first
 
@@ -67,9 +67,10 @@ and each retry continues the same cached prefix, so the same note came back. One
 
 Earlier attempts at the two sessions above ran side by side and together passed the organization's limit of
 2,000,000 tokens per minute; OpenAI ended a turn with a rate-limit error inside a successful stream, and Pi did
-not retry. `/compact` then paused the session with `CONTEXT_TOOL_BOUNDARY`. A question typed next was stopped, but Pi had
-recorded it, and Pi leaves the errored and aborted replies out of a request, so the writer's handover followed an
-unanswered user question. On the second and third `/compact` Luna answered that question in 237 and 437 output
+not retry. `/compact` then paused the session with `CONTEXT_TOOL_BOUNDARY`. A question sent next through RPC was stopped, but
+Pi had recorded it; in the terminal UI the preview returns input typed into a paused session to the editor. Pi
+leaves the errored and aborted replies out of a request, so the writer's handover followed an unanswered user
+question, as it would follow the request a rate limit cut off. On the second and third `/compact` Luna answered that question in 237 and 437 output
 tokens, "Part 3 was about operational guidance…", instead of writing a note, and each attempt ended
 `CONTEXT_NOTE_INVALID`. After Esc during a compaction, the stopped "Did that work?" did not prevent the next
 `/compact` from committing, so the outcome depends on what was asked.
@@ -157,13 +158,31 @@ second call. One run each, on invented fixtures.
 - The capacity profile keeps the guards from firing, but a tool-heavy session then stopped on a citation one
   character off an existing ID, three times in a row. Refusing an unknown ID is right; that nothing repairs it and
   that a retry repeats it leaves the user with no way forward but a new session.
-- A paused session records the messages it stops, and the session writer can answer one instead of writing a note.
+- A turn cut off by a provider error, or a message an RPC client sends into a paused session, stands unanswered,
+  and the session writer can answer it instead of writing a note.
 - Below those lines the README's path works in English and in Chinese: installation, compaction, retrieval and
   reopening, with the writer reading its input from the session's cache.
 - Pi's default `medium` committed all sixteen P1 to P3 notes on the first call, in about 16 s each; nano refused
   three of eight.
 - Paired with Pi's native compaction on the same model, Slice answered 57 of 65 against 43, with no wrong answer,
   most of the difference on P3's exact values.
+
+### After the fixes
+
+The request guards now read Pi's measured count, the preview starts compaction at a settled turn before the
+session writer's handover stops fitting, `/compact` follows a terminated turn at once with the writer's prefix
+ending at the last completed turn, and sources outside the branch are dropped when every fact keeps a readable
+one and no `supersedes` ID is out of scope (see the changelog). With preview `stock-preview+src.20b65b3116304702`, before the next-turn allowance followed
+the last turn's growth, both default-settings sessions ran again from the start:
+
+| Session | What happened | Compaction |
+| --- | --- | --- |
+| Prose, 15,000 tokens a turn | After turn 18 the preview started the compaction itself, below Pi's trigger | 251,801 to about 3,000 in 29 s; the writer's request was 254,195 tokens; the session went on |
+| Code, four files a turn | Turn 12 settled at 239,128, just under the line; turn 13 added 21,000 tokens and `CONTEXT_INPUT_TOO_LARGE` stopped its second request | One `/compact` at once committed in 25 s, 260,301 to 24,398, with 238,943 tokens read from cache |
+
+No session paused, and neither needed a second `/compact`. The code session's turn was larger than the 16,384
+tokens the line then allowed for; the line now allows for a next turn as large as the one just settled, which
+would have started compaction after turn 12. That change is covered by a regression, not by a further run.
 
 ## Host-run cost limit inside a turn on OpenCode and DSH, 2026-10-30 UTC
 

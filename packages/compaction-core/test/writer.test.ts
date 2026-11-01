@@ -4,6 +4,7 @@
 import { describe, expect, it } from "vitest";
 import type { MemoryNote } from "../src/notes.ts";
 import type { SessionRecord } from "../src/records.ts";
+import { withoutOutOfScope } from "../src/scope-diagnostics.ts";
 import {
 	quotableOriginals,
 	sumMemoryUsage,
@@ -205,5 +206,52 @@ describe("compaction core: writer contract", () => {
 		expect(quotableOriginals(branch, [branch[1]], 1000)).toEqual([
 			{ entryId: "u1", text: "Keep the service on port 4317. Never touch prod." },
 		]);
+	});
+});
+
+describe("compaction core: citations outside the branch", () => {
+	// An entry with nothing to read, as a thinking-level change has.
+	const level = {
+		type: "thinking_level_change",
+		id: "t1",
+		parentId: null,
+		timestamp: "2026-01-01T00:00:00.000Z",
+		thinkingLevel: "high",
+	} as unknown as SessionRecord;
+	const scoped = [...branch, level];
+
+	it("drops an ID one character off and one with nothing to read when every fact keeps a source", async () => {
+		// GPT-6 Luna wrote 96c685d6 for 96a685d6 beside three valid citations, and each retry repeated it.
+		const fact = { text: "Service on port 4317.", sources: ["u1", "u1x", "t1"], supersedes: ["u2"] };
+		const transport = scripted([answer(note({ state: [fact] }))]);
+		const progress: WriterProgress[] = [];
+		const result = await writeMemory(options({ branch: scoped, uncovered: scoped }, progress), transport.open);
+		expect(result.note.state).toEqual([{ text: "Service on port 4317.", sources: ["u1"], supersedes: ["u2"] }]);
+		expect(transport.sent).toHaveLength(1);
+		expect(progress.at(-1)).toMatchObject({
+			scope: { missing: 1, unreadable: 1, inSupersedes: 0 },
+			scopeDropped: 2,
+			repairUsed: false,
+		});
+	});
+
+	it("keeps the refusal when a fact would be left with no source", async () => {
+		const transport = scripted([answer(note({ state: [{ text: "Service on port 4317.", sources: ["u1x"] }] }))]);
+		const progress: WriterProgress[] = [];
+		await expect(writeMemory(options({}, progress), transport.open)).rejects.toThrow("CONTEXT_NOTE_SCOPE");
+		expect(transport.sent).toHaveLength(1);
+		expect(progress.at(-1)?.scopeDropped).toBeUndefined();
+	});
+
+	it("adds nothing and leaves an out-of-scope supersedes to the refusal", () => {
+		const value = note({ state: [{ text: "Service on port 4317.", sources: ["u1", "gone"] }] });
+		expect(withoutOutOfScope(value, branch)).toEqual({ note: note(), dropped: 1 });
+		expect(value.state[0].sources).toEqual(["u1", "gone"]);
+		expect(withoutOutOfScope(note(), branch)).toBeUndefined();
+		// Which entry a fact replaces is a claim of its own; an unknown one is not dropped.
+		const superseding = note({
+			state: [{ text: "Service on port 4317.", sources: ["u1", "gone"], supersedes: ["old"] }],
+		});
+		expect(withoutOutOfScope(superseding, branch)).toBeUndefined();
 	});
 });

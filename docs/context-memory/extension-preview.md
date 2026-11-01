@@ -154,7 +154,10 @@ a schema envelope names its shape under `envelope`, `type` or `schema`. For the 
 `CONTEXT_NOTE_SCOPE`, `scope` counts the cited IDs that name no entry on the
 branch (`missing`) and those of entries without readable text (`unreadable`,
 with their kinds under `unreadableKinds`), and how many of either sit in
-`supersedes`; it never names the IDs. For the first candidate refused on the
+`supersedes`; it never names the IDs. After v0.7.2, a source of that kind is
+dropped when every fact keeps a readable source and no `supersedes` ID is out
+of scope, and the note is checked again; `scopeDropped` counts the IDs dropped.
+Otherwise the refusal stands. For the first candidate refused on the
 note schema, `schema` counts its facts without sources by section (`uncited`)
 and says whether the note fails the schema for another reason too (`other`);
 it never names the facts. Pi maps a level the model does not declare to a
@@ -334,9 +337,19 @@ automatic compaction; the resident event log and its report are not provided.
 Setting `enabled: false` and restarting ends the package's protection.
 
 This preview compacts at completed turns: on `/compact`, and when Pi's
-threshold compaction runs after a turn completes. While input is queued or a
+threshold compaction runs after a turn completes. With the session writer it
+also starts that compaction itself at a settled turn whose context, with one
+more turn as large as Pi's default reserve or as the turn just settled, would
+leave the writer's handover no room. On a 272,000-token route Pi's own trigger
+leaves 16,384 tokens, less than a handover takes. One-shot `print` and `json`
+runs, which exit when the turn settles, are left to Pi's trigger. Both lines
+read Pi's own count of the context, from the provider's reported usage, as do
+the request guards. While input is queued or a
 session is blocked, threshold compaction is left for a later turn and nothing is
-recorded; a blocked session still needs an explicit `/compact`. Overflow
+recorded; a blocked session still needs an explicit `/compact`. `/compact`
+may follow a turn that ended on a provider error, an abort or a stopped
+request at once: that turn is kept whole after the checkpoint, and the
+writer's handover follows the last completed turn. Overflow
 recovery, unfinished tool rounds, in-memory sessions, attachments, context
 edits other than validated recovery omissions, old checkpoints, parent-history
 grants and other context-transforming or compaction extensions are outside its
