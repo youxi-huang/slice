@@ -1,7 +1,0 @@
-{
-	"version": "0.6-preview-fixtures.1",
-	"files": {
-		"P4/session.jsonl": "314fe7a78afead4bab03e3885b3c3a8d70fcb365b7d19044ee3fd2454f7f009a",
-		"P4/gold.json": "4e9d0088f9e4c1aa358e258636e84eb2451174aa1dc97e7eda6bacdb08b4271e"
-	}
-}
