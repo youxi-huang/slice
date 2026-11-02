@@ -7,7 +7,7 @@ import { parseDocument } from "yaml";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { assertFinalMainWorkflows, assertReleaseNotes, compareReleaseVersions, crossVersionChecks, hostList, isStrictRelease, minimumAcceptanceChecks, parseReviewedVersion, publishesPackage, releaseChanges, releaseNotes, releasePiVersions, releasePlan, scenarioProfile, selectReviewedSourceTag } from "./context-memory-preview-release-checks.mjs";
+import { ADAPTER_HOSTS, assertFinalMainWorkflows, assertReleaseNotes, compareReleaseVersions, crossVersionChecks, hostList, isStrictRelease, minimumAcceptanceChecks, NPM_CLI_VERSION, NPM_RELEASE, npmRelease, parseReviewedVersion, publishesPackage, releaseChanges, releaseNotes, releasePiVersions, releasePlan, scenarioProfile, selectReviewedSourceTag } from "./context-memory-preview-release-checks.mjs";
 import { PROFILE, VERSION } from "./context-memory-preview-acceptance-profile.mjs";
 import { PRIMARY_PI_VERSION, SUPPORTED_PI_VERSIONS } from "../packages/coding-agent/src/extensions/context-memory/preview/compatibility.ts";
 
@@ -85,9 +85,16 @@ test("publication workflow preserves version-aware installation and historical s
 	assert.match(sourceRelease.run, /::notice /);
 	assert.match(sourceRelease.run, /GITHUB_STEP_SUMMARY/);
 	// Only an explicit source-release decision skips; a missing output must still run every gate and the publisher.
+	// The npm steps also skip only on an explicit npm=false, which candidates before 0.7.5 report.
+	const npmSteps = ["Build the OpenCode and DSH packages", "Install each package by name on official OpenCode and DSH", "Install the npm client publication requires"];
 	for (const step of steps.slice(steps.indexOf(plan) + 1)) {
-		if (step !== sourceRelease) assert.equal(step.if, "steps.plan.outputs.publish != 'false'", step.name);
+		if (step === sourceRelease) continue;
+		assert.equal(step.if, npmSteps.includes(step.name) ? "steps.plan.outputs.publish != 'false' && steps.plan.outputs.npm != 'false'" : "steps.plan.outputs.publish != 'false'", step.name);
 	}
+	assert.deepEqual(npmSteps.map((name) => steps.findIndex((step) => step.name === name)).every((index, i, all) => index > steps.indexOf(plan) && (i === 0 || index > all[i - 1])), true, "npm steps must run in order after the plan");
+	assert.match(steps.find((step) => step.name === npmSteps[1]).run, /context-memory-adapters-acceptance\.mjs --hosts-root/);
+	assert.match(steps.find((step) => step.name === npmSteps[2]).run, /test -n "\$PLAN_NPM_CLI"/);
+	assert.equal(document.toJS().permissions["id-token"], "write");
 	const install = steps.find((step) => step.name === "Install every official Pi host the candidate declares");
 	assert.match(install.run, /context-preview-publisher\/scripts\/context-memory-preview-stock-install\.mjs/);
 	assert.match(install.run, /for host in \$PLAN_HOSTS/);
@@ -95,6 +102,8 @@ test("publication workflow preserves version-aware installation and historical s
 	assert.doesNotMatch(install.run, /npm install/);
 	const publish = steps.find((step) => step.name === "Publish checked package and source archives");
 	assert.match(publish.run, /context-preview-publisher\/scripts\/context-memory-preview-release\.mjs" --publish/);
+	assert.equal(publish.env.NODE_AUTH_TOKEN, "${{ secrets.NPM_TOKEN }}");
+	assert(steps.indexOf(publish) > steps.findIndex((step) => step.name === npmSteps[2]), "npm acceptance precedes publication");
 	const acceptance = steps.find((step) => step.name === "Verify the release package on stock Pi");
 	assert.match(acceptance.run, /--compatible-stock-root/);
 	assert.match(acceptance.run, /context-memory-preview-acceptance-\$host/);
@@ -121,7 +130,9 @@ test("the plan reads every declared host from the candidate and fails closed on 
 	write({ version: "0.4.3" }, { version: "0.4.3", supportedPi: "1.4.0", supportedPiVersions: ["1.4.0", "1.3.0", "1.2.0", "1.1.0"] });
 	const result = spawnSync(process.execPath, [script, "--plan", directory], { encoding: "utf8" });
 	assert.equal(result.status, 0, result.stderr);
-	assert.equal(result.stdout, "hosts=1.4.0 1.3.0 1.2.0 1.1.0\nprofile=strict\nother=1.0.4\n");
+	assert.equal(result.stdout, "hosts=1.4.0 1.3.0 1.2.0 1.1.0\nprofile=strict\nother=1.0.4\nnpm=false\nnpm_cli=\n");
+	write({ version: NPM_RELEASE }, { version: NPM_RELEASE, supportedPi: "1.4.0", supportedPiVersions: ["1.4.0", "1.3.0", "1.2.0", "1.1.0"] });
+	assert.equal(spawnSync(process.execPath, [script, "--plan", directory], { encoding: "utf8" }).stdout, `hosts=1.4.0 1.3.0 1.2.0 1.1.0\nprofile=strict\nother=1.0.4\nnpm=true\nnpm_cli=${NPM_CLI_VERSION}\n`);
 	write({ version: "0.4.3" }, { version: "0.4.3", supportedPi: "1.5.0", supportedPiVersions: ["1.5.0", "1.4.0"] });
 	assert.notEqual(spawnSync(process.execPath, [script, "--plan", directory], { encoding: "utf8" }).status, 0);
 	assert.equal(spawnSync(process.execPath, [script, "--plan"], { encoding: "utf8" }).status, 2);
@@ -190,6 +201,12 @@ test("acceptance floors grow with each cross-version host and cross-version name
 	assert.equal(minimumAcceptanceChecks("0.4.2", 1), 30);
 	assert.equal(minimumAcceptanceChecks("0.4.2"), 28);
 	assert.equal(minimumAcceptanceChecks("0.4.3", 2), 32);
+	// From 0.7.5 each Pi host also installs, runs and removes the npm archive.
+	assert.equal(minimumAcceptanceChecks("0.7.4", 3), 34);
+	assert.equal(minimumAcceptanceChecks(NPM_RELEASE, 3), 37);
+	assert.equal(minimumAcceptanceChecks("0.8.0"), 31);
+	assert.equal(npmRelease("0.7.4"), false);
+	assert.equal(npmRelease(NPM_RELEASE), true);
 	assert.deepEqual(crossVersionChecks(["1.2.0", "1.1.0"]).map((check) => [check.older, check.primary]), [[
 		"compatible official Pi 1.1.0 reopens and compacts the primary host checkpoint",
 		["primary host reopens the Pi 1.1.0 checkpoint", "primary host reopens the compatible host checkpoint"],
@@ -267,7 +284,8 @@ test("newer Node majors run verify outside the workflow that gates publication",
 		return document.toJS();
 	};
 	const steps = Object.values(read("context-memory.yml").jobs).flatMap((job) => job.steps);
-	assert.deepEqual(steps.filter((step) => step.uses?.startsWith("actions/setup-node@")).map((step) => step.with["node-version"]), ["22"]);
+	const nodes = steps.filter((step) => step.uses?.startsWith("actions/setup-node@")).map((step) => step.with["node-version"]);
+	assert(nodes.length > 0 && nodes.every((node) => node === "22"), "Every job of the publication-gating workflow runs Node 22");
 	const jobs = Object.values(read("context-memory-newer-node.yml").jobs);
 	assert.equal(jobs.length, 1);
 	const [job] = jobs;
@@ -408,4 +426,23 @@ test("install, update and remove commands may not share a copyable block", () =>
 test("the first copyable block may not install the moving branch", () => {
 	const moving = "```sh\npi install git:github.com/youxi-huang/slice@extension-preview\n```\n";
 	assert.throws(() => assertReleaseNotes(moving, noteOptions));
+});
+
+test("npm releases install from npm first, keep the Git package and name every accepted OpenCode and DSH host", () => {
+	const version = NPM_RELEASE;
+	const acceptance = { profile: "strict", version, accepted: true, rawPassed: true, exceptions: [] };
+	const options = { ...noteOptions, hosts: hostsFor(version), tag: `v${version}`, packageTag: `extension-v${version}`, sourceCommit, build: "stock-preview+src.0000000000000000", acceptanceChecks: 37, changes: "Synthetic.", scenarioAcceptance: acceptance, adapterHosts: ADAPTER_HOSTS };
+	const generated = releaseNotes(options);
+	assert.doesNotThrow(() => assertReleaseNotes(generated, options));
+	assert.match(generated, new RegExp(`^SLICE v${version} supplies[^]*?\`\`\`sh\npi install npm:slice-pi@${version}\n\`\`\``));
+	assert(generated.includes(`pi install git:github.com/${repository}@extension-v${version}`));
+	assert(generated.includes(`{ "plugin": ["slice-opencode@${version}"] }`));
+	assert(generated.includes(`dsh plugin --profile <profile> add slice-dsh@${version}`));
+	assert(generated.includes(`official OpenCode ${hostList(ADAPTER_HOSTS.opencode)} and DSH ${hostList(ADAPTER_HOSTS.dsh)}`));
+	assert.throws(() => releaseNotes({ ...options, adapterHosts: undefined }), /OpenCode and DSH hosts/);
+	for (const removed of [`pi install git:github.com/${repository}@extension-v${version}`, `slice-opencode@${version}`, `add slice-dsh@${version}`]) {
+		assert.throws(() => assertReleaseNotes(generated.replace(removed, ""), options));
+	}
+	const gitFirst = generated.replace(`pi install npm:slice-pi@${version}\n`, `pi install git:github.com/${repository}@extension-v${version}\n`);
+	assert.throws(() => assertReleaseNotes(gitFirst, options), /fixed npm release/);
 });

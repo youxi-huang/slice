@@ -8,6 +8,28 @@ import { OFFICIAL_PI_VERSIONS } from "./context-memory-preview-stock-install.mjs
 
 /** First release whose lifecycle suite has 28 checks per host, and two more per cross-version host. */
 const CROSS_VERSION_SUITE = "0.4.2";
+/**
+ * First release published on npm too: the Pi extension as slice-pi, and the OpenCode and DSH packages as
+ * slice-opencode and slice-dsh. Its lifecycle suite adds three npm checks on each Pi host.
+ */
+export const NPM_RELEASE = "0.7.5";
+/** The npm client publication runs; trusted publishing from GitHub Actions needs 11.5.1 or later. */
+export const NPM_CLI_VERSION = "11.21.1";
+/** The npm names a release publishes, the Pi package first. */
+export const NPM_PACKAGES = Object.freeze(["slice-pi", "slice-opencode", "slice-dsh"]);
+/**
+ * The official hosts an npm release installs the OpenCode and DSH packages on by name before publishing them: the
+ * lowest version each package admits and the newest one tested.
+ */
+export const ADAPTER_HOSTS = Object.freeze({
+	opencode: Object.freeze(["1.19.4", "1.19.5"]),
+	dsh: Object.freeze(["0.2.1-rc.3", "0.2.1-rc.5"]),
+});
+
+/** Whether a reviewed version is published on npm as well as on Git. */
+export function npmRelease(version) {
+	return compareReleaseVersions(version, NPM_RELEASE) >= 0;
+}
 
 /** Local preparation can describe Unreleased; publication requires its versioned changelog. */
 export function releaseChanges(changelog, tag, prepare = false) {
@@ -72,7 +94,8 @@ export function releasePiVersions(build) {
 
 /** Lifecycle checks one host report must hold: 26 before the cross-version suite, then 28 plus two per older host. */
 export function minimumAcceptanceChecks(version, crossVersionHosts = 0) {
-	return compareReleaseVersions(version, CROSS_VERSION_SUITE) < 0 ? 26 : 28 + 2 * crossVersionHosts;
+	const lifecycle = compareReleaseVersions(version, CROSS_VERSION_SUITE) < 0 ? 26 : 28 + 2 * crossVersionHosts;
+	return lifecycle + (npmRelease(version) ? 3 : 0);
 }
 
 /**
@@ -112,7 +135,8 @@ export function publishesPackage({ sourceTag, version, isPublished }) {
 export function releasePlanOutputs(packageDir, { sourceTag, isPublished } = {}) {
 	const read = (file) => JSON.parse(readFileSync(join(packageDir, file), "utf8"));
 	const plan = releasePlan({ manifest: read("package.json"), build: read("preview-build.json") });
-	const outputs = `hosts=${plan.hosts.join(" ")}\nprofile=${plan.scenarioProfile ?? ""}\nother=${plan.otherHost}\n`;
+	const npm = npmRelease(plan.version);
+	const outputs = `hosts=${plan.hosts.join(" ")}\nprofile=${plan.scenarioProfile ?? ""}\nother=${plan.otherHost}\nnpm=${npm}\nnpm_cli=${npm ? NPM_CLI_VERSION : ""}\n`;
 	if (sourceTag === undefined) return outputs;
 	const publish = publishesPackage({ sourceTag, version: plan.version, isPublished });
 	return `${outputs}publish=${publish}\npackage_tag=${parseReviewedVersion(plan.version).packageTag}\n`;
@@ -142,7 +166,7 @@ export function assertFinalMainWorkflows(runs, sourceCommit) {
 }
 
 // The publication workflow copies only this module and the release script, so notes live here.
-export function releaseNotes({ repository, branch, tag, packageTag, sourceCommit, build, hosts: hostVersions, acceptanceChecks, changes, scenarioAcceptance }) {
+export function releaseNotes({ repository, branch, tag, packageTag, sourceCommit, build, hosts: hostVersions, acceptanceChecks, changes, scenarioAcceptance, adapterHosts }) {
 	const reviewed = parseReviewedVersion(tag.slice(1));
 	assert.equal(tag, reviewed.tag, "Expected an existing reviewed source tag");
 	assert.equal(packageTag, reviewed.packageTag, "Package tag must match the source version");
@@ -172,9 +196,12 @@ export function releaseNotes({ repository, branch, tag, packageTag, sourceCommit
 		: reviewed.preview
 		? "Resident release version remains v0.3.0; shared-validation source identity and frozen comparison are tracked separately."
 		: "Resident runtime keeps its v0.3.0 fingerprint.";
+	const install = npmRelease(reviewed.version)
+		? npmInstall({ repository, branch, tag, packageTag, version: reviewed.version, adapterHosts })
+		: `Install this release's extension package (a fixed package tag) from your terminal, then restart Pi:\n\n\`\`\`sh\npi install git:github.com/${repository}@${packageTag}\n\`\`\`\n\n`
+			+ `Start a new persistent text session and run \`/compaction-doctor\` to check it without calling a model. Source tag \`${tag}\` selects the development monorepo, not the package. To follow later previews instead, install the moving \`${branch}\` branch in place of the tag and update only this package with \`pi update --extension git:github.com/${repository}@${branch}\`. A plain \`pi update\` updates Pi itself.\n\n`;
 	return introduction
-		+ `Install this release's extension package (a fixed package tag) from your terminal, then restart Pi:\n\n\`\`\`sh\npi install git:github.com/${repository}@${packageTag}\n\`\`\`\n\n`
-		+ `Start a new persistent text session and run \`/compaction-doctor\` to check it without calling a model. Source tag \`${tag}\` selects the development monorepo, not the package. To follow later previews instead, install the moving \`${branch}\` branch in place of the tag and update only this package with \`pi update --extension git:github.com/${repository}@${branch}\`. A plain \`pi update\` updates Pi itself.\n\n`
+		+ install
 		+ `This pre-release supports ${latencyRelease ? "manual /compact and Pi's threshold compaction after completed text turns" : "manual compaction of completed text turns"}, source-linked history retrieval and explicit disk-confirmed failure recovery. In the sessions it handles, ${latencyRelease ? "overflow recovery still requires explicit /compact, and background cache warming is paused" : `automatic compaction is cancelled and ${reviewed.preview ? "Pi's built-in background cache warming" : "background cache warming"} is paused`}. Sessions it never protected and cannot check, such as ones with native checkpoints, images or another Pi version, are left to Pi without a failure marker. Other checkpoint formats, parent-history grants, attachments, concurrent writers and Windows are outside its verified scope.\n\n`
 		+ `Ordinary Agent retries after transient provider failures are supported, including partial-response connection drops. Existing retry-related blocks and text-only context-overflow failures can use explicit /compact recovery when sufficient completed source history exists. Arbitrary context edits and unfinished tool-call omissions remain unsupported.\n\n`
 		+ preparation
@@ -184,8 +211,19 @@ export function releaseNotes({ repository, branch, tag, packageTag, sourceCommit
 		+ `### Changes\n${changes}\n`;
 }
 
+/** Install instructions from npm, with the Git package beside it and the OpenCode and DSH packages after it. */
+function npmInstall({ repository, branch, tag, packageTag, version, adapterHosts }) {
+	assert(adapterHosts?.opencode?.length && adapterHosts?.dsh?.length, "npm release notes need the OpenCode and DSH hosts accepted in this run");
+	return `Install this release from npm, then restart Pi:\n\n\`\`\`sh\npi install npm:slice-pi@${version}\n\`\`\`\n\n`
+		+ `Start a new persistent text session and run \`/compaction-doctor\` to check it without calling a model. To follow later releases, install \`npm:slice-pi\` without a version and update only this package with \`pi update --extension npm:slice-pi\`. A plain \`pi update\` updates Pi itself. The same package is on Git as the fixed tag \`${packageTag}\`; source tag \`${tag}\` selects the development monorepo, not the package:\n\n\`\`\`sh\npi install git:github.com/${repository}@${packageTag}\n\`\`\`\n\n`
+		+ `An installation from Git keeps working and updating through \`${branch}\`. To move it to npm, run \`pi remove git:github.com/${repository}\` and install from npm; sessions and settings carry over.\n\n`
+		+ `OpenCode and DSH get SLICE's \`context_history\` from npm too, with no build. For OpenCode, add the package to \`plugin\` in \`opencode.json\` and restart it:\n\n\`\`\`json\n{ "plugin": ["slice-opencode@${version}"] }\n\`\`\`\n\n`
+		+ `For DSH, add it to a profile built on DSH's base bundle; the package enables itself there:\n\n\`\`\`sh\ndsh plugin --profile <profile> add slice-dsh@${version}\n\`\`\`\n\n`
+		+ `Before publication each package was installed by name from a loopback registry on official OpenCode ${hostList(adapterHosts.opencode)} and DSH ${hostList(adapterHosts.dsh)}, where a scripted session compacted natively and read its original history back. Both are retrieval only: compaction stays the host's.\n\n`;
+}
+
 /**
- * Copyable commands stay unambiguous: the first block installs the fixed package tag alone, no block
+ * Copyable commands stay unambiguous: the first block installs the fixed release alone, no block
  * holds more than one Pi command, and the moving branch never shares a block with the fixed tag.
  */
 function assertFunctionalProfile(value) {
@@ -204,7 +242,7 @@ function assertStrictReleaseProfile(value, version) {
 	assert.deepEqual(value.exceptions, [], `v${version} cannot accept performance exceptions`);
 }
 
-export function assertReleaseNotes(notes, { repository, packageTag, branch, hosts, scenarioAcceptance }) {
+export function assertReleaseNotes(notes, { repository, packageTag, branch, hosts, scenarioAcceptance, adapterHosts }) {
 	assert(packageTag.startsWith("extension-v"), "Expected a reviewed fixed package tag");
 	const reviewed = parseReviewedVersion(packageTag.slice("extension-v".length));
 	assert(Array.isArray(hosts) && hosts.length > 0, "Release notes must be checked against the accepted hosts");
@@ -227,7 +265,13 @@ export function assertReleaseNotes(notes, { repository, packageTag, branch, host
 	}
 	const blocks = [...notes.matchAll(/```[a-z]*\n([\s\S]*?)```/g)].map((match) => match[1].trim());
 	assert(blocks.length > 0, "Release notes need a copyable install command");
-	assert.equal(blocks[0], `pi install git:github.com/${repository}@${packageTag}`, "The first block must install the fixed package tag alone");
+	if (npmRelease(reviewed.version)) {
+		assert.equal(blocks[0], `pi install npm:slice-pi@${reviewed.version}`, "The first block must install the fixed npm release alone");
+		assert(blocks.includes(`pi install git:github.com/${repository}@${packageTag}`), "npm release notes must keep the fixed Git package");
+		assert(blocks.includes(`{ "plugin": ["slice-opencode@${reviewed.version}"] }`), "npm release notes must install the OpenCode package");
+		assert(blocks.includes(`dsh plugin --profile <profile> add slice-dsh@${reviewed.version}`), "npm release notes must install the DSH package");
+		assert(notes.includes(`official OpenCode ${hostList(adapterHosts.opencode)} and DSH ${hostList(adapterHosts.dsh)}`), "npm release notes must name the accepted OpenCode and DSH hosts");
+	} else assert.equal(blocks[0], `pi install git:github.com/${repository}@${packageTag}`, "The first block must install the fixed package tag alone");
 	for (const block of blocks) {
 		const commands = block.split("\n").filter((line) => /^pi\s/.test(line.trim()));
 		assert(commands.length <= 1, "Each copyable block may hold one Pi command");

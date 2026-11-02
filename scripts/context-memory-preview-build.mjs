@@ -5,10 +5,14 @@ import { basename, dirname, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
 import { PRIMARY_PI_VERSION, SUPPORTED_PI_VERSIONS } from "../packages/coding-agent/src/extensions/context-memory/preview/compatibility.ts";
+import { SLICE_VERSION } from "./context-memory-version.mjs";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
-const name = "pi-context-compaction-preview";
-const version = "0.7.4";
+// The npm name; the extension-preview branch carries the same manifest. Before 0.7.5 the package was private and
+// named pi-context-compaction-preview.
+const name = "slice-pi";
+const previousName = "pi-context-compaction-preview";
+const version = SLICE_VERSION;
 const extensionRoot = "packages/coding-agent/src/extensions/context-memory/";
 const previewRoot = `${extensionRoot}preview/`;
 // The host-neutral core (v0.7.0 WP2): lifted modules may be bundled alongside preview files.
@@ -24,7 +28,7 @@ for (let index = 2; index < process.argv.length; index++) {
 }
 if (existsSync(output)) {
 	const existing = JSON.parse(readFileSync(resolve(output, "package.json"), "utf8"));
-	if (existing.name !== name || existing.private !== true) throw new Error("Refusing to replace an unrelated directory");
+	if (existing.name !== name && existing.name !== previousName) throw new Error("Refusing to replace an unrelated directory");
 }
 
 const options = {
@@ -88,14 +92,14 @@ for (const specifier of imports) {
 const manifest = {
 	name,
 	version,
-	private: true,
 	description: `SLICE source-linked compaction preview for unmodified Pi ${SUPPORTED_PI_VERSIONS.join(" and ")}`,
 	repository: { type: "git", url: "https://github.com/youxi-huang/slice.git" },
 	homepage: "https://github.com/youxi-huang/slice/blob/main/docs/context-memory/extension-preview.md",
+	bugs: { url: "https://github.com/youxi-huang/slice/issues" },
 	type: "module",
 	license: "MIT",
 	engines: { node: ">=22.19.0" },
-	keywords: ["pi-package"],
+	keywords: ["pi-package", "slice", "context-compaction", "coding-agent"],
 	files: ["dist/extension.js", "preview-build.json", "README.md", "LICENSE"],
 	pi: { extensions: ["./dist/extension.js"] },
 	peerDependencies: Object.fromEntries(peers.map((peer) => [peer, "*"])),

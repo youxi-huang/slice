@@ -9,7 +9,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 const RECORDED = Symbol.for("slice.preview.copies");
 
 export interface LoadedCopy {
-	/** The package source as declared in Pi's settings, such as git:github.com/youxi-huang/slice@extension-v0.7.2. */
+	/** The package source as declared in Pi's settings, such as npm:slice-pi@0.7.5 or git:github.com/youxi-huang/slice@extension-v0.7.2. */
 	source: string;
 	scope: string;
 	self: boolean;
@@ -60,18 +60,22 @@ export function standsAside(copies: readonly LoadedCopy[]): boolean {
 	return copies.length > 1 && copies.some((copy) => copy.self) && compactingCopy(copies)?.self === false;
 }
 
-/** The copy to keep: the one from the current address, else the one that compacts now. */
+/** The copy to keep: the npm package, else one from the repository's current address, else the one that compacts now. */
 export function keptCopy(copies: readonly LoadedCopy[]): LoadedCopy | undefined {
 	return (
+		copies.find((copy) => /^npm:slice-pi(?:@|$)/.test(copy.source)) ??
 		copies.find((copy) => /github\.com[/:]youxi-huang\/slice(?:\.git)?(?:@|$)/.test(copy.source)) ??
 		compactingCopy(copies)
 	);
 }
 
-/** `pi remove` without a ref removes whichever ref is installed. */
+/** `pi remove` without a ref or version removes whichever one is installed. */
 export function removalStep(copy: LoadedCopy): string {
 	if (copy.scope === "temporary") return `leave out -e ${copy.source}`;
-	const source =
-		copy.source.startsWith("git:") || copy.source.includes("://") ? copy.source.replace(/@[^/@]*$/, "") : copy.source;
+	const source = copy.source.startsWith("npm:")
+		? copy.source.replace(/^(npm:(?:@[^/@]+\/)?[^/@]+)@.*$/, "$1")
+		: copy.source.startsWith("git:") || copy.source.includes("://")
+			? copy.source.replace(/@[^/@]*$/, "")
+			: copy.source;
 	return `run pi remove ${source}${copy.scope === "project" ? " -l" : ""}`;
 }

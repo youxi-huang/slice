@@ -43,6 +43,22 @@ jobs:
             fi
           fi
           echo "docs_only=$docs_only" >> "$GITHUB_OUTPUT"
+  adapters:
+    # The OpenCode and DSH packages, installed by name from a loopback registry on the official hosts a release
+    # requires, each followed by a scripted session that compacts natively and reads its history back.
+    needs: scope
+    if: needs.scope.outputs.docs_only != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: node scripts/context-memory-adapters-check.mjs
+      - run: node --experimental-strip-types scripts/context-memory-adapters-acceptance.mjs --hosts-root "${{ runner.temp }}/adapter-hosts"
   verify:
     # A skipped verify satisfies a pull request's required check, but its check
     # run concludes "skipped", and publication accepts a tagged commit only after

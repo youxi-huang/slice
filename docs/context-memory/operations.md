@@ -51,6 +51,7 @@ range in `engines` stays `>=22.19.0`.
 | Markdown only, outside the two files above | None; `doctor` if worktree state is in doubt. |
 | Extension or host source, shared tests, check scripts | `verify` |
 | Preview source, preview scripts, scenarios, release tooling | `verify`, then `preview` |
+| OpenCode or DSH adapter, adapter build or install acceptance | `node scripts/context-memory-adapters-check.mjs`, then `node --experimental-strip-types scripts/context-memory-adapters-acceptance.mjs --hosts-root <dir>` |
 | Evaluation fixtures, scorer, runners, `eval/` scripts | `eval --full` |
 | CI workflows, `context-memory-ops.mjs` itself, or in doubt | `ci` |
 

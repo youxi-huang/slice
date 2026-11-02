@@ -2710,6 +2710,56 @@ describe("independent extension preview: sessions it does not protect", () => {
 			expect(doctor).toContain("(this one) compacts, git:github.com/youxi-huang/pi-context-compaction");
 			expect(doctor).toContain("Result: ready for requests.");
 		});
+		it("keeps the npm package over a Git copy and removes the other by name or repository alone", async () => {
+			const npm = {
+				source: "npm:slice-pi@0.7.5",
+				scope: "user",
+				path: join(tmpdir(), "slice-copy-npm", "dist", "extension.js"),
+			};
+			recordCopy(npm.path);
+			const commands = new Map<string, Command>();
+			const handlers = loadPreview({ commands, listed: listed(npm, current) });
+			const ctx = context();
+			await emit(handlers, "session_start", {}, ctx);
+			expect(warnings).toEqual([
+				"Source-linked compaction: 2 copies are installed. The copy from npm:slice-pi@0.7.5 compacts this session, and this one stands aside. Keep one: exit Pi, run pi remove git:github.com/youxi-huang/slice, and restart Pi. (CONTEXT_PREVIEW_DUPLICATE)",
+			]);
+			const later = {
+				...npm,
+				scope: "project",
+				path: join(tmpdir(), "slice-copy-npm-later", "dist", "extension.js"),
+			};
+			recordCopy(later.path);
+			const second = loadPreview({
+				listed: listed(current, { ...later, source: "npm:slice-pi" }, other("oldest", "project")),
+			});
+			warnings.length = 0;
+			await emit(second, "session_start", {}, context());
+			expect(warnings).toHaveLength(1);
+			expect(warnings[0]).toContain(
+				"Keep one: exit Pi, run pi remove git:github.com/youxi-huang/slice, run pi remove git:github.com/youxi-huang/pi-context-compaction -l, and restart Pi.",
+			);
+		});
+		it("names a second npm copy to remove without its version", async () => {
+			const kept = {
+				source: "npm:slice-pi@0.7.5",
+				scope: "user",
+				path: join(tmpdir(), "slice-copy-npm-kept", "dist", "extension.js"),
+			};
+			const extra = {
+				source: "npm:slice-pi@0.7.4",
+				scope: "project",
+				path: join(tmpdir(), "slice-copy-npm-extra", "dist", "extension.js"),
+			};
+			recordCopy(kept.path);
+			recordCopy(extra.path);
+			const handlers = loadPreview({ listed: listed(kept, current, extra) });
+			await emit(handlers, "session_start", {}, context());
+			expect(warnings).toHaveLength(1);
+			expect(warnings[0]).toContain(
+				"Keep one: exit Pi, run pi remove git:github.com/youxi-huang/slice, run pi remove npm:slice-pi -l, and restart Pi.",
+			);
+		});
 		it("keeps compacting when it cannot find itself among the copies", async () => {
 			const handlers = loadPreview({ listed: listed(other("first"), other("second")) });
 			await emit(handlers, "session_start", {}, context());

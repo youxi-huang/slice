@@ -44,7 +44,7 @@ const project = join(work, "project");
 const candidate = join(work, "candidate");
 mkdirSync(project);
 cpSync(options["--package-dir"], candidate, { recursive: true });
-assert.equal(JSON.parse(readFileSync(join(candidate, "package.json"), "utf8")).name, "slice-opencode-preview");
+assert.equal(JSON.parse(readFileSync(join(candidate, "package.json"), "utf8")).name, "slice-opencode");
 for (const name of ["typebox", "zod"]) {
 	const target = join(candidate, "node_modules", name);
 	mkdirSync(dirname(target), { recursive: true });

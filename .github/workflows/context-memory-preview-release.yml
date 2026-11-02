@@ -15,6 +15,8 @@ permissions:
   contents: write
   actions: read
   checks: read
+  # npm trusted publishing and provenance: an OIDC token for this workflow run, nothing else.
+  id-token: write
 
 concurrency:
   group: context-memory-preview-publication
@@ -23,7 +25,7 @@ concurrency:
 jobs:
   publish:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -108,10 +110,27 @@ jobs:
             node "$RUNNER_TEMP/context-preview-publisher/scripts/context-memory-preview-stock-install.mjs" --stock-root "$RUNNER_TEMP/context-preview-other" --version "$PLAN_OTHER"
             node scripts/context-memory-preview-scenarios.mjs --package-dir .artifacts/context-memory-preview-package --stock-root "$RUNNER_TEMP/context-preview-pi-${hosts[0]}" --other-stock-root "$RUNNER_TEMP/context-preview-other" --output-dir .artifacts/context-memory-preview-scenarios --acceptance-profile "$PLAN_PROFILE"
           fi
+      # From 0.7.5 the release is published on npm too, with the OpenCode and DSH packages beside the Pi package.
+      # Only an explicit npm=false, from an earlier candidate, skips these; a missing output runs them.
+      - name: Build the OpenCode and DSH packages
+        if: steps.plan.outputs.publish != 'false' && steps.plan.outputs.npm != 'false'
+        run: node scripts/context-memory-adapters-build.mjs
+      - name: Install each package by name on official OpenCode and DSH
+        if: steps.plan.outputs.publish != 'false' && steps.plan.outputs.npm != 'false'
+        run: node --experimental-strip-types scripts/context-memory-adapters-acceptance.mjs --hosts-root "$RUNNER_TEMP/adapter-hosts"
+      - name: Install the npm client publication requires
+        if: steps.plan.outputs.publish != 'false' && steps.plan.outputs.npm != 'false'
+        env:
+          PLAN_NPM_CLI: ${{ steps.plan.outputs.npm_cli }}
+        run: |
+          test -n "$PLAN_NPM_CLI"
+          npm install --global --no-audit --no-fund "npm@$PLAN_NPM_CLI"
       - name: Publish checked package and source archives
         if: steps.plan.outputs.publish != 'false'
         env:
           GH_TOKEN: ${{ github.token }}
+          # Only for the first npm publication, before each package has a trusted publisher; remove it afterwards.
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           PI_CONTEXT_RELEASE_ROOT: ${{ github.workspace }}
           PI_CONTEXT_RELEASE_TAG: ${{ steps.source.outputs.source_tag }}
           PI_CONTEXT_RELEASE_TOOLING_COMMIT: ${{ steps.source.outputs.tooling_commit }}
