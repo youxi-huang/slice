@@ -804,4 +804,8 @@ main commit using its `source_tag` workflow input, or push that commit to
 `release/publish-v<version>`. The job uses the reviewed tooling while rebuilding
 and testing the immutable source tag; provenance records both commits. No tag
 or existing public asset is replaced, and uploaded assets are not downloaded
-again for verification.
+again for verification. A run that fails after uploading leaves a draft
+release. The retry keeps the draft's archives, which must match its rebuild
+byte for byte, and replaces only the evidence the failed run wrote about
+itself: `release-provenance.json`, `preview-acceptance-profile.json` and
+`SHA256SUMS`.

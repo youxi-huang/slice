@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import { copyFileSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { ADAPTER_HOSTS, assertFinalMainWorkflows, assertReleaseNotes, crossVersionChecks, hostList, minimumAcceptanceChecks, NPM_CLI_VERSION, NPM_PACKAGES, npmRelease, parseReviewedVersion, releaseChanges, releaseNotes, releasePiVersions, scenarioProfile } from "./context-memory-preview-release-checks.mjs";
+import { ADAPTER_HOSTS, assertFinalMainWorkflows, assertReleaseNotes, crossVersionChecks, hostList, minimumAcceptanceChecks, NPM_CLI_VERSION, NPM_PACKAGES, npmArchives, npmRelease, parseReviewedVersion, releaseAssetAction, releaseChanges, releaseNotes, releasePiVersions, scenarioProfile } from "./context-memory-preview-release-checks.mjs";
 import { assertScenarioAcceptance, OTHER_PI_VERSION } from "./context-memory-preview-acceptance-profile.mjs";
 
 const sourceRoot = process.env.PI_CONTEXT_RELEASE_ROOT;
@@ -157,7 +157,7 @@ async function api(path, method = "GET", body) {
 	});
 	if (response.status === 404 && method === "GET") return null;
 	if (!response.ok) throw new Error(`GitHub ${method} ${path} failed (${response.status}): ${await response.text()}`);
-	return response.json();
+	return response.status === 204 ? null : response.json();
 }
 
 const botIdentity = { GIT_AUTHOR_NAME: "github-actions[bot]", GIT_AUTHOR_EMAIL: "41898282+github-actions[bot]@users.noreply.github.com", GIT_COMMITTER_NAME: "github-actions[bot]", GIT_COMMITTER_EMAIL: "41898282+github-actions[bot]@users.noreply.github.com" };
@@ -218,8 +218,7 @@ function publishNpm(temporary) {
 		}
 		return result.stdout.trim() ? JSON.parse(result.stdout) : null;
 	};
-	const archives = [{ name: manifest.name, archive: pack.archive }, ...adapters.packages.map(({ name, archive }) => ({ name, archive }))];
-	assert.deepEqual(archives.map((entry) => entry.name), NPM_PACKAGES);
+	const archives = npmArchives([{ name: manifest.name, archive: pack.archive }, ...adapters.packages]);
 	const results = [];
 	for (const { name, archive } of archives) {
 		const integrity = `sha512-${createHash("sha512").update(readFileSync(join(artifacts, archive))).digest("base64")}`;
@@ -308,11 +307,9 @@ if (!publish) {
 		for (const file of assets) {
 			const bytes = readFileSync(join(artifacts, file));
 			const existing = release.assets.find((asset) => asset.name === file);
-			if (existing) {
-				assert.equal(existing.digest, `sha256:${digest(bytes)}`, `Existing release asset differs; never overwrite ${file}`);
-				continue;
-			}
-			assert(release.draft, "Cannot add files to an already public release");
+			const action = releaseAssetAction({ file, sha256: digest(bytes), existing, draft: release.draft });
+			if (action === "keep") continue;
+			if (action === "replace") await api(`releases/assets/${existing.id}`, "DELETE");
 			const upload = release.upload_url.split("{")[0];
 			assert(new URL(upload).hostname === "uploads.github.com", "Unexpected asset upload host");
 			const response = await fetch(`${upload}?name=${encodeURIComponent(file)}`, { method: "POST", headers: { Authorization: `Bearer ${process.env.GH_TOKEN}`, "Content-Type": "application/octet-stream" }, body: bytes });

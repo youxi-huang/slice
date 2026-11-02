@@ -6,6 +6,11 @@ Changes under **Unreleased** are not included in an existing release tag or its 
 
 ## [Unreleased]
 
+### Maintenance
+
+- npm publication takes `slice-pi`, `slice-opencode` and `slice-dsh` in a fixed order whatever order the adapter build reports them in. The first v0.7.5 run stopped on that order before publishing anything to npm.
+- A publication retry can complete the draft release a failed run left behind. It keeps the draft's archives, which must match the rebuild, and replaces only the failed run's own evidence: its provenance, scenario profile and checksums. Assets on a public release are still never replaced.
+
 ## [v0.7.5] — 2026-11-02
 
 v0.7.5 publishes SLICE on npm for all three hosts: the Pi extension as `slice-pi`, and the OpenCode and DSH history packages as `slice-opencode` and `slice-dsh`. The Pi extension compacts as v0.7.4 did; its one runtime change is which copy the duplicate notice keeps. This release changes no checkpoint format, resident build fingerprint or evaluation pin.
