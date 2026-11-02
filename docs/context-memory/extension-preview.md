@@ -784,19 +784,25 @@ npm provenance, and only then makes the release public. npm never accepts a
 version twice: a retry skips a package npm already holds with the same bytes,
 and different bytes stop the run.
 
-The workflow authenticates through npm's trusted publishing, which is set up
-once per package, and npm offers that only for a package that already exists.
-The first npm release therefore publishes with a token:
+The workflow authenticates through npm's trusted publishing with the run's own
+OIDC token. `slice-pi`, `slice-opencode` and `slice-dsh` have had a trusted
+publisher since v0.7.5 (GitHub Actions, repository `youxi-huang/slice`, workflow
+`context-memory-preview-release.yml`), so a release needs no token or secret.
 
-1. On npmjs.com, create a granular access token that can publish new
-   packages and may publish without an interactive two-factor prompt. Store it
-   as the repository secret `NPM_TOKEN`.
+npm sets up trusted publishing only for a package that already exists. A new
+package's first publication therefore needs a token, as v0.7.5 did:
+
+1. Create a granular access token that can publish new packages without an
+   interactive two-factor prompt, for example with
+   `npm token create --name <name> --packages-all --packages-and-scopes-permission read-write --bypass-2fa --expires 7`,
+   and store it as the repository secret `NPM_TOKEN`.
 2. Publish the release as usual.
-3. For `slice-pi`, `slice-opencode` and `slice-dsh`, add a trusted publisher:
-   GitHub Actions, repository `youxi-huang/slice`, workflow
-   `context-memory-preview-release.yml`.
-4. Delete the `NPM_TOKEN` secret and revoke the token. Later releases
-   authenticate with the workflow run's own OIDC token.
+3. Add the trusted publisher, for example with
+   `npm trust github <package> --repository youxi-huang/slice --file context-memory-preview-release.yml --allow-publish`.
+4. Delete the `NPM_TOKEN` secret and revoke the token.
+
+npm 11.21.1 warns that such tokens stop publishing directly in January 2027. A
+package added after that needs another route to its first version.
 
 If publication tooling needs a fix after a source tag was created, merge the
 fix through the normal PR checks. Retry **Publish extension preview** from that

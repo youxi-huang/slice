@@ -1,5 +1,44 @@
 # Validation record
 
+## v0.7.5 on npm: publication, then installation by name from npm on official hosts, 2026-11-02 UTC
+
+The published 0.7.5 packages, fetched from npm itself. No model was called: the host sessions below used the
+loopback provider.
+
+- **Publication.** The first run of **Publish extension preview** on `v0.7.5` passed every acceptance step,
+  uploaded the archives to a draft release and pushed `extension-v0.7.5`, `opencode-v0.7.5` and `dsh-v0.7.5`. It
+  then stopped in `publishNpm()` before anything reached npm. The adapter report lists `slice-dsh` before
+  `slice-opencode`, and the archive list was compared with the package names in order.
+  [youxi-huang/slice#112](https://github.com/youxi-huang/slice/pull/112) fixed the order. It also let a retry
+  replace the failed run's own evidence on the draft, since that run's provenance names a different tooling
+  commit. Before the retry, all three packages rebuilt from the tag matched the pushed package tags file for file.
+- **The retry.** It was dispatched from main at `269d5de` with `source_tag=v0.7.5`, and every step passed again:
+  - 150 stock-Pi checks on 1.4.0, 1.3.0, 1.2.0 and 1.1.0;
+  - 157 strict scenarios, with no exceptions;
+  - install acceptance on OpenCode 1.19.4 and 1.19.5 and DSH 0.2.1-rc.3 and rc.5.
+
+  It kept the three package tags and the four archives on the draft and replaced the three evidence files. It then
+  published `slice-pi`, `slice-opencode` and `slice-dsh`, in that order, and made the pre-release public. This
+  first publication used a temporary token. Afterwards the maintainer added a trusted publisher to each package
+  (GitHub Actions, this repository, `context-memory-preview-release.yml`), deleted the secret and revoked the token.
+- **What npm serves.** Each package's `0.7.5` is tagged `latest` and carries SLSA provenance naming that workflow
+  run. The three tarballs downloaded from npm match the release's `SHA256SUMS` byte for byte, so they are the
+  archives the acceptance ran.
+- **Installation from npm.** Each host installed by name from npm's own registry, outside any Node project.
+  - **Pi 1.4.0.** `pi install npm:slice-pi@0.7.5` put the package in Pi's agent directory, `pi list` showed it, and
+    `dist/extension.js` and `preview-build.json` matched the tarball. No runtime case ran from this installation;
+    the release acceptance ran them on the same bytes.
+  - **OpenCode 1.19.5.** The only setup was `slice-opencode@0.7.5` under `plugin`. OpenCode installed the package at
+    start, and the installed `dist/index.js` matched the tarball. Fixture P5 compacted natively twice, and both
+    `context_history` calls returned 7 original entries.
+  - **DSH 0.2.1-rc.5.** `dsh plugin --profile headless add slice-dsh@0.7.5` installed the package at once through
+    pnpm 11.28.5, since the version was named. Its files matched the tarball, and the session gave the same result
+    as OpenCode's.
+
+  OpenCode 1.19.4 and DSH rc.3 were not run against npm; the release acceptance covered them on the same bytes. The
+  OpenCode and DSH sessions used a one-off copy of `context-memory-host-run.mjs` whose registry was npm. That copy
+  is not in the repository.
+
 ## npm installation of all three packages on official hosts, from a loopback registry, 2026-11-02 UTC
 
 Synthetic evidence for the 0.7.5 npm channel: nothing was published and no model was called. The tree still
