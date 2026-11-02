@@ -31,6 +31,33 @@ export function npmRelease(version) {
 	return compareReleaseVersions(version, NPM_RELEASE) >= 0;
 }
 
+/** The archives an npm release publishes, in `NPM_PACKAGES` order whatever order the builds reported them in. */
+export function npmArchives(packages) {
+	const names = packages.map((entry) => entry.name);
+	assert.deepEqual([...names].sort(), [...NPM_PACKAGES].sort(), `An npm release publishes ${NPM_PACKAGES.join(", ")}, each once`);
+	return NPM_PACKAGES.map((name) => packages.find((entry) => entry.name === name)).map(({ name, archive }) => ({ name, archive }));
+}
+
+/** Files that describe the run that wrote them rather than the published bytes. */
+export const RUN_EVIDENCE = Object.freeze(["release-provenance.json", "preview-acceptance-profile.json", "SHA256SUMS"]);
+
+/**
+ * What publication does with one release asset. A file with the same bytes is kept, and a missing one is uploaded
+ * while the release is a draft. A retry after a failed run finds that run's draft: it replaces the run's own
+ * evidence, which names the run's tooling commit, and keeps every archive, which must not change between runs.
+ * Nothing on a public release is replaced.
+ *
+ * @param {{ file: string, sha256: string, existing?: { digest?: string | null }, draft: boolean }} asset
+ * @returns {"keep" | "upload" | "replace"}
+ */
+export function releaseAssetAction({ file, sha256, existing, draft }) {
+	if (existing && existing.digest === `sha256:${sha256}`) return "keep";
+	assert(draft, existing ? `Existing release asset differs; never overwrite ${file}` : "Cannot add files to an already public release");
+	if (!existing) return "upload";
+	assert(RUN_EVIDENCE.includes(file), `Existing release asset differs; never overwrite ${file}`);
+	return "replace";
+}
+
 /** Local preparation can describe Unreleased; publication requires its versioned changelog. */
 export function releaseChanges(changelog, tag, prepare = false) {
 	const section = changelog.split(`## [${tag}]`)[1]?.split("\n## [")[0]

@@ -7,7 +7,7 @@ import { parseDocument } from "yaml";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ADAPTER_HOSTS, assertFinalMainWorkflows, assertReleaseNotes, compareReleaseVersions, crossVersionChecks, hostList, isStrictRelease, minimumAcceptanceChecks, NPM_CLI_VERSION, NPM_RELEASE, npmRelease, parseReviewedVersion, publishesPackage, releaseChanges, releaseNotes, releasePiVersions, releasePlan, scenarioProfile, selectReviewedSourceTag } from "./context-memory-preview-release-checks.mjs";
+import { ADAPTER_HOSTS, assertFinalMainWorkflows, assertReleaseNotes, compareReleaseVersions, crossVersionChecks, hostList, isStrictRelease, minimumAcceptanceChecks, NPM_CLI_VERSION, NPM_PACKAGES, NPM_RELEASE, npmArchives, npmRelease, parseReviewedVersion, publishesPackage, releaseAssetAction, releaseChanges, releaseNotes, releasePiVersions, releasePlan, scenarioProfile, selectReviewedSourceTag } from "./context-memory-preview-release-checks.mjs";
 import { PROFILE, VERSION } from "./context-memory-preview-acceptance-profile.mjs";
 import { PRIMARY_PI_VERSION, SUPPORTED_PI_VERSIONS } from "../packages/coding-agent/src/extensions/context-memory/preview/compatibility.ts";
 
@@ -445,4 +445,32 @@ test("npm releases install from npm first, keep the Git package and name every a
 	}
 	const gitFirst = generated.replace(`pi install npm:slice-pi@${version}\n`, `pi install git:github.com/${repository}@extension-v${version}\n`);
 	assert.throws(() => assertReleaseNotes(gitFirst, options), /fixed npm release/);
+});
+
+test("npm publication takes the packages in its own order, whatever order the adapter build reported", () => {
+	// The adapter build reports DSH first; v0.7.5's first publication stopped on exactly that order.
+	const built = [{ name: "slice-pi", archive: "slice-pi-0.7.5.tgz" }, { name: "slice-dsh", archive: "slice-dsh-0.7.5.tgz", sha256: "0" }, { name: "slice-opencode", archive: "slice-opencode-0.7.5.tgz" }];
+	assert.deepEqual(npmArchives(built), NPM_PACKAGES.map((name) => ({ name, archive: `${name}-0.7.5.tgz` })));
+	assert.throws(() => npmArchives(built.slice(0, 2)), /each once/);
+	assert.throws(() => npmArchives([...built, built[1]]), /each once/);
+	assert.throws(() => npmArchives([...built.slice(0, 2), { name: "slice-other", archive: "slice-other-0.7.5.tgz" }]), /each once/);
+});
+
+test("a retry replaces only the failed run's evidence on a draft and never an archive or a public asset", () => {
+	const same = { digest: "sha256:aa" };
+	const other = { digest: "sha256:bb" };
+	assert.equal(releaseAssetAction({ file: "slice-pi-0.7.5.tgz", sha256: "aa", existing: same, draft: false }), "keep");
+	assert.equal(releaseAssetAction({ file: "release-provenance.json", sha256: "aa", existing: same, draft: true }), "keep");
+	assert.equal(releaseAssetAction({ file: "slice-dsh-0.7.5.tgz", sha256: "aa", draft: true }), "upload");
+	assert.throws(() => releaseAssetAction({ file: "slice-dsh-0.7.5.tgz", sha256: "aa", draft: false }), /already public/);
+	// The failed run's provenance names its tooling commit; the retry's names the commit with the fix.
+	for (const file of ["release-provenance.json", "preview-acceptance-profile.json", "SHA256SUMS"]) {
+		assert.equal(releaseAssetAction({ file, sha256: "aa", existing: other, draft: true }), "replace");
+		assert.throws(() => releaseAssetAction({ file, sha256: "aa", existing: other, draft: false }), /never overwrite/);
+	}
+	for (const file of ["slice-pi-0.7.5.tgz", "slice-opencode-0.7.5.tgz", "pi-context-compaction-v0.7.5-source.tar.gz"]) {
+		assert.throws(() => releaseAssetAction({ file, sha256: "aa", existing: other, draft: true }), /never overwrite/);
+	}
+	// An asset uploaded before GitHub recorded digests cannot be shown equal.
+	assert.throws(() => releaseAssetAction({ file: "slice-pi-0.7.5.tgz", sha256: "aa", existing: { digest: null }, draft: true }), /never overwrite/);
 });
