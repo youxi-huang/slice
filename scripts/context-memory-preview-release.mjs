@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { assertFinalMainWorkflows, assertReleaseNotes, crossVersionChecks, hostList, minimumAcceptanceChecks, parseReviewedVersion, releaseChanges, releaseNotes, releasePiVersions, scenarioProfile } from "./context-memory-preview-release-checks.mjs";
+import { ADAPTER_HOSTS, assertFinalMainWorkflows, assertReleaseNotes, crossVersionChecks, hostList, minimumAcceptanceChecks, NPM_CLI_VERSION, NPM_PACKAGES, npmRelease, parseReviewedVersion, releaseChanges, releaseNotes, releasePiVersions, scenarioProfile } from "./context-memory-preview-release-checks.mjs";
 import { assertScenarioAcceptance, OTHER_PI_VERSION } from "./context-memory-preview-acceptance-profile.mjs";
 
 const sourceRoot = process.env.PI_CONTEXT_RELEASE_ROOT;
@@ -31,8 +31,10 @@ const manifest = jsonFile(join(packageDir, "package.json"));
 const build = jsonFile(join(packageDir, "preview-build.json"));
 const pack = jsonFile(join(artifacts, "context-memory-preview-package-report.json"));
 const acceptance = jsonFile(join(artifacts, "context-memory-preview-acceptance", "report.json"));
-assert.equal(manifest.name, "pi-context-compaction-preview");
 const { version, tag, packageTag } = parseReviewedVersion(manifest.version);
+// From 0.7.5 the same package is published on npm as slice-pi; earlier releases were Git packages under the old name.
+assert(npmRelease(version) ? manifest.name === "slice-pi" : ["slice-pi", "pi-context-compaction-preview"].includes(manifest.name), "Unexpected package name");
+assert(!npmRelease(version) || manifest.private === undefined, "An npm release must be publishable");
 const sourceCommit = git("rev-parse", "HEAD");
 assert.equal(git("rev-parse", "--show-toplevel"), root, "Release source root must be the Git worktree root");
 const publicationToolingCommit = process.env.PI_CONTEXT_RELEASE_TOOLING_COMMIT ?? sourceCommit;
@@ -64,6 +66,39 @@ for (const check of crossVersionChecks(hosts)) {
 }
 assert.equal(pack.archive, `${manifest.name}-${version}.tgz`);
 assert.equal(pack.sha256, digest(readFileSync(join(artifacts, pack.archive))));
+
+// The OpenCode and DSH packages an npm release publishes beside the Pi package, and their acceptance on official hosts.
+const adapterRoot = join(artifacts, "host-adapters");
+const adapterReport = join(adapterRoot, "adapters-package-report.json");
+const adapterAcceptanceFile = join(artifacts, "adapters-acceptance", "adapters-acceptance.json");
+// Preparation in the ordinary pipeline builds them in a separate job; publication requires them.
+const withAdapters = npmRelease(version) && (publish || existsSync(adapterReport));
+let adapters;
+let adapterAcceptance;
+let adapterHosts;
+if (withAdapters) {
+	adapters = jsonFile(adapterReport);
+	assert.equal(adapters.version, version, "Adapter packages must carry the release version");
+	assert.deepEqual(adapters.packages.map((entry) => entry.name).sort(), NPM_PACKAGES.slice(1).sort());
+	for (const entry of adapters.packages) {
+		assert.equal(entry.archive, `${entry.name}-${version}.tgz`);
+		assert.equal(digest(readFileSync(join(adapterRoot, entry.archive))), entry.sha256, `${entry.archive} changed after the build`);
+		assert.equal(jsonFile(join(adapterRoot, entry.directory, "package.json")).name, entry.name);
+	}
+	adapterAcceptance = jsonFile(adapterAcceptanceFile);
+	assert.equal(adapterAcceptance.version, version);
+	assert.deepEqual(adapterAcceptance.packages, adapters.packages, "Adapter acceptance must describe these exact archives");
+	assert(adapterAcceptance.passed && adapterAcceptance.runs.length > 0, "Adapter acceptance must pass");
+	for (const run of adapterAcceptance.runs) {
+		const entry = adapters.packages.find((item) => item.host === run.host);
+		assert(run.passed && run.fetched && run.stop === null, `Adapter acceptance failed on ${run.host} ${run.version}`);
+		assert.equal(run.archiveSha256, entry.sha256, `Adapter acceptance on ${run.host} ${run.version} installed other bytes`);
+		assert(run.historyResults.some((entries) => entries > 0), `context_history returned nothing on ${run.host} ${run.version}`);
+	}
+	adapterHosts = Object.fromEntries(["opencode", "dsh"].map((host) => [host, adapterAcceptance.runs.filter((run) => run.host === host).map((run) => run.version)]));
+	assert.deepEqual(adapterHosts, ADAPTER_HOSTS, "Adapter acceptance must cover every host the release requires");
+	for (const entry of adapters.packages) copyFileSync(join(adapterRoot, entry.archive), join(artifacts, entry.archive));
+}
 
 let scenarioEvidence;
 const profile = scenarioProfile(version);
@@ -99,9 +134,10 @@ const changelog = readFileSync(join(root, "CHANGELOG.md"), "utf8");
 const notes = releaseNotes({
 	repository, branch, tag, packageTag, sourceCommit, build: build.build, hosts,
 	acceptanceChecks: hostAcceptance.reduce((sum, report) => sum + report.assertions.length, 0), changes: releaseChanges(changelog, tag, !publish),
-	scenarioAcceptance: scenarioEvidence?.acceptance,
+	// Preparation without the adapter job's results describes the hosts publication will require.
+	scenarioAcceptance: scenarioEvidence?.acceptance, adapterHosts: adapterHosts ?? ADAPTER_HOSTS,
 });
-assertReleaseNotes(notes, { repository, packageTag, branch, hosts, scenarioAcceptance: scenarioEvidence?.acceptance });
+assertReleaseNotes(notes, { repository, packageTag, branch, hosts, scenarioAcceptance: scenarioEvidence?.acceptance, adapterHosts: adapterHosts ?? ADAPTER_HOSTS });
 writeFileSync(join(artifacts, "context-memory-preview-release-notes.md"), notes);
 const provenance = {
 	version, sourceCommit, publicationToolingCommit, sourceTag: tag, packageTag, packageBranch: branch,
@@ -109,6 +145,8 @@ const provenance = {
 	supportedPi: build.supportedPi, supportedPiVersions: hosts, checkpointSchema: build.checkpointSchema,
 	packageFiles, stockAcceptance: { passed: hostAcceptance.reduce((sum, report) => sum + report.assertions.length, 0), hosts: hosts.map((host, index) => ({ version: host, passed: hostAcceptance[index].assertions.length })), providers: "synthetic loopback only" },
 	...(scenarioEvidence ? { scenarioAcceptance: scenarioEvidence.acceptance, rawScenarioSummary: scenarioEvidence.raw.summary, scenarioReportSha256: scenarioEvidence.reportSha256 } : {}),
+	...(npmRelease(version) ? { npm: [{ name: manifest.name, version, archive: pack.archive, sha256: pack.sha256 }, ...(adapters?.packages ?? []).map(({ name, archive, sha256, integrity, sourceHash }) => ({ name, version, archive, sha256, integrity, sourceHash }))] } : {}),
+	...(adapterAcceptance ? { adapterAcceptance: { pnpm: adapterAcceptance.pnpm, runs: adapterAcceptance.runs.map(({ host, version: hostVersion, compactions, historyResults, passed }) => ({ host, version: hostVersion, compactions, historyResults, passed })), providers: "synthetic loopback only" } } : {}),
 };
 
 async function api(path, method = "GET", body) {
@@ -120,6 +158,82 @@ async function api(path, method = "GET", body) {
 	if (response.status === 404 && method === "GET") return null;
 	if (!response.ok) throw new Error(`GitHub ${method} ${path} failed (${response.status}): ${await response.text()}`);
 	return response.json();
+}
+
+const botIdentity = { GIT_AUTHOR_NAME: "github-actions[bot]", GIT_AUTHOR_EMAIL: "41898282+github-actions[bot]@users.noreply.github.com", GIT_COMMITTER_NAME: "github-actions[bot]", GIT_COMMITTER_EMAIL: "41898282+github-actions[bot]@users.noreply.github.com" };
+
+/** One package directory as a Git tree, staged in its own index so the source checkout is never touched. */
+function packageTree(directory, files, indexFile) {
+	const env = { ...process.env, GIT_INDEX_FILE: indexFile };
+	command("git", ["read-tree", "--empty"], { env });
+	for (const file of files) {
+		const blob = git("hash-object", "-w", join(directory, file));
+		command("git", ["update-index", "--add", "--cacheinfo", `100644,${blob},${file}`], { env });
+	}
+	return command("git", ["write-tree"], { env });
+}
+
+/** `opencode-v<version>` and `dsh-v<version>`: each package alone at the root of an immutable commit. */
+async function publishAdapterTags(temporary) {
+	const date = git("show", "-s", "--format=%cI", sourceCommit);
+	const tags = [];
+	for (const entry of adapters.packages) {
+		const directory = join(adapterRoot, entry.directory);
+		const files = ["package.json", ...jsonFile(join(directory, "package.json")).files].sort();
+		const tree = packageTree(directory, files, join(temporary, `index-${entry.host}`));
+		const name = `${entry.host}-v${version}`;
+		const remote = await api(`git/ref/tags/${name}`);
+		if (remote) {
+			assert.equal(remote.object.type, "commit", "Adapter tag must point directly to its immutable commit");
+			assert.equal((await api(`git/commits/${remote.object.sha}`)).tree.sha, tree, `Existing ${name} differs; never overwrite it`);
+			tags.push({ name, commit: remote.object.sha, pushed: false });
+			continue;
+		}
+		const commit = command("git", ["commit-tree", tree, "-p", sourceCommit, "-m", `Publish ${entry.name} ${version}\n\nSource: ${sourceCommit}\nSource hash: ${entry.sourceHash}`], {
+			env: { ...process.env, ...botIdentity, GIT_AUTHOR_DATE: date, GIT_COMMITTER_DATE: date },
+		});
+		tags.push({ name, commit, pushed: true });
+	}
+	const pushes = tags.filter((entry) => entry.pushed).map((entry) => `${entry.commit}:refs/tags/${entry.name}`);
+	if (pushes.length) git("push", "--atomic", "origin", ...pushes);
+	return tags;
+}
+
+/**
+ * Publishes slice-pi, slice-opencode and slice-dsh with provenance. Trusted publishing authenticates through
+ * GitHub's OIDC token; NODE_AUTH_TOKEN serves only the first publication, before a trusted publisher exists.
+ * A version npm already has must carry these exact bytes, since npm never accepts it twice.
+ */
+function publishNpm(temporary) {
+	const npmrc = join(temporary, "npmrc");
+	writeFileSync(npmrc, process.env.NODE_AUTH_TOKEN ? "//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}\n" : "");
+	const env = { ...process.env, npm_config_userconfig: npmrc, npm_config_registry: "https://registry.npmjs.org/" };
+	const npm = (args, options = {}) => spawnSync("npm", args, { cwd: temporary, encoding: "utf8", env, ...options });
+	assert.equal(npm(["--version"]).stdout.trim(), NPM_CLI_VERSION, `Publication requires npm ${NPM_CLI_VERSION}`);
+	const published = (name) => {
+		const result = npm(["view", `${name}@${version}`, "dist.integrity", "--json"]);
+		if (result.status !== 0) {
+			if (/E404/.test(`${result.stdout}${result.stderr}`)) return null;
+			throw new Error(`npm view ${name}@${version} failed: ${result.stderr}`);
+		}
+		return result.stdout.trim() ? JSON.parse(result.stdout) : null;
+	};
+	const archives = [{ name: manifest.name, archive: pack.archive }, ...adapters.packages.map(({ name, archive }) => ({ name, archive }))];
+	assert.deepEqual(archives.map((entry) => entry.name), NPM_PACKAGES);
+	const results = [];
+	for (const { name, archive } of archives) {
+		const integrity = `sha512-${createHash("sha512").update(readFileSync(join(artifacts, archive))).digest("base64")}`;
+		const existing = published(name);
+		if (existing) {
+			assert.equal(existing, integrity, `npm already has ${name}@${version} with other bytes; never overwrite it`);
+			results.push({ name, version, integrity, published: false });
+			continue;
+		}
+		const result = npm(["publish", join(artifacts, archive), "--access", "public", "--provenance", "--tag", "latest"], { stdio: ["ignore", "inherit", "pipe"] });
+		assert.equal(result.status, 0, `npm publish ${name}@${version} failed: ${result.stderr}`);
+		results.push({ name, version, integrity, published: true });
+	}
+	return results;
 }
 
 if (publish) {
@@ -142,7 +256,7 @@ if (publish) {
 		.map(({ name, conclusion, html_url }) => ({ name, conclusion, url: html_url }));
 }
 writeFileSync(join(artifacts, "release-provenance.json"), `${JSON.stringify(provenance, null, 2)}\n`);
-const assets = [pack.archive, sourceArchive, "release-provenance.json"];
+const assets = [pack.archive, ...(adapters?.packages ?? []).map((entry) => entry.archive), sourceArchive, "release-provenance.json"];
 if (scenarioEvidence) assets.push("preview-acceptance-profile.json");
 const checksums = assets.map((file) => `${digest(readFileSync(join(artifacts, file)))}  ${file}\n`).join("");
 writeFileSync(join(artifacts, "SHA256SUMS"), checksums);
@@ -205,9 +319,13 @@ if (!publish) {
 			assert(response.ok, `Upload failed for ${file}: ${response.status}`);
 		}
 		if (!remoteTag) git("push", "--atomic", "origin", `${packageCommit}:refs/heads/${branch}`, `${packageCommit}:refs/tags/${packageTag}`);
+		// The OpenCode and DSH packages on Git, for users without npm, then all three on npm; the release stays a
+		// draft until both are in place, and a retry skips what is already published with the same bytes.
+		const adapterTags = adapters ? await publishAdapterTags(temporary) : [];
+		const npmPublished = npmRelease(version) ? publishNpm(temporary) : [];
 		if (release.draft) release = await api(`releases/${release.id}`, "PATCH", { draft: false });
 		for (const file of assets) assert(release.assets.some((entry) => entry.name === file), `Release does not expose ${file}`);
-		console.log(JSON.stringify({ version, sourceCommit, packageCommit, url: release.html_url, publishedAssets: assets }, null, 2));
+		console.log(JSON.stringify({ version, sourceCommit, packageCommit, adapterTags, npm: npmPublished, url: release.html_url, publishedAssets: assets }, null, 2));
 	} finally {
 		rmSync(temporary, { recursive: true, force: true });
 	}

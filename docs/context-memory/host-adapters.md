@@ -1,6 +1,6 @@
 # DSH and OpenCode retrieval previews
 
-These private development packages add one `context_history` tool to each host.
+These packages, `slice-opencode` and `slice-dsh`, add one `context_history` tool to each host.
 They search or read original stored text in the current session, with bounded
 results and continuation cursors. They do not generate Slice checkpoints,
 replace native compaction, or protect subsequent model requests. Neither
@@ -16,7 +16,7 @@ cap, and the three-cycle pressure fixtures for both hosts are in
 [capacity profiles](context-pressure.md). They leave both adapters
 retrieval-only.
 
-## Build and load
+## Build, publish and load
 
 From a source checkout, run:
 
@@ -27,16 +27,30 @@ node scripts/context-memory-adapters-check.mjs
 
 The builder emits `.artifacts/host-adapters/dsh` and
 `.artifacts/host-adapters/opencode`, or the same two directories under
-`node scripts/context-memory-adapters-build.mjs --output-dir <dir>`. Each
-bundles only its adapter and the private core, declares its runtime
-dependencies, and includes a source fingerprint. Neither publishes an npm
-package. Keep one copy of the tool installed; do not register another
+`node scripts/context-memory-adapters-build.mjs --output-dir <dir>`, and packs
+each as npm publishes it: `slice-dsh-<version>.tgz` and
+`slice-opencode-<version>.tgz`, with their SHA-256 in
+`adapters-package-report.json`. Each bundles only its adapter and the private
+core, declares its runtime dependencies, and includes a source fingerprint.
+Keep one copy of the tool installed; do not register another
 `context_history` beside it.
 
-| Package | Pinned API | Load |
+From 0.7.5 a release publishes both archives on npm beside the Pi package,
+`slice-pi`, and tags each in Git as `opencode-v<version>` and
+`dsh-v<version>`, the package alone at the root. Until that release, load a
+build as the table shows.
+
+| Package | Hosts | Load |
 | --- | --- | --- |
-| `slice-dsh-preview` | DSH `0.2.1-rc.3`, Cordis `4.0.5` | `dsh plugin --profile <profile> add file:<dir>/dsh` (it runs pnpm from `PATH`), then insert `{ id: slice-history, name: slice-dsh-preview }` in that profile's `cordis.patch.yml`. Profiles built on `dsh-base` provide the sessions, persistence and tools it injects. It exports `name`, `inject`, `apply`. |
-| `slice-opencode-preview` | OpenCode 1.x plugin contract and SDK `1.19.4` | `npm install --prefix <dir>/opencode --omit=dev`, then add the absolute `file://` URL of `<dir>/opencode/dist/index.js` to `plugin` in `opencode.json`. It exports only `SliceHistory`. |
+| `slice-dsh` | DSH from `0.2.1-rc.3` through later 0.2.x releases, Cordis `~4.0.5`; installed on rc.3 and rc.5 | From npm, `dsh plugin --profile <profile> add slice-dsh@<version>`; from a build, `add file:<dir>/dsh`. Either way DSH runs pnpm from `PATH`, and the package's own bundle patch inserts `{ id: slice-history, name: slice-dsh }`, so the profile needs no hand edit. A profile without hot reload, such as `headless`, loads it at its next start. Profiles built on `dsh-base` provide the sessions, persistence and tools it injects. It exports `name`, `inject`, `apply`. |
+| `slice-opencode` | OpenCode 1.x plugin contract and SDK `1.19.4`; `engines.opencode` admits `>=1.19.4 <2.0.0`; installed on 1.19.4 and 1.19.5 | From npm, add `slice-opencode@<version>` to `plugin` in `opencode.json`, and OpenCode installs it with its two dependencies at start. From a build, `npm install --prefix <dir>/opencode --omit=dev`, then add the absolute `file://` URL of `<dir>/opencode/dist/index.js`. It exports only `SliceHistory`. |
+
+DSH admits a plugin by its peers on DSH packages, checked before a registry
+install downloads anything. The published ranges admit every release from rc.3
+because nothing this adapter uses changed between rc.3 and rc.5. pnpm 11 waits
+a day before it installs a newly published version under a bare name; a named
+version installs at once. A profile that carries a hand-added `slice-history`
+row from a build before 0.7.5 must drop it: the tool refuses to register twice.
 
 The [README](../../README.md#dsh-and-opencode) gives the same steps
 as copyable commands.
@@ -63,7 +77,9 @@ DSH `0.2.1-rc.3` pins Zod 4.4.3, which GHSA-mrhx-c7xc-m3w5 affects, so the
 repository's root override lifts its development graph to 4.6.7. This does not
 modify an installed host or its dependencies.
 
-Remove the profile/plugin entry to uninstall. These plugins create no sidecar
+To uninstall, remove the plugin entry from `opencode.json`, or run
+`dsh plugin --profile <profile> remove slice-dsh`, which also deselects its
+bundle. These plugins create no sidecar
 history, recovery markers or custom checkpoint records to clean up. Native
 tool calls/results remain part of the host's ordinary session history.
 
@@ -104,11 +120,30 @@ packages. This is not a live-provider run or full interactive-host acceptance.
 
 The built DSH package has also run inside the official `dsh` 0.2.1-rc.3 CLI,
 installed from npm into an isolated `DSH_HOME`: added to the `headless` profile
-with the two steps above, it was offered to the model, and a loopback
+from its build directory with a hand-added row, as builds before 0.7.5 needed,
+it was offered to the model, and a loopback
 Messages-API stand-in that called it received the session's original user
 message under its native event ID. No real model was called, and the run did
 not cover interactive UI, native compaction or reopen in the CLI. See the
 [validation record](validation.md).
+
+Installation by name has its own acceptance:
+
+```sh
+node scripts/context-memory-adapters-build.mjs
+node --experimental-strip-types scripts/context-memory-adapters-acceptance.mjs --hosts-root <dir>
+```
+
+It installs official OpenCode 1.19.4 and 1.19.5 and DSH 0.2.1-rc.3 and rc.5
+from npm into `<dir>`, with pnpm 11.28.5 for DSH, and serves each built archive
+by name from a loopback npm registry that sends every other package to npm. On
+each host `context-memory-host-run.mjs --install registry --provider loopback`
+installs the package as a user would, runs fixture P5 through two native
+compactions and asks `context_history` for an earlier detail. A run passes when
+the host fetched the exact archive, the session finished without a stop and the
+tool returned original entries. CI runs it on every pull request, and
+publication runs it again on the release tag before anything reaches npm. The
+model is a loopback stand-in; no provider is called.
 
 For the separate **Linux x64 OpenCode 1.19.4** installed-package acceptance:
 

@@ -8,6 +8,7 @@ import { createConnection, createServer as createTcpServer } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { startLoopbackRegistry } from "./context-memory-loopback-registry.mjs";
 import { inspectOfficialPi } from "./context-memory-preview-stock-install.mjs";
 import { pressureProfile } from "./context-memory-pressure-profile.mjs";
 
@@ -33,6 +34,8 @@ let workDir = outputDir;
 const stockPackage = join(stockRoot, "node_modules", "@earendil-works", "pi-coding-agent");
 const stockVersion = JSON.parse(readFileSync(join(stockPackage, "package.json"), "utf8")).version;
 const workerCase = argument("--runtime-case", true);
+// A case run again from another installation keeps its own evidence directory.
+const caseLabel = argument("--runtime-label", true) ?? workerCase;
 const installedPackage = resolve(argument("--installed-package-dir", true) ?? packageDir);
 mkdirSync(outputDir, { recursive: true });
 
@@ -108,7 +111,7 @@ function responseEvent(response, modelId, text, toolCall, promptTokens = 100) {
 }
 
 async function runtimeAcceptance() {
-	const caseDir = join(workDir, "runtime", workerCase);
+	const caseDir = join(workDir, "runtime", caseLabel);
 	mkdirSync(caseDir, { recursive: true });
 	const reuseAgentDir = argument("--reuse-agent-dir", true);
 	const agentDir = reuseAgentDir ?? join(caseDir, "agent");
@@ -608,6 +611,48 @@ async function parentAcceptance() {
 			await settings.reload();
 			assert.deepEqual(settings.getGlobalSettings().packages, [dummy], "Remove did not preserve only the unrelated original package");
 			assert(!existsSync(downloaded), "Remove left the managed Git checkout installed");
+			assertExistingSettingsPreserved();
+		});
+		// The npm channel: the archive the build packed, served by name from a loopback registry, as npm serves it.
+		const packed = join(dirname(packageDir), "context-memory-preview-package-report.json");
+		const manifest = JSON.parse(readFileSync(join(candidate, "package.json"), "utf8"));
+		const registryEnv = (registry) => ({ ...environment(packageAgent), npm_config_offline: "false", npm_config_registry: registry.url });
+		let npmInstalled;
+		await check("stock CLI installs the release archive by name from npm", async () => {
+			const pack = JSON.parse(readFileSync(packed, "utf8"));
+			assert.equal(pack.build, report.candidate.build, "The packed archive is from another build");
+			const archive = join(dirname(packageDir), pack.archive);
+			assert.equal(fileHash(archive), pack.sha256, "The packed archive changed after the build");
+			const registry = await startLoopbackRegistry({ packages: [{ manifest, archive }] });
+			const spec = `npm:${manifest.name}@${manifest.version}`;
+			try {
+				await command(process.execPath, [stockCli, "install", spec], { env: registryEnv(registry) });
+			} finally {
+				await registry.close();
+			}
+			assert(registry.requests.includes(`GET /${manifest.name}/-/${pack.archive}`), "Pi did not fetch the archive from the registry");
+			await settings.reload();
+			npmInstalled = pm.getInstalledPath(spec, "user");
+			assert(npmInstalled && realpathSync(npmInstalled).startsWith(`${realpathSync(packageAgent)}${sep}`), "The npm package was not installed in Pi's agent directory");
+			assert(settings.getGlobalSettings().packages.includes(spec), "Install declaration was not persisted");
+			for (const file of ["package.json", "preview-build.json", "README.md", "LICENSE", ...manifest.pi.extensions]) {
+				assert.equal(fileHash(join(npmInstalled, file)), fileHash(join(candidate, file)), `The npm installation changed ${file}`);
+			}
+			assert(!existsSync(join(dirname(npmInstalled), "@earendil-works")), "Install added another Pi runtime beside the package");
+			assertExistingSettingsPreserved();
+			return { spec, archive: pack.archive, sha256: pack.sha256, requests: registry.requests };
+		});
+		await check("official host runtime from the npm installation: success", async () => {
+			assert(npmInstalled, "The npm installation did not pass");
+			await command(process.execPath, [script, "--package-dir", candidate, "--stock-root", stockRoot, "--output-dir", workDir, "--installed-package-dir", npmInstalled, "--runtime-case", "success", "--runtime-label", "npm-success"], { env: environment(join(workDir, "runtime", "npm-success", "agent")) });
+			return JSON.parse(readFileSync(join(workDir, "runtime", "npm-success", "result.json"), "utf8"));
+		});
+		await check("stock CLI removes the npm package by name, whichever version is installed", async () => {
+			assert(npmInstalled, "The npm installation did not pass");
+			await cli(["remove", `npm:${manifest.name}`]);
+			await settings.reload();
+			assert.deepEqual(settings.getGlobalSettings().packages, [dummy], "Remove did not preserve only the unrelated original package");
+			assert(!existsSync(npmInstalled), "Remove left the npm package installed");
 			assertExistingSettingsPreserved();
 		});
 	} finally {

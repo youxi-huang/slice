@@ -6,6 +6,24 @@ Changes under **Unreleased** are not included in an existing release tag or its 
 
 ## [Unreleased]
 
+### Added
+
+- From 0.7.5 each release is published on npm as well as on Git, so none of the three hosts needs a clone or a build. Pi installs the extension with `pi install npm:slice-pi`. OpenCode installs `slice-opencode` at start once it is listed under `plugin` in `opencode.json`. DSH installs `slice-dsh` with `dsh plugin --profile <profile> add slice-dsh`. The Git package and the `extension-preview` branch stay, and the OpenCode and DSH packages are also tagged `opencode-v<version>` and `dsh-v<version>` for installation without npm. Before anything is published, the release workflow installs the OpenCode and DSH packages by name from a loopback registry on official OpenCode 1.19.4 and 1.19.5 and DSH 0.2.1-rc.3 and rc.5, where a scripted session compacts natively twice and reads its history back, and installs, runs and removes the Pi package by name on every supported Pi. All three are published with npm provenance.
+
+### Changed
+
+- The Pi package is named `slice-pi`, its npm name, on Git as well; it was `pi-context-compaction-preview`. Pi identifies a Git package by its address, so existing installations keep loading and updating. When an npm copy and a Git copy are both loaded, the duplicate notice keeps the npm one and names the Git one to remove; a second npm copy is named without its version, `pi remove npm:slice-pi`.
+- The DSH package declares a DSH bundle, so `dsh plugin add` enables it with no hand-added `slice-history` row in the profile's `cordis.patch.yml`. A profile that carries that row from an earlier build must drop it, since the tool refuses to register twice. `dsh plugin --profile <profile> remove slice-dsh` removes the package and deselects its bundle.
+- The OpenCode package declares `engines.opencode` `>=1.19.4 <2.0.0`, which OpenCode checks before it loads an npm plugin. Both packages carry a README of their own.
+
+### Fixed
+
+- The DSH package installs on DSH 0.2.1-rc.4 and rc.5. Its peers named rc.3 alone, and DSH checks them before installing and at startup, so it refused the package on any later release. They now admit rc.3 and every later 0.2.x release; nothing the adapter uses changed between rc.3 and rc.5.
+
+### Maintenance
+
+- `scripts/context-memory-version.mjs` holds the release version every package reads. CI gains an `adapters` job that runs the adapter checks and the install acceptance, `scripts/context-memory-adapters-acceptance.mjs`. `context-memory-host-run.mjs --install registry` installs an adapter by package name from a loopback registry, `scripts/context-memory-loopback-registry.mjs`. The release workflow gains `id-token: write` for npm trusted publishing and a 30-minute limit. The first npm publication uses an `NPM_TOKEN` secret, deleted once each package has a trusted publisher, as the extension guide's maintainer section describes.
+
 ## [v0.7.4] — 2026-11-02
 
 v0.7.4 brings the source and installable Pi extension to the same version, including the changes below since v0.7.2. The existing v0.7.3 tag remains a source-only release and is not moved; the matching installable package is `extension-v0.7.4`. This release preparation changes no runtime behavior, checkpoint format, resident build fingerprint or evaluation pin.

@@ -1,5 +1,29 @@
 # Validation record
 
+## npm installation of all three packages on official hosts, from a loopback registry, 2026-11-02 UTC
+
+Synthetic evidence for the 0.7.5 npm channel: nothing was published and no model was called. The tree still
+carries version 0.7.4 in `scripts/context-memory-version.mjs`, so every archive below is `0.7.4`; a loopback
+registry served the build's own archives by name and sent every other package to npm.
+
+- **Pi.** `context-memory-preview-acceptance.mjs` on official Pi 1.4.0 passed 36 of 36 checks, exit 0, three of them
+  new. `pi install npm:slice-pi@0.7.4` fetched the packed archive into Pi's agent directory, every file
+  byte-identical and no second Pi runtime beside it; the `success` runtime case then ran from that installation;
+  and `pi remove npm:slice-pi` removed it, leaving the unrelated package and settings as they were. That package
+  predates the duplicate-notice change in this tree, which the focused regressions cover. Pi 1.3.0, 1.2.0 and
+  1.1.0 were not run here.
+- **OpenCode and DSH.** `context-memory-adapters-acceptance.mjs` passed on official OpenCode 1.19.4 and 1.19.5 and
+  DSH 0.2.1-rc.3 and rc.5, exit 0. OpenCode installed `slice-opencode@0.7.4` from its `plugin` entry at start;
+  DSH installed `slice-dsh@0.7.4` through `dsh plugin --profile headless add` with pnpm 11.28.5. Each host fetched
+  the exact archive, fixture P5 compacted natively twice, and both `context_history` calls returned 7 original
+  entries. The DSH profile listed `slice-dsh` among its bundles with no `slice-history` row in
+  `cordis.patch.yml`, and `dsh plugin --profile headless remove slice-dsh` removed the package and its bundle.
+- **What the runs changed.** The DSH package's earlier peers named `0.2.1-rc.3` exactly, which DSH checks with
+  prereleases included, so rc.4 and rc.5 would have refused it before downloading and again at startup; the
+  published ranges start at rc.3. In the harness, pnpm 11 ignored `npm_config_registry` and asked npm's own
+  registry, which answered 404, until the run also set `pnpm_config_registry`; and pnpm reused a stored copy
+  from an earlier run until each run got its own store.
+
 ## First use on GPT-6 Luna at Pi's defaults: the trigger, the README path, writer settings, recovery and native compaction, 2026-11-01 UTC
 
 A real-provider run, recorded apart from the synthetic evidence below. Official Pi 1.4.0 with

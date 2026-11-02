@@ -1,0 +1,96 @@
+import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { delimiter, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { parseArgs } from "node:util";
+import { parseOptions, run } from "./context-memory-host-run.mjs";
+import { ADAPTER_HOSTS } from "./context-memory-preview-release-checks.mjs";
+
+/** `dsh plugin` runs the pnpm on PATH; acceptance pins the release DSH's own repository uses. */
+export const PNPM_VERSION = "11.28.5";
+const OFFICIAL = { opencode: "opencode-ai", dsh: "@deepseek-ai/dsh" };
+
+const root = fileURLToPath(new URL("../", import.meta.url));
+const sha256 = (file) => createHash("sha256").update(readFileSync(file)).digest("hex");
+
+function npmInstall(prefix, spec, ignoreScripts) {
+	if (existsSync(join(prefix, "node_modules", ".package-lock.json"))) return;
+	mkdirSync(prefix, { recursive: true });
+	const result = spawnSync(
+		"npm",
+		["install", "--prefix", prefix, "--save-exact", "--no-audit", "--no-fund", ...(ignoreScripts ? ["--ignore-scripts"] : []), spec],
+		{ encoding: "utf8", stdio: ["ignore", "ignore", "pipe"] },
+	);
+	if (result.status !== 0) throw new Error(`npm install ${spec} failed: ${result.stderr}`);
+}
+
+/** The installed official version, from the registry the lockfile records. */
+function installedVersion(prefix, name) {
+	const record = JSON.parse(readFileSync(join(prefix, "node_modules", ".package-lock.json"), "utf8")).packages[`node_modules/${name}`];
+	assert(record?.resolved?.startsWith(`https://registry.npmjs.org/${name}/-/`), `${name} was not installed from npm`);
+	assert.match(record.integrity, /^sha512-/);
+	return record.version;
+}
+
+/** Installs each package by name on every host the release requires, then runs a loopback session there. */
+export async function acceptAdapters({ packageRoot, hostsRoot, outputDir }) {
+	const built = JSON.parse(readFileSync(join(packageRoot, "adapters-package-report.json"), "utf8"));
+	rmSync(outputDir, { recursive: true, force: true });
+	mkdirSync(outputDir, { recursive: true });
+	const pnpm = join(hostsRoot, `pnpm-${PNPM_VERSION}`);
+	npmInstall(pnpm, `pnpm@${PNPM_VERSION}`, false);
+	const path = process.env.PATH;
+	process.env.PATH = [join(pnpm, "node_modules", ".bin"), path].join(delimiter);
+	const summary = { version: built.version, pnpm: PNPM_VERSION, packages: built.packages, runs: [], passed: false };
+	try {
+		for (const [host, versions] of Object.entries(ADAPTER_HOSTS)) {
+			const item = built.packages.find((entry) => entry.host === host);
+			assert(item, `No built ${host} package`);
+			assert.equal(sha256(join(packageRoot, item.archive)), item.sha256, `${item.archive} changed after the build`);
+			for (const version of versions) {
+				const hostRoot = join(hostsRoot, `${host}-${version}`);
+				npmInstall(hostRoot, `${OFFICIAL[host]}@${version}`, host === "opencode");
+				const row = { host, version, package: `${item.name}@${built.version}` };
+				summary.runs.push(row);
+				try {
+					assert.equal(installedVersion(hostRoot, OFFICIAL[host]), version);
+					const options = parseOptions(["--host", host, "--route", "200k", "--provider", "loopback", "--install", "registry", "--host-root", hostRoot, "--package-dir", join(packageRoot, item.directory), "--output-dir", join(outputDir, `${host}-${version}`)]);
+					const report = await run(options);
+					Object.assign(row, {
+						archiveSha256: report.install.sha256,
+						fetched: report.install.fetched,
+						compactions: report.compactions.filter((entry) => entry.ok).length,
+						historyResults: report.historyResults,
+						stop: report.stop,
+					});
+					assert.equal(report.install.sha256, item.sha256, "The host installed other bytes than the built archive");
+					assert.equal(report.stop, null, `The session stopped: ${report.stop}`);
+					assert(row.compactions >= 1, "The host never compacted natively");
+					row.passed = true;
+				} catch (error) {
+					row.passed = false;
+					row.error = error.message;
+				}
+				process.stdout.write(`${row.passed ? "PASS" : "FAIL"} ${row.package} on ${host} ${version}${row.error ? `: ${row.error}` : ""}\n`);
+			}
+		}
+	} finally {
+		process.env.PATH = path;
+		summary.passed = summary.runs.length === Object.values(ADAPTER_HOSTS).flat().length && summary.runs.every((row) => row.passed);
+		writeFileSync(join(outputDir, "adapters-acceptance.json"), `${JSON.stringify(summary, null, 2)}\n`);
+	}
+	return summary;
+}
+
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+	const { values } = parseArgs({ options: { "package-root": { type: "string" }, "hosts-root": { type: "string" }, "output-dir": { type: "string" } } });
+	assert(values["hosts-root"], "Usage: node --experimental-strip-types scripts/context-memory-adapters-acceptance.mjs --hosts-root <dir> [--package-root .artifacts/host-adapters] [--output-dir .artifacts/adapters-acceptance]");
+	const summary = await acceptAdapters({
+		packageRoot: resolve(values["package-root"] ?? join(root, ".artifacts/host-adapters")),
+		hostsRoot: resolve(values["hosts-root"]),
+		outputDir: resolve(values["output-dir"] ?? join(root, ".artifacts/adapters-acceptance")),
+	});
+	if (!summary.passed) process.exitCode = 1;
+}

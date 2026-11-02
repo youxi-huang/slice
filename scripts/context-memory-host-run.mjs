@@ -1,5 +1,6 @@
 import { spawn, spawnSync } from "node:child_process";
 import { once } from "node:events";
+import { createHash } from "node:crypto";
 import { appendFileSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { createServer as createNetServer } from "node:net";
@@ -7,12 +8,15 @@ import { join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
+import { startLoopbackRegistry } from "./context-memory-loopback-registry.mjs";
 import { pressureProfile } from "./context-memory-pressure-profile.mjs";
 
 // Fixture P5 as a session on the official OpenCode or DSH host: native compaction under a capacity profile, then
 // one questionnaire whose answers the compactions removed from view, so the Slice `context_history` tool is the way
 // back. The user pastes every output; the host's own model replies. `--provider loopback` answers from a local
 // Responses-API stand-in, `--provider openai` sends GPT-6 Luna requests to OpenAI's API through the proxy secret.
+// `--install registry` installs the adapter by package name from a loopback npm registry, as a user installs it from
+// npm; `--install file` loads the built directory.
 const root = fileURLToPath(new URL("../", import.meta.url));
 const script = "scripts/context-memory-host-run.mjs";
 const P5 = join(root, "eval/preview/fixtures/P5");
@@ -180,6 +184,7 @@ const loopbackTokens = (text) => Math.ceil(Buffer.byteLength(text) / 3);
 
 export function startLoopback({ log } = {}) {
 	const previous = new Map();
+	const historyResults = [];
 	let calls = 0;
 	const server = createServer(async (request, response) => {
 		const chunks = [];
@@ -216,8 +221,17 @@ export function startLoopback({ log } = {}) {
 			reply = `## Summary\n${"The ledger migration moves eu-west to eu-central. ".repeat(120)}`;
 		} else if (asked >= 0) {
 			// The questionnaire is the run's last turn: one history search, then an answer.
-			if (input.slice(asked).some((item) => item.type === "function_call_output") || !tools.some((tool) => tool.name === "context_history")) {
+			const output = input.slice(asked).findLast((item) => item.type === "function_call_output");
+			if (output || !tools.some((tool) => tool.name === "context_history")) {
 				kind = "questionnaire-answer";
+				// How many original entries the tool returned, or -1 when its output was not a history result.
+				if (output) {
+					try {
+						historyResults.push(JSON.parse(itemText(output)).entries?.length ?? -1);
+					} catch {
+						historyResults.push(-1);
+					}
+				}
 				const count = (itemText(input[asked]).match(/^\d+\. /gm) ?? []).length;
 				reply = JSON.stringify(Object.fromEntries(Array.from({ length: count }, (_, i) => [String(i + 1), { status: "unknown" }])));
 			} else {
@@ -261,7 +275,28 @@ export function startLoopback({ log } = {}) {
 		send("response.completed", { response: { ...base, status: "completed", output: [item], usage, incomplete_details: null } });
 		response.end();
 	});
-	return new Promise((done) => server.listen(0, "127.0.0.1", () => done({ server, url: `http://127.0.0.1:${server.address().port}/v1`, calls: () => calls })));
+	return new Promise((done) =>
+		server.listen(0, "127.0.0.1", () => done({ server, url: `http://127.0.0.1:${server.address().port}/v1`, calls: () => calls, historyResults: () => [...historyResults] })),
+	);
+}
+
+/** Packs the built adapter as npm would publish it and serves it by name; other packages come from npm. */
+async function packageRegistry(packageDir, directory) {
+	mkdirSync(directory, { recursive: true });
+	const packed = spawnSync("npm", ["pack", "--ignore-scripts", "--json", "--pack-destination", directory], { cwd: packageDir, encoding: "utf8" });
+	if (packed.status !== 0) throw new Error(`npm pack failed: ${packed.stderr}`);
+	const [entry] = JSON.parse(packed.stdout);
+	const archive = join(directory, entry.filename);
+	const manifest = JSON.parse(readFileSync(join(packageDir, "package.json"), "utf8"));
+	const server = await startLoopbackRegistry({ packages: [{ manifest, archive }], upstream: "https://registry.npmjs.org" });
+	const spec = `${manifest.name}@${manifest.version}`;
+	return {
+		spec,
+		url: server.url,
+		evidence: { from: "registry", spec, archive: entry.filename, sha256: createHash("sha256").update(readFileSync(archive)).digest("hex"), integrity: entry.integrity },
+		fetched: () => server.requests.includes(`GET /${manifest.name}/-/${entry.filename}`),
+		close: () => server.close(),
+	};
 }
 
 export function parseOptions(argv) {
@@ -273,6 +308,7 @@ export function parseOptions(argv) {
 			provider: { type: "string" },
 			"host-root": { type: "string" },
 			"package-dir": { type: "string" },
+			install: { type: "string", default: "file" },
 			"output-dir": { type: "string" },
 			thinking: { type: "string", default: "max" },
 			"summary-tokens": { type: "string" },
@@ -281,11 +317,12 @@ export function parseOptions(argv) {
 			"max-cost-usd": { type: "string" },
 		},
 	});
-	const usage = `Usage: node --experimental-strip-types ${script} --host opencode|dsh --route 200k|272k --provider loopback|openai --host-root <npm installation> --package-dir <built adapter> --output-dir <dir> [--thinking max] [--summary-tokens N, dsh only] [--max-requests N --max-minutes N --max-cost-usd N]`;
+	const usage = `Usage: node --experimental-strip-types ${script} --host opencode|dsh --route 200k|272k --provider loopback|openai --host-root <npm installation> --package-dir <built adapter> --output-dir <dir> [--install file|registry] [--thinking max] [--summary-tokens N, dsh only] [--max-requests N --max-minutes N --max-cost-usd N]`;
 	for (const name of ["host", "route", "provider", "host-root", "package-dir", "output-dir"]) if (!values[name]) throw new Error(`Missing --${name}. ${usage}`);
 	if (!["opencode", "dsh"].includes(values.host)) throw new Error(`--host must be opencode or dsh. ${usage}`);
 	if (!ROUTES[values.route]) throw new Error(`--route must be 200k or 272k. ${usage}`);
 	if (!["loopback", "openai"].includes(values.provider)) throw new Error(`--provider must be loopback or openai. ${usage}`);
+	if (!["file", "registry"].includes(values.install)) throw new Error(`--install must be file or registry. ${usage}`);
 	if (values["summary-tokens"] !== undefined && values.host !== "dsh") throw new Error("--summary-tokens sets DSH's summary cap and applies only to --host dsh");
 	const limits = {};
 	for (const [name, key, fallback] of [
@@ -310,6 +347,7 @@ export function parseOptions(argv) {
 		provider: values.provider,
 		hostRoot: resolve(values["host-root"]),
 		packageDir: resolve(values["package-dir"]),
+		install: values.install,
 		outputDir: resolve(values["output-dir"]),
 		thinking: values.thinking,
 		summaryTokens,
@@ -332,7 +370,7 @@ export const limitReached = (rows, limits) => {
 const hostEnvironment = () => Object.fromEntries(Object.entries(process.env).filter(([key]) => !/API_KEY|TOKEN|SECRET/i.test(key)));
 
 /** OpenCode 1.19.4: `opencode serve` driven through its SDK; one step-finish part per model call. */
-async function openCodeHost(options, work, loopback) {
+async function openCodeHost(options, work, loopback, registry) {
 	const { createOpencodeClient } = await import("@opencode-ai/sdk");
 	const route = ROUTES[options.route];
 	const profile = pressureProfile({ contextWindow: route.context, maxOutputTokens: route.output, inputLimit: route.context, model: "openai/gpt-6-luna" });
@@ -340,15 +378,17 @@ async function openCodeHost(options, work, loopback) {
 	const candidate = join(work, "candidate");
 	const project = join(work, "project");
 	mkdirSync(project, { recursive: true });
-	cpSync(options.packageDir, candidate, { recursive: true });
-	for (const name of ["typebox", "zod"]) cpSync(join(root, "node_modules", name), join(candidate, "node_modules", name), { recursive: true });
+	if (!registry) {
+		cpSync(options.packageDir, candidate, { recursive: true });
+		for (const name of ["typebox", "zod"]) cpSync(join(root, "node_modules", name), join(candidate, "node_modules", name), { recursive: true });
+	}
 	const config = {
 		autoupdate: false,
 		share: "disabled",
 		enabled_providers: ["openai"],
 		model: "openai/gpt-6-luna",
 		small_model: "openai/gpt-6-luna",
-		plugin: [pathToFileURL(join(candidate, "dist/index.js")).href],
+		plugin: [registry ? registry.spec : pathToFileURL(join(candidate, "dist/index.js")).href],
 		provider: {
 			openai: {
 				...(loopback ? { options: { baseURL: loopback.url } } : {}),
@@ -380,6 +420,7 @@ async function openCodeHost(options, work, loopback) {
 		OPENCODE_DISABLE_MODELS_FETCH: "1",
 		OPENCODE_DISABLE_FFF: "1",
 		OPENCODE_EXPERIMENTAL_DISABLE_FILEWATCHER: "1",
+		...(registry ? { npm_config_registry: registry.url, npm_config_cache: join(work, "npm-cache") } : {}),
 	};
 	const port = await new Promise((done) => {
 		const probe = createNetServer().listen(0, "127.0.0.1", () => {
@@ -453,7 +494,7 @@ async function openCodeHost(options, work, loopback) {
 }
 
 /** DSH 0.2.1-rc.3: the headless CLI, one process per turn, resumed by session ID; usage from the session log. */
-async function dshHost(options, work, loopback) {
+async function dshHost(options, work, loopback, registry) {
 	const route = ROUTES[options.route];
 	const profile = pressureProfile({ contextWindow: route.context, maxOutputTokens: route.output, model: "openai/gpt-6-luna" });
 	const compaction = { ...profile.dsh.config, ...(options.summaryTokens ? { maxTokens: options.summaryTokens } : {}) };
@@ -462,12 +503,25 @@ async function dshHost(options, work, loopback) {
 	const project = join(work, "project");
 	const candidate = join(work, "candidate");
 	mkdirSync(project, { recursive: true });
-	cpSync(options.packageDir, candidate, { recursive: true });
-	const base = { ...hostEnvironment(), DSH_HOME: home };
-	// Booting a shipped profile once writes its template; the plugin is then a dependency of that profile.
-	for (const args of [["--profile", "headless", "--dump-config"], ["plugin", "--profile", "headless", "add", `file:${candidate}`]]) {
-		const result = spawnSync(dsh, args, { cwd: work, env: base, encoding: "utf8", timeout: 300_000 });
-		if (result.status !== 0) throw new Error(`dsh ${args.join(" ")} failed: ${result.stderr}`);
+	if (!registry) cpSync(options.packageDir, candidate, { recursive: true });
+	// A registry install gets its own pnpm store and cache, so pnpm fetches the archive instead of reusing a copy.
+	// pnpm 11 reads its settings from pnpm_config_* and no longer from npm_config_*.
+	const isolated = registry
+		? { npm_config_registry: registry.url, pnpm_config_registry: registry.url, XDG_DATA_HOME: join(work, "data"), XDG_CACHE_HOME: join(work, "cache") }
+		: {};
+	const base = { ...hostEnvironment(), DSH_HOME: home, ...isolated };
+	// Booting a shipped profile once writes its template; the plugin is then a dependency of that profile, which its
+	// own bundle patch enables, from the registry or from a directory alike.
+	for (const args of [["--profile", "headless", "--dump-config"], ["plugin", "--profile", "headless", "add", registry ? registry.spec : `file:${candidate}`]]) {
+		// Asynchronous, so the loopback registry in this process can answer pnpm.
+		const child = spawn(dsh, args, { cwd: work, env: base, stdio: ["ignore", "pipe", "pipe"] });
+		let stderr = "";
+		child.stderr.on("data", (chunk) => (stderr += chunk));
+		child.stdout.resume();
+		const timer = setTimeout(() => child.kill("SIGTERM"), 300_000);
+		const [status] = await once(child, "exit");
+		clearTimeout(timer);
+		if (status !== 0) throw new Error(`dsh ${args.join(" ")} failed: ${stderr}`);
 	}
 	const patch = `- id: llm-pi-ai
   config:
@@ -494,9 +548,6 @@ ${Object.entries(compaction)
   config:
     root: !!js dshHomePath('sessions')
     compression: none
-- insert:
-    - id: slice-history
-      name: slice-dsh-preview
 `;
 	writeFileSync(join(home, "profiles/headless/cordis.patch.yml"), patch);
 	const env = { ...base, OPENAI_API_KEY: loopback ? "loopback" : "proxy-injected", ...(loopback ? {} : { NODE_USE_ENV_PROXY: "1" }) };
@@ -573,8 +624,9 @@ export async function run(options) {
 	mkdirSync(options.outputDir, { recursive: true });
 	const journal = join(options.outputDir, "turns.jsonl");
 	const loopback = options.provider === "loopback" ? await startLoopback({ log: join(options.outputDir, "loopback.jsonl") }) : undefined;
-	const host = await (options.host === "opencode" ? openCodeHost : dshHost)(options, join(options.outputDir, "work"), loopback);
-	const report = { host: options.host, route: options.route, line: route.line, provider: options.provider, thinking: options.thinking, configuration: host.configuration, limits: options.limits, turns: [], stop: null };
+	const registry = options.install === "registry" ? await packageRegistry(options.packageDir, join(options.outputDir, "registry")) : undefined;
+	const host = await (options.host === "opencode" ? openCodeHost : dshHost)(options, join(options.outputDir, "work"), loopback, registry);
+	const report = { host: options.host, route: options.route, line: route.line, provider: options.provider, thinking: options.thinking, install: registry?.evidence ?? { from: "directory" }, configuration: host.configuration, limits: options.limits, turns: [], stop: null };
 	const { scoreProbe } = await import(pathToFileURL(join(root, "eval/preview/scorer.ts")).href);
 	async function turn(label, text, estimate) {
 		const before = await host.read();
@@ -673,10 +725,18 @@ export async function run(options) {
 			costUsd: cost(sum(final.rows)),
 			largestRequest: Math.max(0, ...final.rows.map(total)),
 			loopbackCalls: loopback?.calls() ?? null,
+			historyResults: loopback?.historyResults() ?? null,
 		});
+		if (registry) {
+			// The host fetched this archive by name, so the run used the bytes npm would serve.
+			report.install.fetched = registry.fetched();
+			if (!report.install.fetched) report.stop ??= `the host never fetched ${registry.spec} from the registry`;
+			if (loopback && !report.historyResults.some((entries) => entries > 0)) report.stop ??= "context_history returned no original entries";
+		}
 	} finally {
 		await host.close();
 		loopback?.server.close();
+		await registry?.close();
 		writeFileSync(join(options.outputDir, "report.json"), `${JSON.stringify(report, null, 2)}\n`);
 	}
 	return report;
