@@ -4,17 +4,29 @@ This extension runs on unmodified official Pi **1.4.0, 1.3.0, 1.2.0 and 1.1.0** 
 It is distributed through the `extension-preview` Git branch and immutable
 `extension-v*` package tags, separately from the v0.3.0 resident source build.
 
-**v0.7.4 supports manual and completed-turn threshold compaction.** Optional
-background preparation with the configured writer (A) and data-only work notes
-from the session model (B) are both disabled by default. B carries covered user
-messages in full or asks the configured writer to compact them. Sources are
-validated at trust boundaries, with incremental checks between them. The
-synthetic long-session scenario requires both the 50 ms request target and the
-growth bound under the strict profile; the first request after each checkpoint
-still pays one full check. Real-provider pause, cost, cache behavior and recovery
-benefits remain unproven. v0.4.1 fixes how checkpoints carry notes; see the
-[release scope](v0.4.0-release.md), the [changelog](../../CHANGELOG.md) and the
-[validation record](validation.md).
+**v0.7.4 supports manual `/compact`, completed-turn threshold compaction,
+and default-on earlier compaction via `makeRoom`.** With the session model as
+writer, it can start the same checked handover before Pi's threshold when a
+further turn would leave too little room for the writer. This is distinct from
+optional background preparation with the configured writer (A) and data-only
+work notes from the session model (B), both disabled by default. B carries
+covered user messages in full or asks the configured writer to compact them.
+Sources are validated at trust boundaries, with incremental checks between
+them. The synthetic long-session scenario requires both the 50 ms request
+target and the growth bound under the strict profile; the first request
+after each checkpoint still pays one full check.
+
+Real-provider GPT-6 Luna runs measured compaction pauses, writer costs and
+cache reads. On 2026-11-01, first-use sessions with the published
+`extension-v0.7.2` recorded 13.7-14.0 s compactions with about 95% of writer
+input read from cache; a subsequent development build compacted a prose
+session early in 29 s. The final next-turn allowance was regression-tested,
+not rerun with a real provider. These bounded observations are not an
+end-to-end real-provider test of the v0.7.4 release artifact, and do not
+establish consistently shorter pauses, lower total cost, better everyday
+recovery or long-session reliability. v0.4.1 fixes how checkpoints carry notes;
+see the [release scope](v0.4.0-release.md), the [changelog](../../CHANGELOG.md)
+and the [validation record](validation.md).
 
 Since 0.7.0 this extension is the first adapter of the host-neutral core
 package (`packages/compaction-core`), and the resident runtime is frozen as of
@@ -182,10 +194,11 @@ The preview distinguishes three kinds of session:
   pending or failed attempt recorded by it. Every check below is strict, and a
   failure is recorded durably.
 - **Eligible:** a persistent, text-only session on Pi 1.4.0, 1.3.0, 1.2.0 or 1.1.0 with no
-  checkpoint from another compactor. The preview handles its compaction: Pi's
-  threshold compaction after a completed turn and `/compact` both write a
-  checked checkpoint, and overflow recovery is cancelled until `/compact`. The
-  first attempt, or a cancelled overflow recovery, makes it protected.
+  checkpoint from another compactor. Manual `/compact`, Pi's threshold
+  compaction after a completed turn, and earlier settled-turn compaction with
+  the session writer all write checked checkpoints. Overflow recovery is
+  cancelled until `/compact`. The first attempt, or a cancelled overflow
+  recovery, makes it protected.
 - **Not protected:** a session the preview has never protected and cannot
   check: Pi outside 1.4.0, 1.3.0, 1.2.0 and 1.1.0, an in-memory session, a native or other
   compactor's checkpoint, an image or other non-text content, or an
@@ -336,12 +349,13 @@ that file. `compactAt` bounds the manual checkpoint budget but does not start
 automatic compaction; the resident event log and its report are not provided.
 Setting `enabled: false` and restarting ends the package's protection.
 
-This preview compacts at completed turns: on `/compact`, and when Pi's
-threshold compaction runs after a turn completes. With the session writer it
-also starts that compaction itself at a settled turn whose context, with one
-more turn as large as Pi's default reserve or as the turn just settled, would
-leave the writer's handover no room. On a 272,000-token route Pi's own trigger
-leaves 16,384 tokens, less than a handover takes. One-shot `print` and `json`
+This preview handles manual `/compact` and Pi's threshold compaction after
+completed turns. With the session model as writer, the default-on `makeRoom`
+check at `agent_settled` can start the same checked compaction earlier, if
+another turn as large as Pi's default reserve or the turn just settled would
+leave no room for the handover. It does not start compaction for a configured
+fixed writer; manual and Pi-threshold compaction still work. On a 272,000-token
+route, Pi's own trigger leaves 16,384 tokens, less than a handover takes. One-shot `print` and `json`
 runs, which exit when the turn settles, are left to Pi's trigger. Both lines
 read Pi's own count of the context, from the provider's reported usage, as do
 the request guards. While input is queued or a
@@ -451,8 +465,9 @@ use the explicit retry operation.
 
 ## Optional preparation experiments
 
-v0.4.0 adds optional preparation; the pinned v0.3.3 tag does not contain it.
-The default remains synchronous manual compaction. To opt in, add this field
+v0.4.0 adds optional background preparation; the pinned v0.3.3 tag does not
+contain it. This is distinct from the default `makeRoom` early check and
+Pi's completed-turn threshold compaction. To opt in, add this field
 alongside the ordinary settings in `pi-context-memory.json` and restart Pi:
 
 ```json
