@@ -8,7 +8,7 @@ import { PRIMARY_PI_VERSION, SUPPORTED_PI_VERSIONS } from "../packages/coding-ag
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 const name = "pi-context-compaction-preview";
-const version = "0.7.2";
+const version = "0.7.4";
 const extensionRoot = "packages/coding-agent/src/extensions/context-memory/";
 const previewRoot = `${extensionRoot}preview/`;
 // The host-neutral core (v0.7.0 WP2): lifted modules may be bundled alongside preview files.
