@@ -4,17 +4,24 @@ This extension runs on unmodified official Pi **1.4.0, 1.3.0, 1.2.0 and 1.1.0** 
 It is distributed through the `extension-preview` Git branch and immutable
 `extension-v*` package tags, separately from the v0.3.0 resident source build.
 
-**v0.7.4 supports manual and completed-turn threshold compaction.** Optional
-background preparation with the configured writer (A) and data-only work notes
-from the session model (B) are both disabled by default. B carries covered user
+**v0.7.4 supports manual `/compact` and completed-turn threshold compaction,
+and with the session writer compacts earlier, at a settled turn, when one more
+turn would leave the writer's handover no room.** Optional background
+preparation with the configured writer (A) and data-only work notes from the
+session model (B) are both disabled by default. B carries covered user
 messages in full or asks the configured writer to compact them. Sources are
 validated at trust boundaries, with incremental checks between them. The
 synthetic long-session scenario requires both the 50 ms request target and the
 growth bound under the strict profile; the first request after each checkpoint
-still pays one full check. Real-provider pause, cost, cache behavior and recovery
-benefits remain unproven. v0.4.1 fixes how checkpoints carry notes; see the
-[release scope](v0.4.0-release.md), the [changelog](../../CHANGELOG.md) and the
-[validation record](validation.md).
+still pays one full check.
+
+On GPT-6 Luna on 2026-11-01, the published `extension-v0.7.2` compacted two
+first-use sessions in 13.7 and 14.0 s, reading about 95% of the writer's input
+from cache, and a later development build started a prose session's
+compaction itself below Pi's trigger, finishing in 29 s. The final next-turn
+allowance is covered by a regression, not a provider run. v0.4.1 fixes how
+checkpoints carry notes; see the [release scope](v0.4.0-release.md), the
+[changelog](../../CHANGELOG.md) and the [validation record](validation.md).
 
 Since 0.7.0 this extension is the first adapter of the host-neutral core
 package (`packages/compaction-core`), and the resident runtime is frozen as of
@@ -182,10 +189,11 @@ The preview distinguishes three kinds of session:
   pending or failed attempt recorded by it. Every check below is strict, and a
   failure is recorded durably.
 - **Eligible:** a persistent, text-only session on Pi 1.4.0, 1.3.0, 1.2.0 or 1.1.0 with no
-  checkpoint from another compactor. The preview handles its compaction: Pi's
-  threshold compaction after a completed turn and `/compact` both write a
-  checked checkpoint, and overflow recovery is cancelled until `/compact`. The
-  first attempt, or a cancelled overflow recovery, makes it protected.
+  checkpoint from another compactor. Manual `/compact`, Pi's threshold
+  compaction after a completed turn, and earlier settled-turn compaction with
+  the session writer all write checked checkpoints. Overflow recovery is
+  cancelled until `/compact`. The first attempt, or a cancelled overflow
+  recovery, makes it protected.
 - **Not protected:** a session the preview has never protected and cannot
   check: Pi outside 1.4.0, 1.3.0, 1.2.0 and 1.1.0, an in-memory session, a native or other
   compactor's checkpoint, an image or other non-text content, or an
@@ -451,9 +459,9 @@ use the explicit retry operation.
 
 ## Optional preparation experiments
 
-v0.4.0 adds optional preparation; the pinned v0.3.3 tag does not contain it.
-The default remains synchronous manual compaction. To opt in, add this field
-alongside the ordinary settings in `pi-context-memory.json` and restart Pi:
+v0.4.0 adds optional background preparation; the pinned v0.3.3 tag does not
+contain it. To opt in, add this field alongside the ordinary settings in
+`pi-context-memory.json` and restart Pi:
 
 ```json
 {
