@@ -13,15 +13,15 @@ The aim is continuity with evidence, not perfect memory.
   <img src="docs/context-memory/assets/pi-context-compaction-hero-editorial.png" alt="A compact handover cites an earlier failure and a later decision, with references back to the original session entries.">
 </picture>
 
-SLICE currently runs as an independent extension for [Pi](https://github.com/earendil-works/pi). Its host-neutral core is in the source tree, with Pi as the first compaction adapter. Source-built [DSH and OpenCode previews](#dsh-and-opencode) add current-session history access; SLICE checkpoint writing on those hosts remains planned.
+SLICE currently runs as an independent extension for [Pi](https://github.com/earendil-works/pi). Its host-neutral core is in the source tree, with Pi as the first compaction adapter. [DSH and OpenCode packages](#dsh-and-opencode) add current-session history access; SLICE checkpoint writing on those hosts remains planned.
 
-**Current release:** [v0.7.4](https://github.com/youxi-huang/slice/releases/tag/v0.7.4), for unmodified official Pi **1.4.0, 1.3.0, 1.2.0 and 1.1.0**. It brings the source and installable extension to the same version, including the long-session compaction, prompt-cache and history-search fixes recorded in the [changelog](CHANGELOG.md). Before v0.7.1 the project was called Pi Context Compaction.
+**Current release:** [v0.7.5](https://github.com/youxi-huang/slice/releases/tag/v0.7.5), for unmodified official Pi **1.4.0, 1.3.0, 1.2.0 and 1.1.0**, with history packages for OpenCode and DSH. All three install from npm, with no clone or build; the Pi extension compacts as v0.7.4 did, and the [changelog](CHANGELOG.md) records the rest. Before v0.7.1 the project was called Pi Context Compaction.
 
 [Get started](#get-started) · [How it works](#how-it-works) · [Current scope](#current-scope) · [Evidence](#evidence-and-limits)
 
 ## Get started
 
-SLICE runs on three hosts, at two levels. On **Pi** it is a published extension that writes checked checkpoints. On **DSH** and **OpenCode** it is a source-built preview that adds one tool, `context_history`, and leaves compaction to the host.
+SLICE runs on three hosts, at two levels. On **Pi** it is an extension that writes checked checkpoints. On **DSH** and **OpenCode** it is a plugin that adds one tool, `context_history`, and leaves compaction to the host. All three are published on npm.
 
 ### Pi
 
@@ -30,7 +30,7 @@ You need a working installation of official Pi **1.4.0, 1.3.0, 1.2.0 or 1.1.0**,
 Install the published extension:
 
 ```sh
-pi install git:github.com/youxi-huang/slice@extension-v0.7.4
+pi install npm:slice-pi@0.7.5
 ```
 
 Restart Pi and begin a new, persistent, text-only session. Then run:
@@ -47,43 +47,27 @@ If Pi says `Nothing to compact (session too small)`, there simply is not enough 
 
 There is no Pi source patch, separate model or second history service to set up. By default the extension writes with the session's own model, and Pi continues to manage authentication.
 
-The repository moved from `youxi-huang/pi-context-compaction` to `youxi-huang/slice`. GitHub redirects the old address, so an installation made from it keeps loading and updating; [moving it](#move-an-older-installation) is optional. **`extension-v0.7.4` is the installable package tag; `v0.7.4` marks the source tree, which is not a Pi package.** Please use the installation command above rather than installing the development tree.
+The same package is on Git as the tag `extension-v0.7.5`. An installation made from Git, at this address or the old `youxi-huang/pi-context-compaction`, keeps loading and updating; [moving it to npm](#move-an-older-installation) is optional. **`v0.7.5` marks the source tree, which is not a Pi package.** Please use the installation command above rather than installing the development tree.
 
 ### DSH and OpenCode
 
-For [DSH](https://github.com/deepseek-ai/deepseek-harness) `0.2.1-rc.3` and [OpenCode](https://github.com/anomalyco/opencode) `1.19.4`, the tool searches and reads the current session's original records through the host's own storage and cites the host's native IDs. Both packages are built from source and are not published to npm. Building them needs Git and **Node.js 22.19 or later**:
+On [OpenCode](https://github.com/anomalyco/opencode) from 1.19.4 and [DSH](https://github.com/deepseek-ai/deepseek-harness) from 0.2.1-rc.3, tested on OpenCode 1.19.4 and 1.19.5 and DSH rc.3 and rc.5, the tool searches and reads the current session's original records through the host's own storage and cites the host's native IDs.
 
-```sh
-git clone https://github.com/youxi-huang/slice && cd slice
-node scripts/context-memory-ops.mjs deps
-node scripts/context-memory-adapters-build.mjs --output-dir ~/slice-adapters
+**OpenCode.** Add the package to `plugin` in `opencode.json`, in a project or in `~/.config/opencode/opencode.json`, and restart OpenCode, which installs it from npm:
+
+```json
+{ "plugin": ["slice-opencode@0.7.5"] }
 ```
 
 **DSH.** `dsh plugin` runs pnpm, which must be on your `PATH`. Add the package to a profile built on DSH's base bundle, which provides the sessions, persistence and tools it needs:
 
 ```sh
-dsh plugin --profile <profile> add file:$HOME/slice-adapters/dsh
+dsh plugin --profile <profile> add slice-dsh@0.7.5
 ```
 
-Then load it from that profile's `cordis.patch.yml`, in place of an empty `[]` or as one more list item:
+The package enables itself in that profile, and a profile without hot reload, such as `headless`, loads it at its next start. If you added a `slice-history` row to the profile's `cordis.patch.yml` for an earlier build, remove it: the tool refuses to register twice.
 
-```yaml
-- insert:
-    - id: slice-history
-      name: slice-dsh-preview
-```
-
-**OpenCode.** Install the package's two runtime dependencies, then list its entry file under `plugin` in `opencode.json` with an absolute file URL:
-
-```sh
-npm install --prefix ~/slice-adapters/opencode --omit=dev --ignore-scripts
-```
-
-```json
-{ "plugin": ["file:///absolute/path/to/slice-adapters/opencode/dist/index.js"] }
-```
-
-The tool asks for OpenCode's `context_history` permission, which is allowed unless your configuration says otherwise. On both hosts it reads only the current session and refuses forked or child sessions. To uninstall, remove the patch row or the plugin entry. The [host adapter guide](docs/context-memory/host-adapters.md) covers the pinned APIs, the evidence and what is not yet supported.
+The tool asks for OpenCode's `context_history` permission, which is allowed unless your configuration says otherwise. On both hosts it reads only the current session and refuses forked or child sessions. To uninstall, remove the `plugin` entry, or run `dsh plugin --profile <profile> remove slice-dsh`. Without npm, `github:youxi-huang/slice#opencode-v0.7.5` and `github:youxi-huang/slice#dsh-v0.7.5` install the same packages through Git. The [host adapter guide](docs/context-memory/host-adapters.md) covers the pinned APIs, building from source, the evidence and what is not yet supported.
 
 ## Why keep the evidence?
 
@@ -148,40 +132,40 @@ You can review the [validation record](docs/context-memory/validation.md), [chan
 
 ## Updates and recovery
 
-The Pi command above pins a release. If you would rather follow the moving preview branch, install it instead:
+The Pi command above pins a release. To follow later releases instead, install the package without a version:
 
 ```sh
-pi install git:github.com/youxi-huang/slice@extension-preview
+pi install npm:slice-pi
 ```
 
-To update only that branch-based package:
+To update only this package:
 
 ```sh
-pi update --extension git:github.com/youxi-huang/slice@extension-preview
+pi update --extension npm:slice-pi
 ```
 
-Pi records one source per package address, so installing the same address with another tag or branch replaces the recorded source rather than adding a second copy.
+Pi records one entry per npm name, so installing `slice-pi` with or without a version replaces the earlier entry rather than adding a second copy. The Git package follows the same rule per address, and its moving branch is `extension-preview`.
 
-To remove the extension, whichever tag or branch is installed:
+To remove the extension, whichever version is installed:
 
 ```sh
-pi remove git:github.com/youxi-huang/slice
+pi remove npm:slice-pi
 ```
 
-Restart Pi after installation or update. A pinned tag does not move when updated; a plain `pi update` updates Pi itself. Updating or removing the extension does not rewrite the session history, and removing it is not a verified recovery method for a blocked checkpoint.
+Restart Pi after installation or update. A pinned version does not move when updated; a plain `pi update` updates Pi itself. Updating or removing the extension does not rewrite the session history, and removing it is not a verified recovery method for a blocked checkpoint.
 
 ### Move an older installation
 
-An installation made from the old address keeps working through GitHub's redirect, and `pi remove` and `pi update` still need that old address. To move it, exit Pi and run:
+An installation made from Git keeps working: at this address it updates through `extension-preview`, and from the old address through GitHub's redirect, where `pi remove` and `pi update` still need that old address. To move either to npm, exit Pi and run:
 
 ```sh
-pi remove git:github.com/youxi-huang/pi-context-compaction &&
-pi install git:github.com/youxi-huang/slice@extension-v0.7.4
+pi remove git:github.com/youxi-huang/slice &&
+pi install npm:slice-pi@0.7.5
 ```
 
-Add `-l` to both commands for a project installation. Then restart Pi, reopen the session and run `/compaction-doctor`. Do not continue a protected session between the two commands; a pending or failed compaction stays pending or failed after the move. An object-form package filter has to be copied to the new entry by hand.
+For an installation from the old address, remove `git:github.com/youxi-huang/pi-context-compaction` instead. Add `-l` to both commands for a project installation. Then restart Pi, reopen the session and run `/compaction-doctor`. Do not continue a protected session between the two commands; a pending or failed compaction stays pending or failed after the move. An object-form package filter has to be copied to the new entry by hand.
 
-**Never install both addresses.** Pi counts them as two packages and loads both copies, reporting only that their `context_history` and `context_note` tools conflict, and renames their commands `/compaction-doctor:1`, `/compaction-doctor:2` and so on. From v0.7.2, a copy that finds another one loaded stands aside, so only one compacts, and it says once which address to remove. Two copies of v0.7.1 or earlier still compete for the next compaction and pause the session, and in testing neither `/compaction-recover` nor `/compact` cleared that pause. If this has happened, remove one address, restart Pi and continue in a new session; the paused session's history stays in its file.
+**Never install two copies.** Pi counts each address, Git or npm, as a package of its own and loads every copy, reporting only that their `context_history` and `context_note` tools conflict, and renames their commands `/compaction-doctor:1`, `/compaction-doctor:2` and so on. From v0.7.2, a copy that finds another one loaded stands aside, so only one compacts, and it says once which address to remove; from v0.7.5 it keeps the npm copy. Two copies of v0.7.1 or earlier still compete for the next compaction and pause the session, and in testing neither `/compaction-recover` nor `/compact` cleared that pause. If this has happened, remove one address, restart Pi and continue in a new session; the paused session's history stays in its file.
 
 For specific failure states and recovery steps, see the [extension guide](docs/context-memory/extension-preview.md#failure-and-recovery).
 

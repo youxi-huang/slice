@@ -1,10 +1,11 @@
-# SLICE for Pi: independent extension preview v0.7.4
+# SLICE for Pi: independent extension preview v0.7.5
 
-This extension runs on unmodified official Pi **1.4.0, 1.3.0, 1.2.0 and 1.1.0** as an ordinary Pi package. v0.7.4 retains the checkpoint schema and source-hash format used by v0.4.1, so existing preview checkpoints reopen unchanged, and a v0.5.0 checkpoint reopens under v0.4.3.
-It is distributed through the `extension-preview` Git branch and immutable
-`extension-v*` package tags, separately from the v0.3.0 resident source build.
+This extension runs on unmodified official Pi **1.4.0, 1.3.0, 1.2.0 and 1.1.0** as an ordinary Pi package. v0.7.5 retains the checkpoint schema and source-hash format used by v0.4.1, so existing preview checkpoints reopen unchanged, and a v0.5.0 checkpoint reopens under v0.4.3.
+It is published on npm as `slice-pi` and on Git through the `extension-preview`
+branch and immutable `extension-v*` package tags, separately from the v0.3.0
+resident source build.
 
-**v0.7.4 supports manual `/compact` and completed-turn threshold compaction,
+**v0.7.5 supports manual `/compact` and completed-turn threshold compaction,
 and with the session writer compacts earlier, at a settled turn, when one more
 turn would leave the writer's handover no room.** Optional background
 preparation with the configured writer (A) and data-only work notes from the
@@ -30,46 +31,65 @@ package (`packages/compaction-core`), and the resident runtime is frozen as of
 v0.7.1 is the first extension built on that core. It behaves as v0.6.0 did and
 adds official Pi 1.4.0 as the primary host. v0.7.2 installs from the new
 repository address and lets a second installed copy stand aside; it compacts
-as v0.7.1 did.
+as v0.7.1 did. v0.7.5 compacts as v0.7.4 did and is the first release on npm,
+beside packages that give OpenCode and DSH the same `context_history`.
 
 The project is now called SLICE, Source-Linked Indexed Compaction of
 Everything. Its repository moved to `youxi-huang/slice`, and GitHub redirects
-the old `youxi-huang/pi-context-compaction` address. The package name, the
+the old `youxi-huang/pi-context-compaction` address. The
 `/compaction-*` commands, the `pi-context-memory.json` configuration file and
 stored checkpoint identifiers keep their earlier names, so nothing needs
-migrating.
+migrating. From v0.7.5 the package itself is named `slice-pi`, on npm and on
+Git; Pi identifies an installation by its source, not by that name.
 
 ## Install, update and remove
 
-Official Pi 1.4.0, 1.3.0, 1.2.0 and 1.1.0 users can install the pinned package:
+Official Pi 1.4.0, 1.3.0, 1.2.0 and 1.1.0 users can install the pinned release
+from npm:
 
 ```sh
-pi install git:github.com/youxi-huang/slice@extension-v0.7.4
+pi install npm:slice-pi@0.7.5
 ```
 
-Restart Pi afterwards. Tags and commits stay pinned.
-
-Pi records one source per package address, so installing the same address
-with another tag or branch replaces the recorded source. To follow
-later compatible previews instead of a pinned tag, install the moving branch:
+Restart Pi afterwards. A pinned version stays fixed. To follow later
+compatible releases instead, install the package without a version:
 
 ```sh
-pi install git:github.com/youxi-huang/slice@extension-preview
+pi install npm:slice-pi
 ```
 
 Update only this package:
 
 ```sh
-pi update --extension git:github.com/youxi-huang/slice@extension-preview
+pi update --extension npm:slice-pi
 ```
 
+Pi records one entry per npm name, so installing `slice-pi` with or without a
+version replaces the earlier entry.
+
+The same package is on Git, pinned by its package tag:
+
+```sh
+pi install git:github.com/youxi-huang/slice@extension-v0.7.5
+```
+
+or following the moving branch, which `pi update --extension
+git:github.com/youxi-huang/slice@extension-preview` updates:
+
+```sh
+pi install git:github.com/youxi-huang/slice@extension-preview
+```
+
+Pi records one source per package address, so installing the same address
+with another tag or branch replaces the recorded source.
+
 `pi update --extensions` updates every installed package. A plain `pi update`
-updates Pi itself and `pi update --all` updates Pi and all packages; the v0.7.4
+updates Pi itself and `pi update --all` updates Pi and all packages; the v0.7.5
 preview supports Pi 1.4.0, 1.3.0, 1.2.0 and 1.1.0.
 
 ### Before updating Pi
 
-Check that the installed preview lists the new Pi version first; v0.7.4, v0.7.2 and
+Check that the installed preview lists the new Pi version first; v0.7.5, v0.7.4, v0.7.2 and
 v0.7.1 list 1.4.0, 1.3.0, 1.2.0 and 1.1.0, and v0.6.0 lists 1.3.0, 1.2.0 and 1.1.0. On a Pi version the preview does not list, sessions it never protected are left to
 Pi's own compaction, but a session it protects stays blocked: requests stop and
 a failure record is written, because the preview cannot check its checkpoints
@@ -77,28 +97,34 @@ on that host. To continue such a session, reopen it with a listed Pi version
 and run `/compact` there, or keep the file and continue in a new session.
 `/compaction-doctor` shows which case applies.
 
-Remove the package, whichever tag or branch is installed:
+Remove the package, whichever version is installed:
 
 ```sh
-pi remove git:github.com/youxi-huang/slice
+pi remove npm:slice-pi
 ```
 
-An installation made from the old address keeps working through GitHub's
-redirect, and removing or updating it still names that address. To move it,
-exit Pi and run:
+A Git installation is removed by its address, whichever tag or branch is
+installed: `pi remove git:github.com/youxi-huang/slice`.
+
+An installation made from Git keeps working, and one made from the old address
+keeps working through GitHub's redirect; removing or updating it still names
+that address. To move it to npm, exit Pi and run:
 
 ```sh
-pi remove git:github.com/youxi-huang/pi-context-compaction &&
-pi install git:github.com/youxi-huang/slice@extension-v0.7.4
+pi remove git:github.com/youxi-huang/slice &&
+pi install npm:slice-pi@0.7.5
 ```
 
-Add `-l` to both for a project installation, then restart Pi, reopen the
-session and run `/compaction-doctor`. Do not continue a protected session
-between the two commands. Never install both addresses: Pi loads both copies,
+For an installation from the old address, remove
+`git:github.com/youxi-huang/pi-context-compaction` instead. Add `-l` to both
+for a project installation, then restart Pi, reopen the session and run
+`/compaction-doctor`. Do not continue a protected session between the two
+commands. Never install two copies, from two addresses or from Git and npm:
+Pi loads every copy,
 reports only that their tools conflict, and numbers their commands
 (`/compaction-doctor:1`, `/compaction-doctor:2`). From v0.7.2, a copy that
 finds another one loaded stands aside, so only one compacts, and it says once
-which address to remove. Two copies of v0.7.1 or earlier still compete for the
+which address to remove; from v0.7.5 it keeps the npm copy. Two copies of v0.7.1 or earlier still compete for the
 next compaction and pause the session. In testing, neither
 `/compaction-recover` nor `/compact` cleared that pause; remove one address,
 restart Pi and continue in a new session.
@@ -107,13 +133,12 @@ Install the package from one scope only (global by default, or project-local
 with `-l`). A compatible older preview can reopen its own checkpoint schema;
 resident and native checkpoints are not migrated.
 
-The [v0.7.4 release](https://github.com/youxi-huang/slice/releases/tag/v0.7.4)
-also provides the extension `.tgz`, source archive, provenance, exact-package
-scenario evidence and SHA256 checksums.
-The Git package contains five reviewed files and no host runtime. It is not
-published to npm; `private: true` prevents accidental registry publication and
-does not prevent Pi's Git installation. Updating or removing the extension
-preserves Pi credentials, other package registrations and session files.
+The [v0.7.5 release](https://github.com/youxi-huang/slice/releases/tag/v0.7.5)
+also provides the extension `.tgz` npm serves, the OpenCode and DSH `.tgz`,
+source archive, provenance, exact-package scenario evidence and SHA256
+checksums. The package contains five reviewed files and no host runtime, and
+npm and Git carry the same files. Updating or removing the extension preserves
+Pi credentials, other package registrations and session files.
 
 ## First use
 

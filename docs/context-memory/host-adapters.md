@@ -35,10 +35,11 @@ core, declares its runtime dependencies, and includes a source fingerprint.
 Keep one copy of the tool installed; do not register another
 `context_history` beside it.
 
-From 0.7.5 a release publishes both archives on npm beside the Pi package,
+Each release from 0.7.5 publishes both archives on npm beside the Pi package,
 `slice-pi`, and tags each in Git as `opencode-v<version>` and
-`dsh-v<version>`, the package alone at the root. Until that release, load a
-build as the table shows.
+`dsh-v<version>`, the package alone at the root. Users install from npm as the
+[README](../../README.md#dsh-and-opencode) shows; a build loads as the table
+shows.
 
 | Package | Hosts | Load |
 | --- | --- | --- |
@@ -52,8 +53,6 @@ a day before it installs a newly published version under a bare name; a named
 version installs at once. A profile that carries a hand-added `slice-history`
 row from a build before 0.7.5 must drop it: the tool refuses to register twice.
 
-The [README](../../README.md#dsh-and-opencode) gives the same steps
-as copyable commands.
 
 DSH requires an owning persistence backend and a successful session flush; a
 session with no persistence listener is refused. The tool opens a **read**

@@ -6,6 +6,10 @@ Changes under **Unreleased** are not included in an existing release tag or its 
 
 ## [Unreleased]
 
+## [v0.7.5] — 2026-11-02
+
+v0.7.5 publishes SLICE on npm for all three hosts: the Pi extension as `slice-pi`, and the OpenCode and DSH history packages as `slice-opencode` and `slice-dsh`. The Pi extension compacts as v0.7.4 did; its one runtime change is which copy the duplicate notice keeps. This release changes no checkpoint format, resident build fingerprint or evaluation pin.
+
 ### Added
 
 - From 0.7.5 each release is published on npm as well as on Git, so none of the three hosts needs a clone or a build. Pi installs the extension with `pi install npm:slice-pi`. OpenCode installs `slice-opencode` at start once it is listed under `plugin` in `opencode.json`. DSH installs `slice-dsh` with `dsh plugin --profile <profile> add slice-dsh`. The Git package and the `extension-preview` branch stay, and the OpenCode and DSH packages are also tagged `opencode-v<version>` and `dsh-v<version>` for installation without npm. Before anything is published, the release workflow installs the OpenCode and DSH packages by name from a loopback registry on official OpenCode 1.19.4 and 1.19.5 and DSH 0.2.1-rc.3 and rc.5, where a scripted session compacts natively twice and reads its history back, and installs, runs and removes the Pi package by name on every supported Pi. All three are published with npm provenance.
