@@ -1,7 +1,7 @@
 {
-  "build": "stock-preview+src.ae7bb53ee105c16a",
-  "version": "0.7.2",
-  "sourceCommit": "738722ad2fa03fda6c3eb9032f38a1f6302b473f",
+  "build": "stock-preview+src.c95e6c599a4b7aa1",
+  "version": "0.7.4",
+  "sourceCommit": "a70c76c41ff404529c5d19d071baf09f45a745b5",
   "supportedPi": "1.4.0",
   "supportedPiVersions": [
     "1.4.0",
@@ -10,7 +10,7 @@
     "1.1.0"
   ],
   "checkpointSchema": 1,
-  "sourceHash": "ae7bb53ee105c16ab56848eaa3de5cc1835beed7868ced4d0468e43e60040b06",
+  "sourceHash": "c95e6c599a4b7aa1007f9aa924033637a4cd6609640ea0c0950d390d109dccd1",
   "sources": [
     {
       "file": "packages/coding-agent/src/extensions/context-memory/config.ts",
@@ -46,7 +46,7 @@
     },
     {
       "file": "packages/coding-agent/src/extensions/context-memory/preview/controller.ts",
-      "sha256": "33c38cfe17afaf424a78839f869f0800c43fc28e29f62e2ad18570ff973f603f"
+      "sha256": "385882427d42e58cf06ebfa04ded3a64cb8f6aa4e6f0d4fce1deff4c15014252"
     },
     {
       "file": "packages/coding-agent/src/extensions/context-memory/preview/copies.ts",
@@ -58,7 +58,7 @@
     },
     {
       "file": "packages/coding-agent/src/extensions/context-memory/preview/extension.ts",
-      "sha256": "c969b1e230f0dc8f0e9b1815b7d68384c29c0a6afb6c277db71aae991743e008"
+      "sha256": "a2fb6b5185bf445d18966e936d2d1f4357e16d16d5ffcd07f79d5d0c8b1dc2bb"
     },
     {
       "file": "packages/coding-agent/src/extensions/context-memory/preview/failure-io.ts",
@@ -86,7 +86,7 @@
     },
     {
       "file": "packages/coding-agent/src/extensions/context-memory/preview/writer.ts",
-      "sha256": "e3fe8ae2b837912212b7604d6adce1c3b3d6762222153425e514dccc224ddb56"
+      "sha256": "a5f6b1e3f34ab27f0beafc1542d6915078352d510977ec9fe05a3d4a88509555"
     },
     {
       "file": "packages/compaction-core/src/call-journal.ts",
@@ -118,7 +118,7 @@
     },
     {
       "file": "packages/compaction-core/src/history.ts",
-      "sha256": "b8d325731ae94414a0fc4fdae4094ce131e652601d5e1d89e41a5fc0f0c718f0"
+      "sha256": "fa97302e18010f1a71f09822d1df83be22022f523b3b2d01583010fdfbdf62d1"
     },
     {
       "file": "packages/compaction-core/src/identity.ts",
@@ -154,7 +154,7 @@
     },
     {
       "file": "packages/compaction-core/src/scope-diagnostics.ts",
-      "sha256": "4ebf5d64ec9e7030425589aae0e148d871bd7b751232486248fb9f60cd685f20"
+      "sha256": "20bc6d698718520966f6ee4e306c761d3dec588830568728d192ae978ef9e823"
     },
     {
       "file": "packages/compaction-core/src/sources-repair.ts",
@@ -166,11 +166,10 @@
     },
     {
       "file": "packages/compaction-core/src/writer.ts",
-      "sha256": "7d6009b9c7c61ba23fd0e8b9185b030abd6eccb45515d7bc4b0c4dd3f9eb4007"
+      "sha256": "3bc6e05d8ea17f7966c8c5708a76fa92f4dd4b2f965162694eeea25832af967f"
     }
   ],
   "externalImports": [
-    "@earendil-works/pi-ai",
     "@earendil-works/pi-coding-agent",
     "node:crypto",
     "node:fs",

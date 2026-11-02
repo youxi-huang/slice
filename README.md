@@ -1,10 +1,10 @@
-# SLICE for Pi: independent extension preview v0.7.2
+# SLICE for Pi: independent extension preview v0.7.4
 
-This extension runs on unmodified official Pi **1.4.0, 1.3.0, 1.2.0 and 1.1.0** as an ordinary Pi package. v0.7.2 retains the checkpoint schema and source-hash format used by v0.4.1, so existing preview checkpoints reopen unchanged, and a v0.5.0 checkpoint reopens under v0.4.3.
+This extension runs on unmodified official Pi **1.4.0, 1.3.0, 1.2.0 and 1.1.0** as an ordinary Pi package. v0.7.4 retains the checkpoint schema and source-hash format used by v0.4.1, so existing preview checkpoints reopen unchanged, and a v0.5.0 checkpoint reopens under v0.4.3.
 It is distributed through the `extension-preview` Git branch and immutable
 `extension-v*` package tags, separately from the v0.3.0 resident source build.
 
-**v0.7.2 supports manual and completed-turn threshold compaction.** Optional
+**v0.7.4 supports manual and completed-turn threshold compaction.** Optional
 background preparation with the configured writer (A) and data-only work notes
 from the session model (B) are both disabled by default. B carries covered user
 messages in full or asks the configured writer to compact them. Sources are
@@ -37,7 +37,7 @@ migrating.
 Official Pi 1.4.0, 1.3.0, 1.2.0 and 1.1.0 users can install the pinned package:
 
 ```sh
-pi install git:github.com/youxi-huang/slice@extension-v0.7.2
+pi install git:github.com/youxi-huang/slice@extension-v0.7.4
 ```
 
 Restart Pi afterwards. Tags and commits stay pinned.
@@ -57,12 +57,12 @@ pi update --extension git:github.com/youxi-huang/slice@extension-preview
 ```
 
 `pi update --extensions` updates every installed package. A plain `pi update`
-updates Pi itself and `pi update --all` updates Pi and all packages; the v0.7.2
+updates Pi itself and `pi update --all` updates Pi and all packages; the v0.7.4
 preview supports Pi 1.4.0, 1.3.0, 1.2.0 and 1.1.0.
 
 ### Before updating Pi
 
-Check that the installed preview lists the new Pi version first; v0.7.2 and
+Check that the installed preview lists the new Pi version first; v0.7.4, v0.7.2 and
 v0.7.1 list 1.4.0, 1.3.0, 1.2.0 and 1.1.0, and v0.6.0 lists 1.3.0, 1.2.0 and 1.1.0. On a Pi version the preview does not list, sessions it never protected are left to
 Pi's own compaction, but a session it protects stays blocked: requests stop and
 a failure record is written, because the preview cannot check its checkpoints
@@ -82,7 +82,7 @@ exit Pi and run:
 
 ```sh
 pi remove git:github.com/youxi-huang/pi-context-compaction &&
-pi install git:github.com/youxi-huang/slice@extension-v0.7.2
+pi install git:github.com/youxi-huang/slice@extension-v0.7.4
 ```
 
 Add `-l` to both for a project installation, then restart Pi, reopen the
@@ -100,7 +100,7 @@ Install the package from one scope only (global by default, or project-local
 with `-l`). A compatible older preview can reopen its own checkpoint schema;
 resident and native checkpoints are not migrated.
 
-The [v0.7.2 release](https://github.com/youxi-huang/slice/releases/tag/v0.7.2)
+The [v0.7.4 release](https://github.com/youxi-huang/slice/releases/tag/v0.7.4)
 also provides the extension `.tgz`, source archive, provenance, exact-package
 scenario evidence and SHA256 checksums.
 The Git package contains five reviewed files and no host runtime. It is not
@@ -154,7 +154,10 @@ a schema envelope names its shape under `envelope`, `type` or `schema`. For the 
 `CONTEXT_NOTE_SCOPE`, `scope` counts the cited IDs that name no entry on the
 branch (`missing`) and those of entries without readable text (`unreadable`,
 with their kinds under `unreadableKinds`), and how many of either sit in
-`supersedes`; it never names the IDs. For the first candidate refused on the
+`supersedes`; it never names the IDs. After v0.7.2, a source of that kind is
+dropped when every fact keeps a readable source and no `supersedes` ID is out
+of scope, and the note is checked again; `scopeDropped` counts the IDs dropped.
+Otherwise the refusal stands. For the first candidate refused on the
 note schema, `schema` counts its facts without sources by section (`uncited`)
 and says whether the note fails the schema for another reason too (`other`);
 it never names the facts. Pi maps a level the model does not declare to a
@@ -311,8 +314,12 @@ only in an assistant message or a tool output is not a user ruling.
 The session writer's request is the session's own system prompt, tools and
 messages plus one closing message, and it sets no tool choice, just as the
 session's requests do. Since 0.5.3 it also carries the session's ID, which Pi
-sends with each of the session's requests: Pi's Codex provider keys its prompt
-cache on that ID, and providers that need no key ignore it. A provider that
+sends with each of the session's requests: Pi's OpenAI providers key their
+prompt cache on that ID, and providers that need no key ignore it. When the
+transcript records the system prompt itself, as Pi 1.4.0 does, the writer sends
+it where the transcript has it, mid-history included in a session begun before
+1.4.0, and adds the host's prompt and tools at the head only when the transcript
+records none: the session's own requests are built the same way. A provider that
 caches prompt prefixes therefore serves most of the request from the cache the
 session has already warmed: on DeepSeek, 95 to 97% of the writer's input over
 192 compactions. The closing message tells
@@ -330,9 +337,19 @@ automatic compaction; the resident event log and its report are not provided.
 Setting `enabled: false` and restarting ends the package's protection.
 
 This preview compacts at completed turns: on `/compact`, and when Pi's
-threshold compaction runs after a turn completes. While input is queued or a
+threshold compaction runs after a turn completes. With the session writer it
+also starts that compaction itself at a settled turn whose context, with one
+more turn as large as Pi's default reserve or as the turn just settled, would
+leave the writer's handover no room. On a 272,000-token route Pi's own trigger
+leaves 16,384 tokens, less than a handover takes. One-shot `print` and `json`
+runs, which exit when the turn settles, are left to Pi's trigger. Both lines
+read Pi's own count of the context, from the provider's reported usage, as do
+the request guards. While input is queued or a
 session is blocked, threshold compaction is left for a later turn and nothing is
-recorded; a blocked session still needs an explicit `/compact`. Overflow
+recorded; a blocked session still needs an explicit `/compact`. `/compact`
+may follow a turn that ended on a provider error, an abort or a stopped
+request at once: that turn is kept whole after the checkpoint, and the
+writer's handover follows the last completed turn. Overflow
 recovery, unfinished tool rounds, in-memory sessions, attachments, context
 edits other than validated recovery omissions, old checkpoints, parent-history
 grants and other context-transforming or compaction extensions are outside its
@@ -447,13 +464,17 @@ alongside the ordinary settings in `pi-context-memory.json` and restart Pi:
 ```
 
 The configured writer prepares once per checkpoint interval, after a completed
-turn, when the context enters the band just below Pi's default threshold
-compaction point: 12.5% of it, between 8,192 and 32,768 tokens. A run has a
-120-second deadline, at most eight provider calls and no repair. One candidate
-is kept in memory and is lost on restart. Earlier experimental keys
-(`minSourceTokens`, `minIntervalMs`, `deadlineMs`, `maxCallsPerAttempt`,
-`ledger`) are ignored; an invalid value disables preparation without affecting
-requests or the formal compaction failure contract.
+turn, when the context enters the band just below Pi's threshold compaction
+point: 12.5% of it, between 8,192 and 32,768 tokens. The point is the window
+minus Pi's effective `reserveTokens` for the current model, read from Pi's
+settings with a `compaction.modelOverrides` entry first, so a lowered trigger
+such as a [capacity profile](context-pressure.md) moves preparation with it.
+Pi's defaults leave the band where it was. A run has a 120-second deadline, at
+most eight provider calls and no repair. One candidate is kept in memory and is
+lost on restart. Earlier experimental keys (`minSourceTokens`, `minIntervalMs`,
+`deadlineMs`, `maxCallsPerAttempt`, `ledger`) are ignored; an invalid value
+disables preparation without affecting requests or the formal compaction failure
+contract.
 
 At compaction, a complete, current candidate is committed without a writer
 call. When turns were added after it, the candidate is still committed without
@@ -696,6 +717,8 @@ default; `--perf-checkpoints 60` runs the full measurement, which takes several
 minutes.
 
 ## Maintainer publication
+
+For each full release, update the extension package version and pinned install commands with the source version, then verify the matching `v<version>` and `extension-v<version>` tags and all release assets together; a source-only tag is not a completed extension release.
 
 Merge the reviewed source through a PR and confirm `verify` and all three
 CodeQL checks on the final main commit. Push a new immutable `v<version>`

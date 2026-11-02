@@ -1,6 +1,6 @@
 {
   "name": "pi-context-compaction-preview",
-  "version": "0.7.2",
+  "version": "0.7.4",
   "private": true,
   "description": "SLICE source-linked compaction preview for unmodified Pi 1.4.0 and 1.3.0 and 1.2.0 and 1.1.0",
   "repository": {
