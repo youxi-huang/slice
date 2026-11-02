@@ -1,0 +1,16 @@
+{
+  "host": "dsh",
+  "mode": "retrieval-only",
+  "version": "0.7.5",
+  "sourceHash": "4d5f3f59bcc0b8be81dcb38e0924bcd54aa492abd78f56274603fe7558e1e151",
+  "sources": [
+    "packages/compaction-core/src/canonical.ts",
+    "packages/compaction-core/src/config.ts",
+    "packages/compaction-core/src/history.ts",
+    "packages/compaction-core/src/identity.ts",
+    "packages/compaction-core/src/notes.ts",
+    "packages/compaction-dsh/src/codec.ts",
+    "packages/compaction-dsh/src/history.ts",
+    "packages/compaction-dsh/src/index.ts"
+  ]
+}

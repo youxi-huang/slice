@@ -1,5 +1,0 @@
-{
-	"extends": "../../tsconfig.json",
-	"include": ["./*.ts", "../../packages/ai/src/providers/data-json.d.ts", "../../packages/coding-agent/src/utils/highlight-js.d.ts"],
-	"exclude": []
-}
