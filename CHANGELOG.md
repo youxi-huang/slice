@@ -6,6 +6,10 @@ Changes under **Unreleased** are not included in an existing release tag or its 
 
 ## [Unreleased]
 
+## [v0.7.4] — 2026-11-02
+
+v0.7.4 brings the source and installable Pi extension to the same version, including the changes below since v0.7.2. The existing v0.7.3 tag remains a source-only release and is not moved; the matching installable package is `extension-v0.7.4`. This release preparation changes no runtime behavior, checkpoint format, resident build fingerprint or evaluation pin.
+
 ### Added
 
 - The preview evaluation set gains P5, one long session for compactions on 200k and 272k routes: its checkpoints 1, 3 and 5 are three rounds at about 150,000 tokens of context, 2 and 4 two rounds at about 204,000, each later round compacting with the earlier notes in place. Its probes ask for early facts after two and three notes and for values that changed between rounds. P5 has its own version and manifest, so P1 to P4 keep their pins. The preview bench selects a route's rounds with `--cuts`, runs only the session's own probe condition with `--probe-conditions history`, stops a run at the first request past `--max-input-tokens`, cached tokens included, and with `--compactions-only` runs a chain without its probes. `--cache session` runs each warm-up turn on the session itself, so the writer continues it as it continues a session's last turn, which OpenAI's implicit cache needs.
