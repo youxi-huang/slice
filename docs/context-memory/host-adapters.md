@@ -138,9 +138,11 @@ from npm into `<dir>`, with pnpm 11.28.5 for DSH, and serves each built archive
 by name from a loopback npm registry that sends every other package to npm. On
 each host `context-memory-host-run.mjs --install registry --provider loopback`
 installs the package as a user would, runs fixture P5 through two native
-compactions and asks `context_history` for an earlier detail. A run passes when
-the host fetched the exact archive, the session finished without a stop and the
-tool returned original entries. CI runs it on every pull request, and
+compactions and asks `context_history` for an earlier detail. Each session runs in a temporary directory outside any Node project, as a
+user's does, so this repository's `.npmrc`, whose `min-release-age=2` holds back
+a version published that minute, cannot reach the host's installer. A run passes
+when the host fetched the exact archive, the session finished without a stop and
+the tool returned original entries. CI runs it on every pull request, and
 publication runs it again on the release tag before anything reaches npm. The
 model is a loopback stand-in; no provider is called.
 

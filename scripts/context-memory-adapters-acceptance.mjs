@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { delimiter, join, resolve } from "node:path";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { delimiter, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { parseOptions, run } from "./context-memory-host-run.mjs";
@@ -54,10 +55,20 @@ export async function acceptAdapters({ packageRoot, hostsRoot, outputDir }) {
 				npmInstall(hostRoot, `${OFFICIAL[host]}@${version}`, host === "opencode");
 				const row = { host, version, package: `${item.name}@${built.version}` };
 				summary.runs.push(row);
+				const evidence = join(outputDir, `${host}-${version}`);
+				// The session runs outside any Node project, as a user's does: this repository's own .npmrc, whose
+				// min-release-age=2 holds back a version published that minute, must not reach the host's installer.
+				const runDir = realpathSync(mkdtempSync(join(tmpdir(), "slice-adapter-run-")));
 				try {
+					assert(!runDir.startsWith(`${realpathSync(root)}${sep}`), "The session must run outside this repository");
 					assert.equal(installedVersion(hostRoot, OFFICIAL[host]), version);
-					const options = parseOptions(["--host", host, "--route", "200k", "--provider", "loopback", "--install", "registry", "--host-root", hostRoot, "--package-dir", join(packageRoot, item.directory), "--output-dir", join(outputDir, `${host}-${version}`)]);
-					const report = await run(options);
+					const options = parseOptions(["--host", host, "--route", "200k", "--provider", "loopback", "--install", "registry", "--host-root", hostRoot, "--package-dir", join(packageRoot, item.directory), "--output-dir", runDir]);
+					const report = await run(options).finally(() => {
+						mkdirSync(evidence, { recursive: true });
+						for (const file of ["report.json", "turns.jsonl", "loopback.jsonl", "host.log"]) {
+							if (existsSync(join(runDir, file))) cpSync(join(runDir, file), join(evidence, file));
+						}
+					});
 					Object.assign(row, {
 						archiveSha256: report.install.sha256,
 						fetched: report.install.fetched,
@@ -72,8 +83,16 @@ export async function acceptAdapters({ packageRoot, hostsRoot, outputDir }) {
 				} catch (error) {
 					row.passed = false;
 					row.error = error.message;
+					// What the host asked the registry for, and the end of its own log, so a CI failure can be read.
+					const reportFile = join(evidence, "report.json");
+					if (existsSync(reportFile)) row.requests = JSON.parse(readFileSync(reportFile, "utf8")).install?.requests;
+					const log = join(evidence, "host.log");
+					if (existsSync(log)) row.hostLog = readFileSync(log, "utf8").split("\n").slice(-40).join("\n");
+				} finally {
+					rmSync(runDir, { recursive: true, force: true });
 				}
 				process.stdout.write(`${row.passed ? "PASS" : "FAIL"} ${row.package} on ${host} ${version}${row.error ? `: ${row.error}` : ""}\n`);
+				if (!row.passed) process.stdout.write(`registry requests: ${JSON.stringify(row.requests ?? null)}\n${row.hostLog ?? "(no host log)"}\n`);
 			}
 		}
 	} finally {

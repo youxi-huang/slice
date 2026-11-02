@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { copyFileSync, existsSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { ADAPTER_HOSTS, assertFinalMainWorkflows, assertReleaseNotes, crossVersionChecks, hostList, minimumAcceptanceChecks, NPM_CLI_VERSION, NPM_PACKAGES, npmRelease, parseReviewedVersion, releaseChanges, releaseNotes, releasePiVersions, scenarioProfile } from "./context-memory-preview-release-checks.mjs";
@@ -71,8 +71,8 @@ assert.equal(pack.sha256, digest(readFileSync(join(artifacts, pack.archive))));
 const adapterRoot = join(artifacts, "host-adapters");
 const adapterReport = join(adapterRoot, "adapters-package-report.json");
 const adapterAcceptanceFile = join(artifacts, "adapters-acceptance", "adapters-acceptance.json");
-// Preparation in the ordinary pipeline builds them in a separate job; publication requires them.
-const withAdapters = npmRelease(version) && (publish || existsSync(adapterReport));
+// The ordinary pipeline checks them in its own adapters job; publication builds, accepts and requires them here.
+const withAdapters = npmRelease(version) && publish;
 let adapters;
 let adapterAcceptance;
 let adapterHosts;

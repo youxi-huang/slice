@@ -295,6 +295,7 @@ async function packageRegistry(packageDir, directory) {
 		url: server.url,
 		evidence: { from: "registry", spec, archive: entry.filename, sha256: createHash("sha256").update(readFileSync(archive)).digest("hex"), integrity: entry.integrity },
 		fetched: () => server.requests.includes(`GET /${manifest.name}/-/${entry.filename}`),
+		requests: () => [...server.requests],
 		close: () => server.close(),
 	};
 }
@@ -730,6 +731,7 @@ export async function run(options) {
 		if (registry) {
 			// The host fetched this archive by name, so the run used the bytes npm would serve.
 			report.install.fetched = registry.fetched();
+			report.install.requests = registry.requests();
 			if (!report.install.fetched) report.stop ??= `the host never fetched ${registry.spec} from the registry`;
 			if (loopback && !report.historyResults.some((entries) => entries > 0)) report.stop ??= "context_history returned no original entries";
 		}
