@@ -1,7 +1,7 @@
 {
-  "build": "stock-preview+src.c95e6c599a4b7aa1",
-  "version": "0.7.4",
-  "sourceCommit": "a70c76c41ff404529c5d19d071baf09f45a745b5",
+  "build": "stock-preview+src.b0f389ab614f8cf3",
+  "version": "0.7.5",
+  "sourceCommit": "dcdb2702889e78f05ef6ba7c3052a433721ff6da",
   "supportedPi": "1.4.0",
   "supportedPiVersions": [
     "1.4.0",
@@ -10,7 +10,7 @@
     "1.1.0"
   ],
   "checkpointSchema": 1,
-  "sourceHash": "c95e6c599a4b7aa1007f9aa924033637a4cd6609640ea0c0950d390d109dccd1",
+  "sourceHash": "b0f389ab614f8cf31c13c7744dc80cebb875840cada8abdeffa08a24618e7ce9",
   "sources": [
     {
       "file": "packages/coding-agent/src/extensions/context-memory/config.ts",
@@ -50,7 +50,7 @@
     },
     {
       "file": "packages/coding-agent/src/extensions/context-memory/preview/copies.ts",
-      "sha256": "8e0e6ff38777f814648960c879f67103088fe744e6fb08e8b44352a94432e892"
+      "sha256": "89dacd8020db9fc72188c8e9a275e2799df0b57ba9f9611bfbf024c9f1589912"
     },
     {
       "file": "packages/coding-agent/src/extensions/context-memory/preview/excerpts.ts",

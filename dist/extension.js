@@ -3096,7 +3096,7 @@ function summarizeUsage(usage) {
 }
 
 // packages/coding-agent/src/extensions/context-memory/preview/build.ts
-var PREVIEW_BUILD_ID = "stock-preview+src.c95e6c599a4b7aa1";
+var PREVIEW_BUILD_ID = "stock-preview+src.b0f389ab614f8cf3";
 
 // packages/coding-agent/src/extensions/context-memory/preview/compatibility.ts
 var SUPPORTED_PI_VERSIONS = Object.freeze(["1.4.0", "1.3.0", "1.2.0", "1.1.0"]);
@@ -3648,11 +3648,11 @@ function standsAside(copies) {
   return copies.length > 1 && copies.some((copy) => copy.self) && compactingCopy(copies)?.self === false;
 }
 function keptCopy(copies) {
-  return copies.find((copy) => /github\.com[/:]youxi-huang\/slice(?:\.git)?(?:@|$)/.test(copy.source)) ?? compactingCopy(copies);
+  return copies.find((copy) => /^npm:slice-pi(?:@|$)/.test(copy.source)) ?? copies.find((copy) => /github\.com[/:]youxi-huang\/slice(?:\.git)?(?:@|$)/.test(copy.source)) ?? compactingCopy(copies);
 }
 function removalStep(copy) {
   if (copy.scope === "temporary") return `leave out -e ${copy.source}`;
-  const source = copy.source.startsWith("git:") || copy.source.includes("://") ? copy.source.replace(/@[^/@]*$/, "") : copy.source;
+  const source = copy.source.startsWith("npm:") ? copy.source.replace(/^(npm:(?:@[^/@]+\/)?[^/@]+)@.*$/, "$1") : copy.source.startsWith("git:") || copy.source.includes("://") ? copy.source.replace(/@[^/@]*$/, "") : copy.source;
   return `run pi remove ${source}${copy.scope === "project" ? " -l" : ""}`;
 }
 
