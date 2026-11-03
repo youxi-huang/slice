@@ -36,6 +36,7 @@ const PUBLISHED = {
 		// DSH admits a plugin by its peers on DSH packages; the APIs this adapter uses are unchanged from rc.3 to rc.5.
 		peerDependencies: {
 			"@deepseek-ai/cordis": "~4.0.5",
+			"@deepseek-ai/dsh-compaction": "^0.2.1-rc.3",
 			"@deepseek-ai/dsh-session": "^0.2.1-rc.3",
 			"@deepseek-ai/dsh-session-persistence": "^0.2.1-rc.3",
 			"@deepseek-ai/dsh-tools": "^0.2.1-rc.3",
@@ -59,11 +60,11 @@ for (const host of ["dsh", "opencode"]) {
 	}
 	const bundled = await build({
 		absWorkingDir: root,
-		entryPoints: [`${source}/src/index.ts`],
+		entryPoints: { index: `${source}/src/index.ts`, ...(host === "dsh" ? { compaction: `${source}/src/compaction.ts` } : {}) },
 		bundle: true, write: false, metafile: true,
 		format: "esm", platform: "node", target: "node22", packages: "external",
 		tsconfigRaw: { compilerOptions: {} },
-		outfile: "dist/index.js", logLevel: "warning",
+		outdir: resolve(target, "dist"), logLevel: "warning",
 	});
 	const inputs = Object.keys(bundled.metafile.inputs).sort();
 	if (inputs.some((path) => !path.startsWith(`${source}/src/`) && !path.startsWith("packages/compaction-core/src/"))) {
@@ -80,7 +81,7 @@ for (const host of ["dsh", "opencode"]) {
 	for (const file of inputs) hash.update(file).update("\0").update(readFileSync(resolve(root, file))).update("\0");
 	const sourceHash = hash.digest("hex");
 	const extraFiles = published.extraFiles.map(([file]) => file);
-	const files = ["dist/index.js", "README.md", "LICENSE", "adapter-build.json", ...extraFiles];
+	const files = ["dist/index.js", ...(host === "dsh" ? ["dist/compaction.js"] : []), "README.md", "LICENSE", "adapter-build.json", ...extraFiles];
 	const packageManifest = {
 		name: published.name,
 		version: SLICE_VERSION,
@@ -93,19 +94,19 @@ for (const host of ["dsh", "opencode"]) {
 		keywords: published.keywords,
 		...(published.engines ? { engines: published.engines } : {}),
 		main: "./dist/index.js",
-		exports: { ".": "./dist/index.js" },
+		exports: { ".": "./dist/index.js", ...(host === "dsh" ? { "./compaction": "./dist/compaction.js" } : {}) },
 		files,
 		dependencies: manifest.dependencies,
 		...(peerDependencies ? { peerDependencies } : {}),
 		...(published.dsh ? { dsh: published.dsh } : {}),
 	};
 	mkdirSync(resolve(target, "dist"), { recursive: true });
-	writeFileSync(resolve(target, "dist/index.js"), bundled.outputFiles[0].contents);
+	for (const file of bundled.outputFiles) writeFileSync(file.path, file.contents);
 	writeFileSync(resolve(target, "package.json"), `${JSON.stringify(packageManifest, null, 2)}\n`);
 	writeFileSync(resolve(target, "README.md"), readFileSync(resolve(root, source, "README.md")));
 	writeFileSync(resolve(target, "LICENSE"), readFileSync(resolve(root, "LICENSE")));
 	for (const [file, contents] of published.extraFiles) writeFileSync(resolve(target, file), contents);
-	writeFileSync(resolve(target, "adapter-build.json"), `${JSON.stringify({ host, mode: "retrieval-only", version: SLICE_VERSION, sourceHash, sources: inputs }, null, 2)}\n`);
+	writeFileSync(resolve(target, "adapter-build.json"), `${JSON.stringify({ host, mode: host === "dsh" ? "manual-writing-opt-in" : "retrieval-only", version: SLICE_VERSION, sourceHash, sources: inputs }, null, 2)}\n`);
 	// The archive npm publishes, packed once here so acceptance installs the same bytes.
 	const packed = spawnSync("npm", ["pack", "--ignore-scripts", "--json", "--pack-destination", output], { cwd: target, encoding: "utf8", env: process.env });
 	if (packed.error) throw packed.error;

@@ -1,6 +1,7 @@
 {
-	"version": "0.7-conformance.1",
+	"version": "0.8-conformance.1",
 	"files": {
+		"segments.json": "96b28a0d224349409a08c64e18bfc09be6d45f129f8ebb1cb7b942478b195310",
 		"vectors.json": "1f0d922d2af7d7e7b7f116a0aaa11082cf8bd10ac67973a0b2e7b123fbd5f6b1"
 	}
 }

@@ -13,6 +13,9 @@ import {
 	type CallSummary,
 	type CallUsage,
 	PREPARATION_CALLS_PER_ATTEMPT,
+	SEGMENT_CALLS_PER_INTERVAL,
+	type SegmentSpend,
+	segmentSpend,
 	summarizeCalls,
 	ZERO_USAGE,
 } from "../../../../../compaction-core/src/call-journal.ts";
@@ -25,6 +28,8 @@ export {
 	type CallSummary,
 	type CallUsage,
 	PREPARATION_CALLS_PER_ATTEMPT,
+	SEGMENT_CALLS_PER_INTERVAL,
+	type SegmentSpend,
 } from "../../../../../compaction-core/src/call-journal.ts";
 
 /** A per-session bound on synchronous reads; far above any realistic number of writer calls. */
@@ -78,7 +83,7 @@ function load(journal: SessionJournal): void {
 		if (!line) continue;
 		const value: unknown = JSON.parse(line);
 		if (!isRecord(value) || value.v !== 1 || typeof value.call !== "string") throw new Error("journal-invalid");
-		if (value.purpose === "preparation" || value.purpose === "compaction") {
+		if (value.purpose === "preparation" || value.purpose === "compaction" || value.purpose === "segment") {
 			if (typeof value.interval !== "string") throw new Error("journal-invalid");
 			journal.calls.set(value.call, { purpose: value.purpose, interval: value.interval, settled: false });
 			continue;
@@ -152,16 +157,24 @@ export class CallJournal {
 	}
 
 	/**
-	 * Optional preparation never sends an unrecorded request and stops at its per-attempt limit. A formal
+	 * Optional preparation and segments never send an unrecorded request; preparation stops at its per-attempt
+	 * limit and segments at theirs per interval, counted from the journal so a restart does not reset it. A formal
 	 * compaction proceeds if its record cannot be written, and the gap is shown in status.
 	 */
 	hooks(sessionId: string, purpose: CallPurpose, interval: string): WriterCallHooks {
 		const journal = this.session(sessionId);
+		const optional = purpose !== "compaction";
 		const open = new Set<string>();
 		let started = 0;
 		return {
 			beforeDispatch: (call) => {
-				if (purpose === "preparation" && (journal.gap || ++started > PREPARATION_CALLS_PER_ATTEMPT))
+				if (
+					optional &&
+					(journal.gap ||
+						(purpose === "preparation" && ++started > PREPARATION_CALLS_PER_ATTEMPT) ||
+						(purpose === "segment" &&
+							segmentSpend(journal.calls.values(), interval).calls >= SEGMENT_CALLS_PER_INTERVAL))
+				)
 					throw new Error("CONTEXT_PREPARATION_BUDGET: optional preparation stopped before an unrecorded call");
 				const id = randomUUID();
 				try {
@@ -177,8 +190,7 @@ export class CallJournal {
 					});
 				} catch {
 					journal.gap = "unwritable";
-					if (purpose === "preparation")
-						throw new Error("CONTEXT_PREPARATION_ACCOUNTING: the call journal could not be written");
+					if (optional) throw new Error("CONTEXT_PREPARATION_ACCOUNTING: the call journal could not be written");
 				}
 				journal.calls.set(id, { purpose, interval, settled: false });
 				open.add(id);
@@ -214,6 +226,11 @@ export class CallJournal {
 			if (record.purpose === "preparation" && record.interval === interval) return true;
 		}
 		return false;
+	}
+
+	/** One interval's segment calls and what they spent, in this process or an earlier one. */
+	segmentSpend(sessionId: string, interval: string): SegmentSpend {
+		return segmentSpend(this.session(sessionId).calls.values(), interval);
 	}
 
 	/** Optional work pauses while the journal cannot be read or written; formal compaction does not. */

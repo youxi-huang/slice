@@ -36,6 +36,7 @@ import {
 import { DEFAULT_MEMORY_CONFIG, SESSION_WRITER } from "../src/extensions/context-memory/config.ts";
 import { freezeHistory, queryHistory } from "../src/extensions/context-memory/history.ts";
 import {
+	CONTEXT_KEEP_NONE,
 	CONTEXT_MEMORY_KIND,
 	CONTEXT_MEMORY_VERSION,
 	CONTEXT_NOTE_TYPE,
@@ -70,7 +71,12 @@ import {
 	readyNotice,
 	recoverRefusedNotice,
 } from "../src/extensions/context-memory/preview/notices.ts";
-import { PreviewPreparation } from "../src/extensions/context-memory/preview/preparation.ts";
+import {
+	PreviewPreparation,
+	readPreparationSettings,
+	type SegmentEffort,
+} from "../src/extensions/context-memory/preview/preparation.ts";
+import { PreviewSegments } from "../src/extensions/context-memory/preview/segments.ts";
 
 /** Pi's entries satisfy the core's structural record shapes; the union is widened here, never converted (records.ts). */
 const asRecords = (entries: readonly SessionEntry[]): readonly SessionRecord[] =>
@@ -556,6 +562,7 @@ describe("preview prepared compaction keeps the formal commit gate", () => {
 		expect(controller.status(ctx).preparation?.state).toBe("stale");
 		const value = await controller.compact(event(), ctx);
 		expect(value.details?.preparation?.path).toBe("sync");
+		expect(value.details?.preparation?.preparationFallback).toBe("fit");
 		expect(value.details?.preparation?.candidateId).toBeUndefined();
 		expect(value.details?.coveredThrough).toBe("reply-2");
 		expect(requests).toHaveLength(2);
@@ -568,6 +575,20 @@ describe("preview prepared compaction keeps the formal commit gate", () => {
 		]);
 		expect(value.details?.note.state[0]).toMatchObject({ sources: ["source-2"], supersedes: ["source-1"] });
 		expect(controller.status(ctx).calls).toMatchObject({ preparationCalls: 1, compactionCalls: 1 });
+	});
+	it("records that nothing was prepared when a compaction finds no candidate", async () => {
+		expect((await controller.compact(event(), ctx)).details?.preparation).toMatchObject({
+			path: "sync",
+			preparationFallback: "none",
+		});
+	});
+	it("records a preparation still in flight when the compaction starts", async () => {
+		controller.prepare(ctx);
+		expect(controller.status(ctx).preparation?.state).toBe("preparing");
+		expect((await controller.compact(event(), ctx)).details?.preparation).toMatchObject({
+			path: "sync",
+			preparationFallback: "in-flight",
+		});
 	});
 	it("commits a prepared prefix without a writer call and keeps later originals verbatim", async () => {
 		session.append({
@@ -593,6 +614,7 @@ describe("preview prepared compaction keeps the formal commit gate", () => {
 		const value = await controller.compact(event(), ctx);
 		expect(requests).toHaveLength(1);
 		expect(value.details?.preparation?.path).toBe("prefix");
+		expect(value.details?.preparation?.preparationFallback).toBeUndefined();
 		expect(value.details?.coveredThrough).toBe("trace-reply-1");
 		expect(value.details?.sourceHash).toBe(hashEntries(session.getBranch().slice(0, 4)));
 		expect(value.firstKeptEntryId).toBe("source-2");
@@ -3218,6 +3240,20 @@ describe("preview leaves the session writer room and compacts after a stopped tu
 		expect(preview.makeRoom(ctx)).toBe(false);
 		expect(ctx.compact).toHaveBeenCalledOnce();
 	});
+	it("starts again after /tree returns to an interval it served on another branch (0.8.0 lifecycle fuzz)", () => {
+		const preview = controller();
+		contextTokens = piTrigger - 2_000;
+		expect(preview.makeRoom(ctx)).toBe(true);
+		expect(preview.makeRoom(ctx)).toBe(false);
+		// Navigating back before a checkpoint leaves the same interval with the context it had there; the new branch
+		// is checked at once, since its next turn may already be too large for the handover.
+		preview.branchChanged(ctx);
+		expect(ctx.compact).toHaveBeenCalledTimes(2);
+		expect(preview.makeRoom(ctx)).toBe(false);
+		contextTokens = 40_000;
+		preview.branchChanged(ctx);
+		expect(ctx.compact).toHaveBeenCalledTimes(2);
+	});
 	it("allows for a next turn as large as the one just settled", () => {
 		const preview = controller();
 		// Two settled turns 30,000 tokens apart: the next may add as much, more than Pi's 16,384-token reserve.
@@ -3273,5 +3309,538 @@ describe("preview leaves the session writer room and compacts after a stopped tu
 		const value = await controller().compact(event(), ctx);
 		expect(value.firstKeptEntryId).toBe("stopped-input");
 		expect(JSON.stringify(requests[0].messages.slice(0, -1))).not.toContain("Read the next part.");
+	});
+});
+
+describe("preview segments at settled turns (0.8.0 WP2)", () => {
+	let root: string;
+	let session: SyntheticSession;
+	let journal: CallJournal;
+	let segments: PreviewSegments;
+	let controller: PreviewMemoryController;
+	let ctx: ExtensionContext;
+	let contextTokens: number;
+	let outputs: MemoryNote[];
+	let requests: Context[];
+	/** The reasoning level each writer request asked for; undefined when it asked for none. */
+	let levels: (string | undefined)[];
+	let unknownUsage: boolean;
+	let hold: boolean;
+	let held: { signal?: AbortSignal; release: () => void } | undefined;
+	const model: Model<Api> = {
+		id: "preview-test",
+		name: "Synthetic writer",
+		provider: "preview-test",
+		api: "openai-completions",
+		baseUrl: "http://127.0.0.1:9/v1",
+		reasoning: false,
+		input: ["text"],
+		contextWindow: 128_000,
+		maxTokens: 8192,
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+	};
+	const zero = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0 };
+	beforeEach(() => {
+		root = fs.mkdtempSync(join(tmpdir(), "pi-preview-segments-"));
+		session = new SyntheticSession(root);
+		journal = new CallJournal(join(root, "agent"));
+		segments = new PreviewSegments({ enabled: true, journal });
+		// Pi's default reserve leaves a 111,616-token trigger in this window; the first segment waits for half of it.
+		contextTokens = 60_000;
+		outputs = [];
+		requests = [];
+		levels = [];
+		unknownUsage = false;
+		hold = false;
+		held = undefined;
+		const registry = {
+			find: () => model,
+			hasConfiguredAuth: () => true,
+			streamSimple: (
+				_model: Model<Api>,
+				context: Context,
+				options?: { signal?: AbortSignal; reasoning?: string },
+			) => {
+				requests.push(structuredClone(context));
+				levels.push(options?.reasoning);
+				const output = outputs.shift() ?? note();
+				const message: AssistantMessage = {
+					...assistant(),
+					content: [{ type: "text", text: JSON.stringify(output) }],
+					...(unknownUsage ? { usage: { ...zero, cost: { ...zero, total: 0 } } } : {}),
+				};
+				const stream = createAssistantMessageEventStream();
+				const finish = () => {
+					stream.push({ type: "done", reason: "stop", message });
+					stream.end(message);
+				};
+				if (hold) held = { signal: options?.signal, release: finish };
+				else finish();
+				return stream;
+			},
+		};
+		ctx = {
+			sessionManager: session,
+			model,
+			modelRegistry: registry,
+			thinkingLevel: "off",
+			getSystemPrompt: () => "Synthetic system prompt.",
+			hasPendingMessages: () => false,
+			getContextUsage: () => ({ tokens: contextTokens, contextWindow: 128_000, percent: null }),
+			hasUI: false,
+			ui: { notify: vi.fn() },
+			abort: vi.fn(),
+		} as unknown as ExtensionContext;
+		controller = new PreviewMemoryController({
+			config: { ...DEFAULT_MEMORY_CONFIG, writerModel: SESSION_WRITER, noteRepair: false },
+			failureStore: new PreviewFailureStore(join(root, "agent")),
+			segments,
+			journal,
+		});
+		controller.sessionStart(ctx);
+	});
+	afterEach(async () => {
+		held?.release();
+		segments.dispose();
+		await segments.waitForIdle();
+		vi.restoreAllMocks();
+		fs.rmSync(root, { recursive: true, force: true });
+	});
+	async function settle(): Promise<void> {
+		controller.segment(ctx);
+		await segments.waitForIdle();
+	}
+	/** A settled turn; a long one carries more than a later range's 16,742 tokens. */
+	function turn(id: number, text: string): void {
+		session.append({
+			type: "message",
+			id: `source-${id}`,
+			parentId: session.getLeafId(),
+			timestamp,
+			message: { role: "user", content: text, timestamp: id },
+		});
+		session.append({
+			type: "message",
+			id: `reply-${id}`,
+			parentId: session.getLeafId(),
+			timestamp,
+			message: assistant(),
+		});
+	}
+	const long = (text: string) => `${text} ${"Synthetic padding. ".repeat(3_000)}`;
+	const fact = (id: number, text: string): MemoryNote => ({
+		instructions: [],
+		failedPaths: [],
+		reasons: [],
+		state: [{ text, sources: [`source-${id}`] }],
+		nextSteps: [],
+		files: [],
+		gaps: [],
+	});
+	const instruction = (context: Context) => {
+		const last = context.messages.at(-1);
+		return typeof last?.content === "string" ? last.content : "";
+	};
+
+	it("waits for half the trigger, then writes the first segment over everything uncovered in the session's request", async () => {
+		contextTokens = 50_000;
+		await settle();
+		expect(requests).toHaveLength(0);
+		contextTokens = 60_000;
+		await settle();
+		expect(requests).toHaveLength(1);
+		expect(requests[0].messages.slice(0, -1)).toHaveLength(2);
+		expect(instruction(requests[0])).toContain("Write a segment note for entries source-1 through reply-1 only");
+		expect(segments.status()).toMatchObject({ state: "idle", ready: 1, coveredThrough: "reply-1" });
+		expect(controller.status(ctx).calls).toMatchObject({ segmentCalls: 1, preparationCalls: 0, compactionCalls: 0 });
+	});
+
+	it("closes a later link only after a range's worth of new history, on top of the merged note", async () => {
+		await settle();
+		turn(2, "Use port 4318 now.");
+		await settle();
+		expect(requests).toHaveLength(1);
+		turn(3, long("The synthetic build is green."));
+		outputs.push(fact(3, "The synthetic build is green."));
+		await settle();
+		expect(requests).toHaveLength(2);
+		const text = instruction(requests[1]);
+		expect(text).toContain("Write a segment note for entries source-2 through reply-3 only");
+		expect(JSON.parse(text.slice(text.indexOf("Attachments:\n") + 13)).previousNote).toEqual(note());
+		expect(segments.status()).toMatchObject({ ready: 2, coveredThrough: "reply-3" });
+	});
+
+	it("stops after three refusals of one class in a row, until the next checkpoint commits", async () => {
+		await settle();
+		for (const id of [2, 3, 4]) {
+			turn(id, long(`Synthetic step ${id}.`));
+			// Cites source-1, which lies before the range.
+			outputs.push(note());
+			await settle();
+		}
+		expect(requests).toHaveLength(4);
+		expect(segments.status()).toMatchObject({ state: "paused", reason: "refusal", ready: 1 });
+		// Each refusal is counted by its code, so a run can say how often segments cite outside their range.
+		expect(segments.status().results).toEqual({
+			linked: 1,
+			cancelled: 0,
+			stale: 0,
+			failed: { CONTEXT_NOTE_SCOPE: 3 },
+			dropped: {},
+			limited: 0,
+			outOfRange: {},
+		});
+		turn(5, long("Synthetic step 5."));
+		await settle();
+		expect(requests).toHaveLength(4);
+		const value = await controller.compact(
+			{
+				type: "session_before_compact",
+				reason: "manual",
+				willRetry: false,
+				signal: new AbortController().signal,
+				preparation: { tokensBefore: 2000 },
+			} as SessionBeforeCompactEvent,
+			ctx,
+		);
+		const entry = saved(session, value);
+		session.append(entry);
+		controller.committed(
+			{ type: "session_compact", compactionEntry: entry, fromExtension: true, reason: "manual", willRetry: false },
+			ctx,
+		);
+		expect(segments.status()).toEqual({
+			enabled: true,
+			state: "idle",
+			effort: "session",
+			ready: 0,
+			results: {
+				linked: 1,
+				cancelled: 0,
+				stale: 0,
+				failed: { CONTEXT_NOTE_SCOPE: 3 },
+				dropped: {},
+				limited: 0,
+				outOfRange: {},
+			},
+		});
+	});
+
+	it.each(["branch-switch", "writer-change"])(
+		"cancels the segment in flight at a %s and counts no failure",
+		async (change) => {
+			hold = true;
+			controller.segment(ctx);
+			await vi.waitFor(() => expect(held).toBeDefined());
+			if (change === "branch-switch") controller.invalidatePreparation("branch-switch");
+			else {
+				// The session writer's context identity covers the system prompt.
+				(ctx as { getSystemPrompt: () => string }).getSystemPrompt = () => "Changed synthetic system prompt.";
+				controller.segment(ctx);
+			}
+			expect(held?.signal?.aborted).toBe(true);
+			held?.release();
+			await segments.waitForIdle();
+			expect(segments.status()).toEqual({
+				enabled: true,
+				state: "idle",
+				effort: "session",
+				ready: 0,
+				results: { linked: 0, cancelled: 1, stale: 0, failed: {}, dropped: {}, limited: 0, outOfRange: {} },
+			});
+		},
+	);
+
+	it("sends nothing more in the interval once a call's usage is unknown", async () => {
+		unknownUsage = true;
+		await settle();
+		turn(2, long("Synthetic step 2."));
+		await settle();
+		expect(requests).toHaveLength(1);
+		expect(journal.segmentSpend("synthetic-session", "none")).toEqual({ calls: 1, uncachedTokens: 0, unknown: true });
+	});
+
+	function event(customInstructions?: string): SessionBeforeCompactEvent {
+		return {
+			type: "session_before_compact",
+			reason: "manual",
+			willRetry: false,
+			signal: new AbortController().signal,
+			customInstructions,
+			preparation: { tokensBefore: 2000 },
+		} as SessionBeforeCompactEvent;
+	}
+	function commit(value: PreviewCompaction): void {
+		const entry = saved(session, value);
+		session.append(entry);
+		controller.committed(
+			{ type: "session_compact", compactionEntry: entry, fromExtension: true, reason: "manual", willRetry: false },
+			ctx,
+		);
+	}
+
+	it("commits the merged chain for its prefix with no writer call and keeps later turns verbatim (WP3)", async () => {
+		await settle();
+		turn(2, long("The synthetic build is green."));
+		outputs.push(fact(2, "The synthetic build is green."));
+		await settle();
+		turn(3, "Keep going.");
+		const value = await controller.compact(event(), ctx);
+		expect(requests).toHaveLength(2);
+		expect(value.details?.preparation).toMatchObject({
+			path: "segments",
+			callIds: [expect.any(String), expect.any(String)],
+		});
+		expect(value.details?.preparation?.segmentIds).toHaveLength(2);
+		expect(value.details?.coveredThrough).toBe("reply-2");
+		expect(value.firstKeptEntryId).toBe("source-3");
+		expect(value.details?.note.state).toEqual([...note().state, ...fact(2, "The synthetic build is green.").state]);
+		expect(value.details?.note.instructions).toEqual(note().instructions);
+		expect(controller.status(ctx).lastCompaction).toMatchObject({ path: "segments", foregroundCalls: 0 });
+		commit(value);
+		expect(segments.status()).toMatchObject({ ready: 0 });
+	});
+
+	it.each([
+		["no-segments", undefined],
+		["custom-focus", "Focus on the build."],
+	])("leaves the boundary to the writer and records %s", async (cause, focus) => {
+		if (cause === "custom-focus") await settle();
+		const before = requests.length;
+		const value = await controller.compact(event(focus), ctx);
+		expect(requests).toHaveLength(before + 1);
+		expect(value.details?.preparation).toMatchObject({ path: "sync", segmentsFallback: cause });
+	});
+
+	describe("a ruling the user changes (U6, amended)", () => {
+		const ruling = {
+			text: "Change the deployment permission.",
+			sources: ["source-2"],
+			quote: "Change the deployment permission.",
+			supersedes: ["source-1"],
+		};
+		const moved = { text: "The service moves off port 4317.", sources: ["source-2"], supersedes: ["source-1"] };
+		async function changed(output: MemoryNote): Promise<PreviewCompaction> {
+			await settle();
+			turn(2, long("Change the deployment permission. The service moves off port 4317."));
+			outputs.push(output);
+			await settle();
+			expect(segments.status()).toMatchObject({ ready: 2 });
+			return controller.compact(event(), ctx);
+		}
+
+		it("merges the new ruling in place of the old one, with no writer call", async () => {
+			const value = await changed({ ...fact(2, "unused"), instructions: [ruling], state: [moved] });
+			expect(requests).toHaveLength(2);
+			expect(value.details?.preparation).toMatchObject({ path: "segments" });
+			expect(value.details?.note.instructions).toEqual([ruling]);
+			expect(value.details?.note.state).toEqual([moved]);
+		});
+
+		it("leaves the boundary to the writer when the old source backs more than the segment replaces", async () => {
+			// source-1 also backs the port fact, which the segment neither restates nor replaces.
+			const value = await changed({ ...fact(2, "The deployment permission is changing."), instructions: [ruling] });
+			expect(requests).toHaveLength(3);
+			expect(value.details?.preparation).toMatchObject({ path: "sync", segmentsFallback: "ambiguous-supersede" });
+		});
+
+		it("keeps the ruling when only the assistant's reply would change it", async () => {
+			const claimed = {
+				text: "The deployment permission may change.",
+				sources: ["reply-2"],
+				supersedes: ["source-1"],
+			};
+			const value = await changed({ ...fact(2, "unused"), instructions: [claimed], state: [moved] });
+			expect(value.details?.preparation).toMatchObject({ path: "sync", segmentsFallback: "instruction-superseded" });
+		});
+	});
+
+	it("waits for the segment in flight that the boundary needs, and never past U8's bound", async () => {
+		turn(2, long("The synthetic build is green."));
+		hold = true;
+		controller.segment(ctx);
+		await vi.waitFor(() => expect(held).toBeDefined());
+		expect(await segments.settle(10, new AbortController().signal)).toBe(false);
+		hold = false;
+		const pending = controller.compact(event(), ctx);
+		held?.release();
+		const value = await pending;
+		expect(requests).toHaveLength(1);
+		expect(value.details?.preparation).toMatchObject({ path: "segments" });
+		expect(value.details?.preparation?.segmentsWaitMs).toBeGreaterThanOrEqual(0);
+		// The chain reaches the last entry, so it covers everything and the ordinary cut keeps nothing.
+		expect(value.details?.coveredThrough).toBe("reply-2");
+		expect(value.firstKeptEntryId).toBe(CONTEXT_KEEP_NONE);
+	});
+
+	it("shows ready segments, how far they reach and the share of uncovered history they cover", async () => {
+		await settle();
+		expect(controller.status(ctx).segments).toEqual({
+			enabled: true,
+			state: "idle",
+			effort: "session",
+			ready: 1,
+			results: { linked: 1, cancelled: 0, stale: 0, failed: {}, dropped: {}, limited: 0, outOfRange: {} },
+			coveredThrough: "reply-1",
+			coverage: 1,
+		});
+		turn(2, long("The synthetic build is green."));
+		expect(controller.status(ctx).segments?.coverage).toBeLessThan(0.01);
+	});
+
+	it("parses previewSegments like the other switches: off by default, paused when invalid (U13)", () => {
+		const cases: [string | undefined, { enabled: boolean; error?: string; effort: string }][] = [
+			[undefined, { enabled: false, effort: "session" }],
+			[JSON.stringify({ previewSegments: {} }), { enabled: false, effort: "session" }],
+			[JSON.stringify({ previewSegments: { enabled: true } }), { enabled: true, effort: "session" }],
+			[JSON.stringify({ previewSegments: { enabled: true, effort: "low" } }), { enabled: true, effort: "low" }],
+			[JSON.stringify({ previewSegments: { enabled: true, effort: "off" } }), { enabled: true, effort: "off" }],
+			[
+				JSON.stringify({ previewSegments: { enabled: 1 } }),
+				{ enabled: false, error: "invalid-config", effort: "session" },
+			],
+			[
+				JSON.stringify({ previewSegments: { enabled: true, effort: "fast" } }),
+				{ enabled: false, error: "invalid-config", effort: "session" },
+			],
+		];
+		for (const [content, expected] of cases) {
+			const agentDir = fs.mkdtempSync(join(tmpdir(), "pi-segment-settings-"));
+			if (content !== undefined) fs.writeFileSync(join(agentDir, "pi-context-memory.json"), content);
+			expect(readPreparationSettings(agentDir).segments).toEqual(expected);
+			fs.rmSync(agentDir, { recursive: true, force: true });
+		}
+		const invalid = new PreviewSegments({ enabled: true, settingsError: "invalid-config", journal });
+		expect(invalid.status()).toEqual({ enabled: false, state: "paused", ready: 0, reason: "invalid-config" });
+	});
+
+	it("tells the doctor when segments are off, inactive, paused or on", () => {
+		const diagnosis = controller.diagnose(ctx);
+		const report = (
+			segmentState: { enabled: boolean; state: string; reason?: string; effort?: string },
+			writerModel = "session",
+		) => doctorReport(diagnosis, { disabled: false, writerModel, segments: segmentState });
+		expect(report({ enabled: false, state: "paused", reason: "invalid-config" })).toContain(
+			"segments: off - previewSegments in pi-context-memory.json is not valid, so segments stay off",
+		);
+		expect(report({ enabled: true, state: "idle" }, "preview-test/preview-test")).toContain(
+			"segments: inactive - they need the session writer",
+		);
+		expect(report({ enabled: true, state: "paused", reason: "exhausted-output" })).toContain(
+			"segments: paused - three notes cut off at the output limit in a row. The writer compacts until the next checkpoint",
+		);
+		expect(report({ enabled: true, state: "idle" })).toContain("segments: ok - written at settled turns and merged");
+		expect(report({ enabled: true, state: "idle", effort: "low" })).toContain(
+			"segments: ok - written at settled turns at thinking level low and merged",
+		);
+		expect(report({ enabled: false, state: "disabled" })).not.toContain("segments:");
+	});
+
+	/** Segments at `effort`, or at the session's level when unset, on a reasoning model at session level `high`. */
+	function reasoningSegments(effort?: SegmentEffort): void {
+		segments.dispose();
+		segments = new PreviewSegments({ enabled: true, journal, ...(effort ? { effort } : {}) });
+		controller = new PreviewMemoryController({
+			config: { ...DEFAULT_MEMORY_CONFIG, writerModel: SESSION_WRITER, noteRepair: false },
+			failureStore: new PreviewFailureStore(join(root, "agent")),
+			segments,
+			journal,
+		});
+		ctx = { ...ctx, model: { ...model, reasoning: true }, thinkingLevel: "high" } as ExtensionContext;
+		controller.sessionStart(ctx);
+	}
+
+	it("writes segments at their own thinking level, which a later change of the session's leaves valid (U5)", async () => {
+		reasoningSegments("low");
+		await settle();
+		expect(levels).toEqual(["low"]);
+		expect(controller.status(ctx).segments).toMatchObject({ effort: "low", ready: 1 });
+		// The segment's identity carries its own level, so the session's new level does not make it another writer.
+		ctx = { ...ctx, thinkingLevel: "medium" } as ExtensionContext;
+		const value = await controller.compact(event(), ctx);
+		expect(levels).toEqual(["low"]);
+		expect(value.details?.preparation).toMatchObject({ path: "segments" });
+	});
+
+	it("mirrors the session's level without one of its own, so a changed level makes them another writer", async () => {
+		reasoningSegments();
+		await settle();
+		expect(levels).toEqual(["high"]);
+		ctx = { ...ctx, thinkingLevel: "medium" } as ExtensionContext;
+		const value = await controller.compact(event(), ctx);
+		expect(levels).toEqual(["high", "medium"]);
+		expect(value.details?.preparation).toMatchObject({ path: "sync", segmentsFallback: "invalid" });
+	});
+
+	it("links a segment that restated the previous note once the writer keeps it to its range", async () => {
+		await settle();
+		turn(2, long("The synthetic build is green."));
+		// The writer rewrote what the first segment holds beside what turn 2 adds.
+		outputs.push({
+			...fact(2, "The synthetic build is green."),
+			state: [
+				{ text: "Synthetic step 1 is done.", sources: ["source-1"] },
+				{ text: "The synthetic build is green.", sources: ["source-2"] },
+			],
+		});
+		await settle();
+		expect(segments.status()).toMatchObject({ ready: 2 });
+		expect(segments.status().results).toMatchObject({ linked: 2, limited: 1, failed: {}, outOfRange: {} });
+		expect(segments.chain[1].candidate.note.state).toEqual([
+			{ text: "The synthetic build is green.", sources: ["source-2"] },
+		]);
+	});
+
+	it("counts a segment cancelled in flight by a checkpoint apart from failures", async () => {
+		turn(2, long("The synthetic build is green."));
+		hold = true;
+		controller.segment(ctx);
+		await vi.waitFor(() => expect(held).toBeDefined());
+		hold = false;
+		segments.committed();
+		held?.release();
+		await segments.waitForIdle();
+		expect(segments.status().results).toEqual({
+			linked: 0,
+			cancelled: 1,
+			stale: 0,
+			failed: {},
+			dropped: {},
+			limited: 0,
+			outOfRange: {},
+		});
+	});
+
+	it("counts links a settled turn drops from the chain, by the reason the chain stopped", async () => {
+		await settle();
+		expect(segments.status().results?.linked).toBe(1);
+		// The session writer's context identity covers the system prompt: the link is now another writer's.
+		(ctx as { getSystemPrompt: () => string }).getSystemPrompt = () => "Changed synthetic system prompt.";
+		turn(2, long("The synthetic build is green."));
+		controller.segment(ctx);
+		await segments.waitForIdle();
+		expect(segments.status().results?.dropped).toEqual({ "writer-changed": 1 });
+	});
+
+	it("does no work for a settled turn with no range due (0.8.0 release gate: 135 ms a turn at 20 checkpoints)", async () => {
+		contextTokens = 10_000;
+		const projection = vi.spyOn(session, "buildSessionProjection");
+		controller.segment(ctx);
+		await segments.waitForIdle();
+		expect(requests).toHaveLength(0);
+		// The branch as it stands decides it: no projection, and so no cut, hash or copy, is made.
+		expect(projection).not.toHaveBeenCalled();
+	});
+
+	it("writes no segment through a fixed writer (U4)", async () => {
+		const fixed = new PreviewMemoryController({
+			config: { ...DEFAULT_MEMORY_CONFIG, writerModel: "preview-test/preview-test", noteRepair: false },
+			failureStore: new PreviewFailureStore(join(root, "agent")),
+			segments,
+			journal,
+		});
+		fixed.segment(ctx);
+		await segments.waitForIdle();
+		expect(requests).toHaveLength(0);
 	});
 });

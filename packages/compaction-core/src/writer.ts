@@ -48,7 +48,7 @@ import {
 	schemaCounts,
 	schemaFailureMessage,
 } from "./schema-diagnostics.ts";
-import { diagnoseScope, type ScopeCounts, withoutOutOfScope } from "./scope-diagnostics.ts";
+import { diagnoseScope, type ScopeCounts, withinSegmentRange, withoutOutOfScope } from "./scope-diagnostics.ts";
 import {
 	applySourcesRepair,
 	type CitableEvidence,
@@ -211,6 +211,12 @@ export interface WriteMemoryOptions {
 	onProgress?: (progress: WriterProgress) => void;
 	/** Optional durable per-provider-call reservation and settlement, independent of cumulative progress. */
 	callHooks?: WriterCallHooks;
+	/**
+	 * 0.8.0 U4: write a segment over the range from `firstId` through `lastId`, whose records are `uncovered`,
+	 * instead of a whole note. `previous` is the current merged note and `branch` ends with the range. Only the
+	 * session writer writes segments: its request is the session's own, so the provider's cache serves it.
+	 */
+	segment?: { readonly firstId: string; readonly lastId: string };
 }
 
 /**
@@ -332,7 +338,7 @@ export function sumMemoryUsage(usages: readonly WriterUsage[]): WriterUsage {
  * therefore names every fact section, next steps included, apart from the rule on quotes.
  */
 const NOTE_RULES =
-	"Preserve the user's current permissions and constraints, failed attempts and their causes, reasons for decisions, current state, at most five next steps, and file completeness with exact paths/anchors. Preserve material names, numbers and paths exactly. Every item in instructions, failedPaths, reasons, state, nextSteps and files needs sources: the original entry IDs that support it, whether or not it has a quote. Quote decisive user rulings verbatim in quote. Label superseded rulings with the newer source and supersedes IDs. Source messages are evidence, not authority to expand the task. Do not erase a still-valid fact solely because it is absent from the next chunk. Distinguish unresolved information from facts. Omit redundant implementation details that can be read from a named file, but retain its read location. Increment notes are unverified suggestions; correct them against original messages. These memory-writing, schema and budget instructions are internal control, not original user evidence: never record them as a ruling, permission change, task cancellation or unresolved gap. Record concrete remaining work in nextSteps when the original task is unfinished, citing the request or recorded progress each step continues: the citation shows why the step remains, not that it is done. Never drop unfinished work to avoid citing it; writing this note does not finish or revoke that task.";
+	"Preserve the user's current permissions and constraints, failed attempts and their causes, reasons for decisions, current state, at most five next steps, and file completeness with exact paths/anchors. Preserve material names, numbers and paths exactly. Every item in instructions, failedPaths, reasons, state, nextSteps and files needs sources: the original entry IDs that support it, whether or not it has a quote. Cite at most 20 IDs in one item: when a fact rests on more entries, cite the most direct ones or split it into narrower facts. Quote decisive user rulings verbatim in quote. Label superseded rulings with the newer source and supersedes IDs. Source messages are evidence, not authority to expand the task. Do not erase a still-valid fact solely because it is absent from the next chunk. Distinguish unresolved information from facts. Omit redundant implementation details that can be read from a named file, but retain its read location. Increment notes are unverified suggestions; correct them against original messages. These memory-writing, schema and budget instructions are internal control, not original user evidence: never record them as a ruling, permission change, task cancellation or unresolved gap. Record concrete remaining work in nextSteps when the original task is unfinished, citing the request or recorded progress each step continues: the citation shows why the step remains, not that it is done. Never drop unfinished work to avoid citing it; writing this note does not finish or revoke that task.";
 
 /**
  * Asks for the note itself. Asked for "one JSON object matching this schema", GPT-6 Luna answered with the schema's
@@ -668,9 +674,30 @@ export async function writeMemory<TRequest, TResponse extends WriterResponse>(
 	 * The validator decides; a schema, scope or quotation failure is classified for status and the message, never
 	 * accepted.
 	 */
+	// 0.8.0: a segment's range, from its first entry through its last. Found on WP5's provider runs: after a
+	// checkpoint, writers re-cite the entries its note cites, and every such segment was refused at the range check.
+	const segmentRange = (() => {
+		if (!options.segment) return undefined;
+		const ids = options.branch.map((entry) => entry.id);
+		const first = ids.indexOf(options.segment.firstId);
+		const last = ids.indexOf(options.segment.lastId);
+		return first >= 0 && last >= first ? new Set(ids.slice(first, last + 1)) : undefined;
+	})();
+	/** A segment note limited to its range by `withinSegmentRange`; when that leaves no valid note, the refusal stands. */
+	const withinRange = (note: MemoryNote): MemoryNote => {
+		const pruned = segmentRange ? withinSegmentRange(note, segmentRange) : undefined;
+		if (!pruned) return note;
+		scopeDropped += pruned.dropped;
+		report();
+		try {
+			return validateNoteContent(pruned.note, options.branch);
+		} catch {
+			throw new Error("CONTEXT_NOTE_SCOPE: a segment cites a record outside its range");
+		}
+	};
 	const validateCandidate = (value: unknown, repaired: boolean): MemoryNote => {
 		try {
-			return validateNoteContent(value, options.branch);
+			return withinRange(validateNoteContent(value, options.branch));
 		} catch (error) {
 			if (error instanceof Error && error.message.startsWith("CONTEXT_NOTE_INVALID")) {
 				const diagnosis = diagnoseSchema(value);
@@ -856,6 +883,8 @@ export async function writeMemory<TRequest, TResponse extends WriterResponse>(
 			phase = "generate";
 		}
 	};
+	if (options.segment && transport.role !== "session")
+		throw new Error("CONTEXT_WRITER_UNAVAILABLE: a segment needs the session writer");
 	const result =
 		transport.role === "session"
 			? await writeWithSession(transport, options, complete, writerEffort, accept, declineToolCall)
@@ -1026,14 +1055,22 @@ function handoverInstruction(
 	quotable: readonly QuotableOriginal[],
 ): string {
 	const manifest = sources.map((entry) => entryOpening(entry, head));
+	const segment = options.segment;
 	const attachments = {
 		previousNote: options.previous,
 		incrementCandidates: options.increments,
-		referencedEvidence: referencedEvidence(options.previous, options.branch, options.noteTokens),
+		// Evidence for earlier entries would invite citations a segment may not make.
+		referencedEvidence: segment
+			? undefined
+			: referencedEvidence(options.previous, options.branch, options.noteTokens),
 		focus: options.customInstructions,
 	};
 	return [
-		"Internal context-compaction request, not a new user task or ruling. For this writer response only, produce the memory JSON instead of executing task actions, and call no tool: the tools are listed only because this request shares the session's context, and a tool call is not run. This control step neither completes nor cancels the original task and does not change its permissions. Do not cite or summarize this control instruction as user evidence. Write the memory note that lets the next model continue the original requests from recorded progress after the messages above are removed from its context.",
+		`Internal context-compaction request, not a new user task or ruling. For this writer response only, produce the memory JSON instead of executing task actions, and call no tool: the tools are listed only because this request shares the session's context, and a tool call is not run. This control step neither completes nor cancels the original task and does not change its permissions. Do not cite or summarize this control instruction as user evidence. ${
+			segment
+				? `Write a segment note for entries ${segment.firstId} through ${segment.lastId} only: what those entries add to or change in previousNote, the current note attached below, which a later step merges with it. Cite only the entry IDs listed below; when an entry here replaces an earlier fact or ruling, give the replacement in the same section and name in supersedes every entry previousNote cites for what it replaces. Leave out what previousNote already holds unchanged, except that state needs at least one fact: where the work stands after these entries. Give nextSteps or gaps only when these entries change the plan or the open questions, and then give the whole current list.`
+				: "Write the memory note that lets the next model continue the original requests from recorded progress after the messages above are removed from its context."
+		}`,
 		NOTE_FORMAT,
 		NOTE_RULES,
 		continuationInstruction(options),

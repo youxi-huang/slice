@@ -54,6 +54,15 @@ import {
 	reduceRecords,
 } from "../../../../../compaction-core/src/reduction.ts";
 import {
+	chainCoverage,
+	chainHash,
+	classifyChain,
+	freezeSegmentInput,
+	mergeChain,
+	nextSegmentRange,
+	type PreparedSegment,
+} from "../../../../../compaction-core/src/segments.ts";
+import {
 	assertUserMessages,
 	carriedUserMessages,
 	coveredUserMessages,
@@ -72,16 +81,20 @@ import { PRIMARY_PI_VERSION, SUPPORTED_PI_LABEL, SUPPORTED_PI_VERSIONS, supports
 import type {
 	InactiveReason,
 	NotesFallback,
+	PrefixRefusal,
+	PreparationFallback,
 	PreviewCompaction,
 	PreviewDiagnosis,
 	PreviewFailureStoreContract,
 	PreviewReadback,
 	PreviewSession,
+	SegmentsFallback,
 } from "./contracts.ts";
 import { type AppendedExcerpt, selectExcerpts, unusedExcerpts } from "./excerpts.ts";
 import { blockedNotice, inactiveNotice, NoticeGate, notify, readyNotice } from "./notices.ts";
-import type { PreviewPreparation, PreviewSwitch } from "./preparation.ts";
+import type { PreviewPreparation, PreviewSwitch, SegmentEffort } from "./preparation.ts";
 import { projectSummary, RENDERING_OFF, type RenderingSwitch } from "./render-projection.ts";
+import { type PreviewSegments, segmentLevel } from "./segments.ts";
 import { setStatusLine } from "./status-line.ts";
 import {
 	modelName,
@@ -360,6 +373,8 @@ export interface PreviewControllerOptions {
 	/** The running Pi version; tests substitute other releases. */
 	hostVersion?: string;
 	preparation?: PreviewPreparation;
+	/** 0.8.0 WP2: segments prepared over closed ranges at settled turns; WP3 adds their switch and the merge. */
+	segments?: PreviewSegments;
 	/** Records every writer call; without one, calls are observed only in memory. */
 	journal?: CallJournal;
 	/** Arm B: commit merged work notes without a writer call when the prefix path allows it. */
@@ -390,7 +405,10 @@ export class PreviewMemoryController {
 	private readonly activeCompactions = new Set<string>();
 	private readonly stagedCompactions = new Set<string>();
 	private readonly compactionStartedAt = new Map<string, number>();
-	/** Per session: the checkpoint interval in which makeRoom last started a compaction. */
+	/**
+	 * Per session: the checkpoint interval in which makeRoom last started a compaction on the current branch. /tree
+	 * clears it: a branch that returns to before a checkpoint is back in an interval it already served elsewhere.
+	 */
 	private readonly roomRequested = new Map<string, string>();
 	/** Per session: Pi's measured context at the last settled turn, so makeRoom can allow for a turn of that size. */
 	private readonly settledTokens = new Map<string, number>();
@@ -402,6 +420,7 @@ export class PreviewMemoryController {
 	private pendingSessionNotice?: { sessionId: string; key: string; text: string };
 	readonly notices = new NoticeGate();
 	private readonly preparation?: PreviewPreparation;
+	private readonly segments?: PreviewSegments;
 	private readonly journal?: CallJournal;
 	private readonly workNotes: PreviewSwitch;
 	private readonly excerpts: PreviewSwitch;
@@ -419,7 +438,7 @@ export class PreviewMemoryController {
 	private readonly lastCompaction = new Map<
 		string,
 		{
-			path: "complete" | "prefix" | "notes" | "sync";
+			path: "complete" | "prefix" | "notes" | "segments" | "sync";
 			candidateId?: string;
 			foregroundCalls: number;
 			stageMs: number;
@@ -434,6 +453,7 @@ export class PreviewMemoryController {
 		this.configError = options.configError;
 		this.hostVersion = options.hostVersion ?? VERSION;
 		this.preparation = options.preparation;
+		this.segments = options.segments;
 		this.journal = options.journal;
 		this.workNotes = options.workNotes ?? { enabled: false };
 		this.excerpts = options.excerpts ?? { enabled: false };
@@ -509,8 +529,17 @@ export class PreviewMemoryController {
 		this.activeTools = tools;
 	}
 
-	private preparationSubmission(ctx: ExtensionContext, customInstructions?: string): PreparationSubmission {
-		if (!this.config || !ctx.model || !this.preparation) throw new Error("CONTEXT_NO_MODEL_OR_SOURCE");
+	/**
+	 * `segmentEffort` gives a segment's writer identity: the session writer at the segments' own level (U5), so a
+	 * chain written at that level classifies as the same writer at the boundary, and a changed level does not.
+	 */
+	private preparationSubmission(
+		ctx: ExtensionContext,
+		customInstructions?: string,
+		epoch = this.preparation?.currentEpoch,
+		segmentEffort?: SegmentEffort,
+	): PreparationSubmission {
+		if (!this.config || !ctx.model || epoch === undefined) throw new Error("CONTEXT_NO_MODEL_OR_SOURCE");
 		const model = resolveWriterModel(this.config, ctx.modelRegistry, ctx.model);
 		const branch = ctx.sessionManager.getBranch();
 		const previous = latestMemory(asRecords(branch));
@@ -522,14 +551,19 @@ export class PreviewMemoryController {
 		);
 		return {
 			sessionId: ctx.sessionManager.getSessionId(),
-			epoch: this.preparation.currentEpoch,
+			epoch,
 			branch: asRecords(branch),
 			writer: {
 				role: this.config.writerModel === SESSION_WRITER ? "session" : "fixed",
 				model: modelName(model),
-				effort: writerReasoning(model, this.config, ctx.thinkingLevel),
+				effort: writerReasoning(model, this.config, segmentLevel(segmentEffort, ctx.thinkingLevel)),
 				policyHash: hashEntries([
-					{ writerModel: this.config.writerModel, writerEffort: this.config.writerEffort, model },
+					{
+						writerModel: this.config.writerModel,
+						writerEffort: this.config.writerEffort,
+						model,
+						...(segmentEffort ? { segmentEffort } : {}),
+					},
 				]),
 				...writerContractHashes(PREVIEW_BUILD_ID),
 				contextHash:
@@ -630,12 +664,141 @@ export class PreviewMemoryController {
 		}
 	}
 
+	/**
+	 * 0.8.0 WP2: a settled turn may close the next segment's range (U3) and send it through the session writer's
+	 * transport and the call journal, under U9's limits. Optional work like `prepare`: nothing here blocks the
+	 * task, fails the session or enters commit state.
+	 */
+	segment(ctx: ExtensionContext): void {
+		if (!this.segments?.enabled || !this.config || !ctx.model) return;
+		try {
+			const sessionId = ctx.sessionManager.getSessionId();
+			this.segments.activate(sessionId);
+			// U4: a segment rides the session's own request, so only the session writer writes one.
+			if (this.config.writerModel !== SESSION_WRITER) return;
+			if (this.safeInactive(ctx) || this.configError || ctx.hasPendingMessages()) return;
+			const usage = ctx.getContextUsage();
+			if (!usage?.tokens) return;
+			const trigger = usage.contextWindow - piReserveTokens(this.hostSettings(), ctx.model);
+			// Most settled turns have no range due. Found by the 0.8.0 release gate: deciding that only after the
+			// session and failure-state checks, the submission's projection, cut and hashes and a copy of the branch
+			// cost a 20-checkpoint session 135 ms a turn. The branch as it stands answers it, so a turn pays for that
+			// work only when a range is due. A segment in flight still reconciles below; the events that end a
+			// chain's validity drop it themselves.
+			if (
+				this.segments.status().state !== "preparing" &&
+				!(
+					"range" in
+					nextSegmentRange(asRecords(ctx.sessionManager.getBranch()), {
+						chainEnd: this.segments.chain.at(-1)?.snapshot.lastId,
+						triggerTokens: trigger,
+						contextTokens: usage.tokens,
+					})
+				)
+			)
+				return;
+			assertPreviewSession(ctx.sessionManager, this.hostVersion);
+			if (this.store.inspect(ctx.sessionManager).state !== "ready" || this.stickyFailures.has(sessionId)) return;
+			const submission = this.preparationSubmission(
+				ctx,
+				undefined,
+				this.segments.currentEpoch,
+				this.segments.effort,
+			);
+			this.segments.reconcile(submission);
+			const branch = structuredClone(ctx.sessionManager.getBranch());
+			const records = asRecords(branch);
+			const interval = checkpointInterval(branch);
+			if (!this.segments.mayStart(sessionId, interval, trigger)) return;
+			const chain = this.segments.chain;
+			const choice = nextSegmentRange(records, {
+				chainEnd: chain.at(-1)?.snapshot.lastId,
+				triggerTokens: trigger,
+				contextTokens: usage.tokens,
+			});
+			if (!("range" in choice)) return;
+			// The current note: the base checkpoint's with the chain merged in. A chain that already leaves its
+			// boundary to the writer gains nothing from another link.
+			let current = latestMemory(records)?.memory.note;
+			if (chain.length) {
+				const merged = mergeChain(current, chain);
+				if (!("note" in merged)) return;
+				current = merged.note;
+			}
+			const { firstId, lastId } = choice.range;
+			const input = freezeSegmentInput({
+				...submission,
+				branch: records,
+				coveredThrough: lastId,
+				processedUserEntryIds: branch
+					.filter((entry) => entry.type === "message" && entry.message.role === "user")
+					.map((entry) => entry.id),
+				firstId,
+				chainHash: chainHash(chain),
+			});
+			const uncovered = branch.slice(branch.findIndex((entry) => entry.id === firstId));
+			const sessionModel = structuredClone(ctx.model);
+			const registry = ctx.modelRegistry;
+			const capturedRegistry = {
+				find: (provider: string, id: string) =>
+					provider === sessionModel.provider && id === sessionModel.id ? sessionModel : undefined,
+				hasConfiguredAuth: registry.hasConfiguredAuth.bind(registry),
+				streamSimple: registry.streamSimple.bind(registry),
+			};
+			// The segment writer reads the same reduced prefix the session's own requests carry (G4).
+			const projection = ctx.sessionManager.buildSessionProjection();
+			const reductionView = this.reducedView(branch, ctx.model);
+			const messages = structuredClone(
+				convertToLlm(reductionView ? applyReduction(projection.messages, reductionView) : projection.messages),
+			);
+			const prefix = carriesSystemPrompt(messages)
+				? { messages, sessionId }
+				: { messages, sessionId, systemPrompt: ctx.getSystemPrompt(), tools: structuredClone(this.activeTools()) };
+			const config = this.config;
+			const thinking = segmentLevel(this.segments.effort, ctx.thinkingLevel);
+			this.segments.start(
+				{
+					input,
+					run: async (signal, callHooks) => {
+						let scopeDropped = 0;
+						const written = await writeMemory({
+							config,
+							registry: capturedRegistry,
+							sessionModel,
+							sessionThinkingLevel: thinking,
+							prefix,
+							previous: current,
+							increments: [],
+							uncovered,
+							branch,
+							noteTokens: submission.noteBudget.hardTokens,
+							baseNoteTokens: submission.noteBudget.baseTokens,
+							signal,
+							callHooks,
+							segment: { firstId, lastId },
+							onProgress: (progress) => {
+								scopeDropped = progress.scopeDropped ?? scopeDropped;
+							},
+						});
+						return { ...written, scopeDropped };
+					},
+				},
+				interval,
+				trigger,
+			);
+		} catch {
+			// Optional work must never call fail(), begin() or abort the user's task.
+		}
+	}
+
 	invalidatePreparation(reason: string): void {
 		this.preparation?.invalidate(reason);
+		this.segments?.invalidate();
 	}
 
 	shutdownPreparation(): void {
 		this.preparation?.dispose();
+		this.segments?.dispose();
 	}
 
 	/**
@@ -799,6 +962,18 @@ export class PreviewMemoryController {
 		} else if (this.reduction.error) {
 			reduction = { enabled: false, reason: this.reduction.error };
 		}
+		// 0.8.0 WP3: ready segments, how far they reach and the share of uncovered history they cover; counts only.
+		let segments: (ReturnType<PreviewSegments["status"]> & { coverage?: number }) | undefined;
+		if (this.segments?.enabled || this.segments?.status().state === "paused") {
+			const current = this.segments.status();
+			let coverage: number | undefined;
+			try {
+				coverage = chainCoverage(asRecords(ctx.sessionManager.getBranch()), current.coveredThrough);
+			} catch {
+				// Status is advisory; an unreadable branch leaves the share out.
+			}
+			segments = { ...current, ...(coverage === undefined ? {} : { coverage }) };
+		}
 		// Content-free rendering state (WP3): the switch and its candidate names, never summary text.
 		let rendering: { enabled: boolean; candidates?: string[]; reason?: string } | undefined;
 		if (this.rendering.enabled) {
@@ -827,6 +1002,7 @@ export class PreviewMemoryController {
 			...(diagnosis.reason ? { reason: diagnosis.reason } : {}),
 			manualCompaction: diagnosis.manualCompaction,
 			...(prepared ? { preparation: prepared } : {}),
+			...(segments ? { segments } : {}),
 			...(reduction ? { reduction } : {}),
 			...(rendering ? { rendering } : {}),
 			...(calls ? { calls } : {}),
@@ -900,6 +1076,11 @@ export class PreviewMemoryController {
 	/** Tree navigation is a trust boundary, even when the selected branch extends the previous one. */
 	branchChanged(ctx: ExtensionContext): void {
 		this.forgetVerified();
+		// Found by the 0.8.0 lifecycle fuzz: a branch moved back before a checkpoint, or to a point already near the
+		// limit, grew past where the session writer's handover fits, and every /compact then failed for lack of room.
+		// The latch is per branch, and the new branch is checked at once rather than after its next turn.
+		this.roomRequested.delete(ctx.sessionManager.getSessionId());
+		this.makeRoom(ctx);
 		if (this.stickyFailures.has(ctx.sessionManager.getSessionId())) {
 			setStatusLine(ctx, "paused");
 		} else if (unsupportedReason(ctx.sessionManager, this.hostVersion)) {
@@ -1240,6 +1421,8 @@ export class PreviewMemoryController {
 		const started = performance.now();
 		this.forgetVerified();
 		this.compactionStartedAt.set(ctx.sessionManager.getSessionId(), started);
+		// Read before the cancel below, which ends a run still in flight.
+		const preparing = this.preparation?.status().state === "preparing";
 		this.preparation?.cancel("compaction");
 		this.activeCompactions.add(ctx.sessionManager.getSessionId());
 		this.stagedCompactions.delete(ctx.sessionManager.getSessionId());
@@ -1353,7 +1536,7 @@ export class PreviewMemoryController {
 				? { ...this.preparationSubmission(ctx, event.customInstructions), noteBudget: policy }
 				: undefined;
 			const available = submission ? this.preparation?.take(submission) : undefined;
-			let path: "complete" | "prefix" | "notes" | "sync" =
+			let path: "complete" | "prefix" | "notes" | "segments" | "sync" =
 				available?.classification.status === "current-full" ? "complete" : "sync";
 			const systemTokens = textTokens(ctx.getSystemPrompt());
 			const beforeTokens =
@@ -1369,7 +1552,7 @@ export class PreviewMemoryController {
 				end: number,
 				share: number,
 				users: readonly SessionRecord[] = [],
-			): NotesFallback | undefined => {
+			): PrefixRefusal | undefined => {
 				const start = prefixCut(branch, projection, end, cut);
 				if (start === undefined) return "cut";
 				const retained = retainedFrom(start);
@@ -1386,9 +1569,68 @@ export class PreviewMemoryController {
 				userMessages = users;
 				return undefined;
 			};
+			// Why A did not serve, recorded for evaluation as B's fallback is.
+			let preparationFallback: PreparationFallback | undefined;
 			if (path === "sync" && available && interrupted === undefined) {
 				const end = reusablePrefix(available.candidate, available.classification, asRecords(branch));
-				if (end !== undefined && !commitPrefix(available.written.note, end, 0.8)) path = "prefix";
+				preparationFallback = end === undefined ? "stale" : commitPrefix(available.written.note, end, 0.8);
+				if (!preparationFallback) path = "prefix";
+			}
+			if (submission && path === "sync" && !preparationFallback)
+				preparationFallback = available ? "unfinished-turn" : preparing ? "in-flight" : this.preparation?.missed();
+			// 0.8.0 WP3: merge the segment chain without a writer call (U6) and commit it for its prefix, keeping later
+			// originals verbatim, under the notes path's half-threshold bound (U7). When only more coverage would help,
+			// the boundary waits at most U8's 15 s for a segment in flight that extends the chain.
+			let segmentsNote: MemoryNote | undefined;
+			let segmentsFallback: SegmentsFallback | undefined;
+			let segmentsWaitMs: number | undefined;
+			let merged: readonly PreparedSegment[] = [];
+			const segments = this.segments;
+			if (path === "sync" && segments?.enabled) {
+				if (interrupted !== undefined) segmentsFallback = "unfinished-turn";
+				else if (event.customInstructions?.trim()) segmentsFallback = "custom-focus";
+				else {
+					const assemble = (): SegmentsFallback | undefined => {
+						let boundary: PreparationSubmission;
+						try {
+							boundary = {
+								...this.preparationSubmission(ctx, undefined, segments.currentEpoch, segments.effort),
+								noteBudget: policy,
+							};
+						} catch {
+							// Optional work never fails the compaction; the writer runs as it would without segments.
+							return "invalid";
+						}
+						const chain = classifyChain(segments.chain, boundary);
+						if (!chain.links.length)
+							return segments.chain.length
+								? "invalid"
+								: segments.status().state === "preparing"
+									? "in-flight"
+									: "no-segments";
+						const note = mergeChain(previous?.memory.note, chain.links);
+						if ("refusal" in note) return note.refusal;
+						const end = branch.findIndex((entry) => entry.id === chain.coveredThrough);
+						try {
+							segmentsNote = validateNote(note.note, asRecords(branch.slice(0, end + 1)), policy.hardTokens);
+						} catch {
+							return "merge";
+						}
+						merged = chain.links;
+						// A chain through the last entry covers everything, as a complete candidate does: the ordinary
+						// cut decides what stays. The prefix path would keep the covered last turn verbatim.
+						if (end === branch.length - 1) return undefined;
+						return commitPrefix(segmentsNote, end, 0.5);
+					};
+					segmentsFallback = assemble();
+					if (segmentsFallback === "in-flight" || segmentsFallback === "fit" || segmentsFallback === "cut") {
+						const waiting = performance.now();
+						const settled = await segments.settle(segments.waitMs, event.signal);
+						segmentsWaitMs = Math.round(performance.now() - waiting);
+						if (settled) segmentsFallback = assemble();
+					}
+					if (!segmentsFallback) path = "segments";
+				}
 			}
 			// D18: merge the session model's work notes without a writer call; the user's own messages follow verbatim.
 			// When B leaves a compaction to the writer, the reason is recorded for evaluation.
@@ -1431,7 +1673,13 @@ export class PreviewMemoryController {
 					}
 				: path === "notes" && notesNote
 					? { note: notesNote, writerModel: modelName(ctx.model), writerEffort: "off" as const }
-					: undefined;
+					: path === "segments" && segmentsNote
+						? {
+								note: segmentsNote,
+								writerModel: merged[merged.length - 1].candidate.provenance.writerModel,
+								writerEffort: merged[merged.length - 1].candidate.provenance.writerEffort,
+							}
+						: undefined;
 			let written: WriteMemoryResult;
 			if (ready) {
 				written = { ...ready, usage: sumMemoryUsage([]), chunkCount: 0 };
@@ -1500,7 +1748,7 @@ export class PreviewMemoryController {
 					build: PREVIEW_BUILD_ID,
 					noteBudget: policy,
 					...(userMessages.length ? { userMessages: userMessages.map((entry) => entry.id) } : {}),
-					...(this.preparation?.enabled || this.workNotes.enabled
+					...(this.preparation?.enabled || this.workNotes.enabled || this.segments?.enabled
 						? {
 								preparation: {
 									version: 1 as const,
@@ -1512,7 +1760,16 @@ export class PreviewMemoryController {
 											}
 										: {}),
 									...(path === "notes" ? { noteIds: notes.map((item) => item.id) } : {}),
+									...(path === "segments"
+										? {
+												segmentIds: merged.map((link) => link.snapshot.segmentId),
+												callIds: merged.flatMap((link) => [...link.candidate.provenance.callIds]),
+											}
+										: {}),
 									...(notesFallback ? { notesFallback } : {}),
+									...(preparationFallback ? { preparationFallback } : {}),
+									...(segmentsFallback ? { segmentsFallback } : {}),
+									...(segmentsWaitMs === undefined ? {} : { segmentsWaitMs }),
 								},
 							}
 						: {}),
@@ -1561,6 +1818,7 @@ export class PreviewMemoryController {
 				if (started !== undefined) last.pauseMs = Math.round(performance.now() - started);
 			}
 			this.preparation?.committed();
+			this.segments?.committed();
 			this.stickyFailures.delete(ctx.sessionManager.getSessionId());
 			this.observedFailures.delete(ctx.sessionManager.getSessionId());
 			this.readyStatus(ctx);
@@ -1593,6 +1851,7 @@ export class PreviewMemoryController {
 			}
 			this.store.recover(ctx.sessionManager, leaf, sourceHash);
 			this.preparation?.committed();
+			this.segments?.committed();
 			this.stagedCompactions.delete(ctx.sessionManager.getSessionId());
 			this.stickyFailures.delete(ctx.sessionManager.getSessionId());
 			this.observedFailures.delete(ctx.sessionManager.getSessionId());

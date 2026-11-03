@@ -1,7 +1,10 @@
 // Lifted from the preview into the host-neutral core (v0.7.0 WP2 step 3): the notes, identity and
 // quote-diagnostics imports moved to the core's copies, and the host's SessionEntry type import
 // became the specification's structural SessionRecord (records.ts). Logic, the work-note schema,
-// the merge, bounds and thrown messages are unchanged (rule K2).
+// the merge, bounds and thrown messages are unchanged (rule K2). In 0.8.0 (WP1) the merge became
+// `mergeNotes`, which also carries instructions a merged note adds and says why it refuses; work
+// notes have no instructions, so `mergeWorkNotes` behaves as before. Since WP3 (U6 amended), a
+// note's instruction may retire a carried one when a user message in its range supports it.
 import { type Static, Type } from "typebox";
 import { Check } from "typebox/value";
 import { CONTEXT_NOTE_TYPE, isRecord } from "./identity.ts";
@@ -107,27 +110,37 @@ export function workNotes(branch: readonly SessionRecord[], afterId?: string): W
 	return result;
 }
 
+/** Why a merge leaves the boundary to the writer. */
+export type MergeRefusal = "instruction-superseded" | "ambiguous-supersede" | "schema";
+
+export interface MergeEntry extends Pick<WorkNoteEntry, "note" | "gapsListed"> {
+	/** User messages the note may cite for a ruling that retires a carried instruction; a work note has none. */
+	userMessages?: ReadonlySet<string>;
+}
+
 /**
- * The previous checkpoint's note followed by the work notes since, in order. A fact that supersedes a source
- * drops the earlier facts citing it, the latest nonempty nextSteps is the plan and the latest listed gaps are the
- * open questions. Instructions are carried unchanged. The writer merges instead when a work note supersedes the
- * source of an instruction, when a superseded source supports more earlier facts than the note gives in their
- * place, or when the result exceeds the note schema.
+ * The previous checkpoint's note followed by later notes, in order: work notes or segments. An item that supersedes
+ * a source drops the earlier items citing it, the latest nonempty nextSteps is the plan and the latest listed gaps
+ * are the open questions. A later note's instructions follow the carried ones; a carried instruction is retired only
+ * by a later instruction that supersedes its source and cites one of the note's user messages, since only the user
+ * changes a ruling. The writer merges instead when a superseded source supports more carried instructions than such
+ * rulings replace, or more earlier items in all than the note gives in their place, or when the result exceeds the
+ * note schema.
  */
-export function mergeWorkNotes(
+export function mergeNotes(
 	previous: MemoryNote | undefined,
-	notes: readonly Pick<WorkNoteEntry, "note" | "gapsListed">[],
-): MemoryNote | undefined {
+	notes: readonly MergeEntry[],
+): { note: MemoryNote } | { refusal: MergeRefusal } {
 	const merged = oneLineNote(
 		previous ?? { instructions: [], failedPaths: [], reasons: [], state: [], nextSteps: [], files: [], gaps: [] },
 	);
-	for (const { note, gapsListed } of notes) {
+	for (const { note, gapsListed, userMessages } of notes) {
 		const superseded = new Set(
 			noteSections.flatMap((section) => note[section].flatMap((item) => item.supersedes ?? [])),
 		);
 		const replaced = (item: NoteFact) => item.sources.some((id) => superseded.has(id));
-		if (merged.instructions.some(replaced)) return undefined;
-		// `supersedes` names entries, not facts. When an entry supports more earlier facts than the note gives in
+		const rulings = note.instructions.filter((item) => item.sources.some((id) => userMessages?.has(id)));
+		// `supersedes` names entries, not facts. When an entry supports more earlier items than the note gives in
 		// their place, which of them it corrects is ambiguous, and dropping them all would lose the others.
 		const droppable = [
 			...merged.failedPaths,
@@ -138,10 +151,14 @@ export function mergeWorkNotes(
 		];
 		const given = noteSections.flatMap((section) => note[section]);
 		for (const id of superseded) {
-			const earlier = droppable.filter((item) => item.sources.includes(id)).length;
-			if (earlier > given.filter((item) => item.supersedes?.includes(id)).length) return undefined;
+			const cites = (item: NoteFact) => item.sources.includes(id);
+			const names = (item: NoteFact) => item.supersedes?.includes(id) === true;
+			const carried = merged.instructions.filter(cites).length;
+			if (carried > rulings.filter(names).length) return { refusal: "instruction-superseded" };
+			if (carried + droppable.filter(cites).length > given.filter(names).length)
+				return { refusal: "ambiguous-supersede" };
 		}
-		for (const section of ["failedPaths", "reasons", "state", "files"] as const) {
+		for (const section of ["instructions", "failedPaths", "reasons", "state", "files"] as const) {
 			const kept = merged[section].filter((item) => !replaced(item));
 			const seen = new Set(kept.map((item) => JSON.stringify(item)));
 			merged[section] = [...kept, ...note[section].filter((item) => !seen.has(JSON.stringify(item)))];
@@ -149,7 +166,16 @@ export function mergeWorkNotes(
 		merged.nextSteps = note.nextSteps.length ? note.nextSteps : merged.nextSteps.filter((item) => !replaced(item));
 		if (gapsListed) merged.gaps = [...new Set(note.gaps)];
 	}
-	return Check(noteSchema, merged) ? merged : undefined;
+	return Check(noteSchema, merged) ? { note: merged } : { refusal: "schema" };
+}
+
+/** The previous checkpoint's note followed by the work notes since; undefined when the writer must merge. */
+export function mergeWorkNotes(
+	previous: MemoryNote | undefined,
+	notes: readonly Pick<WorkNoteEntry, "note" | "gapsListed">[],
+): MemoryNote | undefined {
+	const merged = mergeNotes(previous, notes);
+	return "note" in merged ? merged.note : undefined;
 }
 
 /**

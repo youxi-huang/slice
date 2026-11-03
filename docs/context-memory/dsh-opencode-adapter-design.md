@@ -14,7 +14,7 @@ Versions below identify inspected sources, not a supported-version matrix.
 | --- | --- | --- |
 | [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) | Latest listed prerelease `dsh-v0.2.1-rc.3`; also master `22ddee3792402c3e70ec5f86a63c3e3e895a2f60` | Public compaction service, native append-only events, surface replacement, maintenance admission and persistence handles. |
 | [OpenCode stable](https://github.com/anomalyco/opencode/releases/tag/v1.19.4) | Latest non-prerelease `v1.19.4`, commit `148842ef7cb1bc34192b3fff57d0f9721ab9c801` | SDK-backed original-message retrieval and tool registration. Its compaction hook customises a prompt, not the final checkpoint. |
-| [OpenCode V2 development](https://github.com/anomalyco/opencode/tree/94353780cf289dcecee2866322dbbe1f34d51641) | `dev` commit `94353780cf289dcecee2866322dbbe1f34d51641`; plugin manifest `2.1.4` | `ctx.session.hook("compaction")` and `event.result`, including summary and metadata. Do not infer a stable V2 release from this manifest. |
+| [OpenCode V2 development](https://github.com/anomalyco/opencode/tree/94353780cf289dcecee2866322dbbe1f34d51641) | `dev` commit `94353780cf289dcecee2866322dbbe1f34d51641`; plugin manifest `2.1.4` | `ctx.session.hook("compaction")` and `event.result`, including summary and metadata. Do not infer a stable V2 release from this manifest. V2 has since been released as `@opencode/cli` 2.0.0 on 2026-09-11; this row records the development commit inspected before that. |
 | [Better Compact](https://github.com/AshishKumar4/better-compact/tree/217ccef21e2c746dc4cd00a7ac4c65dfd3a89c19) | `217ccef21e2c746dc4cd00a7ac4c65dfd3a89c19` | Native codecs beside the host adapters and a shared internal core. Avoid importing its transcript stores, pruning ladder or fallback semantics into Slice. |
 | [OpenCode DCP](https://github.com/Tarquinen/opencode-dynamic-context-pruning/tree/f8232fde1e63c2251687e4d9634bd53ce11568cb) | `f8232fde1e63c2251687e4d9634bd53ce11568cb` | Separate V2 entry point, per-session serialisation, native-message projection and keeping reporting out of model context. Its local compression state and model nudges are not needed here. |
 | [dsh-asc](https://github.com/lmst2/dsh-asc) | Current README and architecture description | Recover originals from the host log; keep one compaction service. Its tiered autonomous tools are a different policy, not Slice's implementation model. |
@@ -85,30 +85,19 @@ DSH's [persistence service](https://github.com/deepseek-ai/deepseek-harness/blob
 
 The released basic backend differs from inspected master, including model-switch handling. Acceptance must run against the installed prerelease itself; master is not a substitute.
 
-### First bounded implementation
+### Writing preview
 
-Use a small provider of the public `CompactionEngine` service for manual compaction. Reuse `agent.runMaintenance`, host token metering, public tool-boundary helpers, host session append and flush, and core note generation/validation. This implements Slice's existing commit contract; it does not copy the basic backend's pressure policy, overflow loop, image recovery or private `region.ts` implementation.
-
-The selected profile must have exactly one compaction provider. The first preview supports fresh persistent sessions, completed turns, text and closed tool batches, and manual `/compact`. Automatic compaction is explicitly disabled in this preview. An unsupported `compactRegion` request must refuse without mutation; it must not pretend to have compacted. Existing sessions with unknown checkpoints and arbitrary forks remain outside scope until proven.
-
-The bounded transaction is:
-
-1. Enter the host's maintenance admission boundary. Resolve writer and permissions, flush the host, and read the source snapshot through a read-only persistence handle. Refuse absent persistence, unsupported records, unfinished tools or a non-prefix range.
-2. Persist a content-free pending attempt before paying for a writer call. Identity includes session, source boundary, previous checkpoint and source hash. Open the matching native `compaction/start` bracket and flush it. Inability to persist either prerequisite prevents compaction.
-3. Generate and validate the candidate through the shared core. Recheck the native source snapshot and selected surface after the asynchronous call.
-4. Stage the structured checkpoint in the host event log, using a registered log-only extension record. Preserve the native summary/replacement adjacency and native event provenance. The schema and removal/reopen behaviour of that extension record must pass the host fixture before use. Do not hide JSON in model-facing summary text or a tool result.
-5. Append the native compaction summary, its replacement and closing event without yielding through the mutation group. Flush through the host's owning session service.
-6. Read storage again. Confirm the matching native replacement, structured checkpoint, source hash and retained tail. Only then settle the pending attempt and allow the next primary request.
-
-On an admitted attempt's failure, close the native bracket with its error when the host permits it, flush that outcome, and keep the operational marker blocked. A failed flush or an unconfirmed replacement is not a rollback success. On reopen, derive the recovery action from both the marker and the durable native events; never erase originals to repair an interrupted transaction.
-
-The host log holds the structured checkpoint and original evidence. A small operational marker may hold identifiers and failure class; it must not hold another transcript or checkpoint body. Derive completed status from the confirmed host events. Use one serial lane per session and no extra writer ownership of the host's persistence handle.
-
-The first technical acceptance must prove that the public extension-record schema, maintenance boundary, pending marker and request guard can enforce this sequence. If those require copying the private region engine or monkey-patching installed files, stop the writing path and identify the smallest missing public hook. Do not silently ship a modified host as an independent adapter.
-
-`Gated` is the target, not the current rating. Prove blocking before every primary request, after restart, during retry and after incomplete persistence. A thrown summariser error alone is insufficient. Recovery is explicit and confirms an already staged checkpoint or starts a new validated attempt; it never clears a marker merely because the model can continue.
-
-After the manual loop is accepted, add automatic triggers as a separate change using the same commit path. Enable shared background preparation only after its core behaviour and host-specific coverage checks pass. Do not add a second scheduler in DSH.
+The writing design, decided on 2026-11-03 for track T1 of the
+[v0.8.0 plan](v0.8.0-plan.md), is in [DSH writing preview](dsh-writing.md). It
+replaces the bounded implementation this section used to describe. Three of
+that sketch's assumptions did not survive the rc.5 review. A pending-attempt
+marker is unnecessary, because DSH's own `compaction/start` and
+`compaction/end` with `error` already make every attempt durable. A registered
+extension record is unavailable, so the checkpoint goes into `rawOutput` of the
+native `compaction/summary` under U11. Blocking needs no host change, because an
+`agent/pre-step` listener may reject. What stays is the rule that the
+transaction is written against the public API, never by copying the private
+region engine or patching installed files.
 
 ## OpenCode design
 

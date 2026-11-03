@@ -72,3 +72,35 @@ export function withoutOutOfScope(
 		}
 	return dropped ? { note: pruned, dropped } : undefined;
 }
+
+/**
+ * 0.8.0: a segment note without what lies outside its range. A segment records what its own entries add or change,
+ * and the merge carries the previous note, so a fact that cites only earlier entries restates what that note holds or
+ * claims what the segment cannot support: it is dropped. A fact that also cites the range keeps only those sources.
+ * `nextSteps` is the whole current plan, so a plan with a step resting only on earlier entries is dropped whole and
+ * the previous plan stands. `supersedes` may name earlier entries and stays as written. Nothing is added; the note is
+ * validated again, and a refusal still stands when, say, no state fact is left. Undefined when nothing lies outside.
+ */
+export function withinSegmentRange(
+	note: MemoryNote,
+	rangeIds: ReadonlySet<string>,
+): { note: MemoryNote; dropped: number } | undefined {
+	const pruned = structuredClone(note);
+	let dropped = 0;
+	for (const section of noteSections) {
+		const items = pruned[section];
+		const kept = items.filter((item) => item.sources.some((id) => rangeIds.has(id)));
+		if (section === "nextSteps" && kept.length < items.length) {
+			dropped += items.reduce((sum, item) => sum + item.sources.length, 0);
+			pruned.nextSteps = [];
+			continue;
+		}
+		for (const item of items) {
+			const sources = item.sources.filter((id) => rangeIds.has(id));
+			dropped += item.sources.length - sources.length;
+			item.sources = sources;
+		}
+		pruned[section] = kept;
+	}
+	return dropped ? { note: pruned, dropped } : undefined;
+}

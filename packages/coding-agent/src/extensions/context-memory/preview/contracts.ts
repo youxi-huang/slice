@@ -5,9 +5,12 @@ import type { PreviewAttempt, PreviewCheckpoint, PreviewStatus } from "../../../
 // the host-neutral core (v0.7.0 WP2 step 3); the Pi-typed contracts below stay with this adapter.
 export type {
 	NotesFallback,
+	PrefixRefusal,
+	PreparationFallback,
 	PreviewAttempt,
 	PreviewCheckpoint,
 	PreviewStatus,
+	SegmentsFallback,
 } from "../../../../../compaction-core/src/contracts.ts";
 
 export type PreviewSession = ExtensionContext["sessionManager"];

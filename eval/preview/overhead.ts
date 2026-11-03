@@ -46,7 +46,9 @@ export interface BenchWriterCall {
 
 /** One call of the preview's call journal: its start line and, when one followed, its settlement. Content-free. */
 export interface JournalCall {
-	purpose: "compaction" | "preparation";
+	/** The journal's call ID, which a checkpoint's preparation metadata names when it merged the call's segment. */
+	id?: string;
+	purpose: "compaction" | "preparation" | "segment";
 	phase: string;
 	/** False when no settlement followed the start line: the unit stopped while the call was in flight. */
 	settled: boolean;
@@ -166,8 +168,9 @@ export function parseCallJournal(text: string): JournalCall[] {
 			continue;
 		}
 		if (!record(value) || value.v !== 1 || typeof value.call !== "string") continue;
-		if (value.purpose === "compaction" || value.purpose === "preparation") {
+		if (value.purpose === "compaction" || value.purpose === "preparation" || value.purpose === "segment") {
 			calls.set(value.call, {
+				id: value.call,
 				purpose: value.purpose,
 				phase: typeof value.step === "string" ? value.step : "unknown",
 				settled: false,

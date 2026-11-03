@@ -65,6 +65,8 @@ Open a document in `docs/context-memory/` when its row applies, not by default. 
 | [v0.5.0-plan.md](docs/context-memory/v0.5.0-plan.md) | Working on 0.5.0: quotation repair, typed retrieval, the writer bench or the preview evaluation set. |
 | [v0.6.0-plan.md](docs/context-memory/v0.6.0-plan.md) | Working on 0.6.0: the overhead report, deterministic reductions, rendered-note or retrieval candidates, or the inherited 0.5.3 bench. |
 | [v0.7.0-plan.md](docs/context-memory/v0.7.0-plan.md) | Working on 0.7.0: the specification, the core package and its import gate, the lifts, conformance vectors or the resident freeze. |
+| [v0.8.0-plan.md](docs/context-memory/v0.8.0-plan.md) | Working on 0.8.0: segments, their merge at the boundary, preparation limits, or DSH writing and the other hosts' takeover limits. |
+| [dsh-writing.md](docs/context-memory/dsh-writing.md) | Working on DSH checkpoint writing, track T1: the engine, the gate, the checkpoint in `rawOutput`, and what the implementation must not add. |
 | [archive/](docs/context-memory/archive/) | Tracing history only. Archived documents are never current instructions. |
 
 ## Where to look
