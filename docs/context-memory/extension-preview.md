@@ -670,6 +670,24 @@ checkpoint; each later one waits for 15% of the threshold, between 8,192 and
 runs at a time; the segments are kept in memory and lost on restart. A fixed
 `writerModel` writes none.
 
+Segments are written at the session's thinking level unless `effort` names
+another, one of `off`, `minimal`, `low`, `medium`, `high`, `xhigh` and `max`:
+
+```json
+{
+  "previewSegments": {
+    "enabled": true,
+    "effort": "low"
+  }
+}
+```
+
+A segment only records what its own turns add, and the merge carries the rest,
+so a lower level costs less where it matters least. With a level of their own,
+segments stay valid when the session's level changes; without one, a changed
+level discards them, since another level is another writer. An unknown level
+turns segments off, and `/compaction-doctor` says so.
+
 At compaction the extension merges the previous checkpoint's note with the
 segments, in order, without a model call, the way B merges work notes, except
 that a segment may add instructions found in its own turns. When the user
@@ -679,7 +697,8 @@ sources in `supersedes`. The merged note is
 committed through the prefix path, so the turns after the last segment stay
 verbatim, unless that would leave half the compaction threshold or more in
 context. A segment still being written is waited for at most 15 seconds when
-only it would let the merge commit. `details.preparation.path` is then
+only it would let the merge commit, and `details.preparation.segmentsWaitMs`
+records the wait. `details.preparation.path` is then
 `segments`, with `segmentIds` and the `callIds` that wrote them.
 
 The writer compacts synchronously instead, as before, when no segment is ready

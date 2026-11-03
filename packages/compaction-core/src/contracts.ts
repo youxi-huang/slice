@@ -23,6 +23,8 @@ export interface PreviewCheckpoint extends MemoryCheckpoint {
 		segmentIds?: string[];
 		/** 0.8.0: why the segments did not serve this compaction. */
 		segmentsFallback?: SegmentsFallback;
+		/** 0.8.0 U8: how long the boundary waited for the segment in flight, when it waited. */
+		segmentsWaitMs?: number;
 	};
 	/** User messages rendered verbatim after the note by the notes path; re-rendered at every full validation. */
 	userMessages?: string[];

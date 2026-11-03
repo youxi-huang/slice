@@ -59,7 +59,7 @@ import { checkpointRecords, equivalenceLine, errorClasses } from "./context-memo
 // tokens against the records each note replaces, by cut and by v0.2.3 source-size tier; retrieval usage apart;
 // known usage of discarded work, read from the rows and each unit's call journal; calls without usage; cache
 // writes; and one net column. --session-settings name=on|off,... sets the preview's own switches, previewReduction,
-// previewExcerpts, previewPreparation and previewWorkNotes, writing `{ "enabled": true }` or `{ "enabled": false }`
+// previewExcerpts, previewPreparation, previewWorkNotes and previewSegments, writing `{ "enabled": true }` or `{ "enabled": false }`
 // under each name into every unit's pi-context-memory.json; any other name or value stops the run before its first
 // unit, and without the flag no unit gets that file. The flag as given and --control <label>, the control run a
 // candidate compares with, are recorded in summary.json, beside the settings the units received.
@@ -69,6 +69,12 @@ import { checkpointRecords, equivalenceLine, errorClasses } from "./context-memo
 // records of scripts/context-memory-equivalence-compare.mjs when the run ends, sorted by case: one per writer or
 // repair attempt with every checkpoint in its session copy, one per probes cut with its chain's checkpoints, and one
 // per probe with its error classes. Without the flag no unit, row or file changes.
+// --replay, in probes mode with --cache session, runs each round in one unit: the round's entries join the session
+// step by step where the agent settles, a real turn follows each step on the session itself, Pi compacts where its
+// trigger falls and /compact closes the round at the gold checkpoint. --pace settled waits for the segment in flight
+// before the next step; immediate does not. --window sets the route's window. --session-settings previewSegments=on
+// and --segment-effort turn segments on at a level; probe units run with segments off. Rows go to boundaries.jsonl
+// and rounds.jsonl, and summary.json gains `replay`.
 
 const script = fileURLToPath(import.meta.url);
 const root = resolve(script, "../..");
@@ -86,7 +92,9 @@ function argument(name, fallback) {
  * The preview's switches in pi-context-memory.json, each read as `{ "enabled": boolean }`, in the order a unit's file
  * lists them. --session-settings sets nothing else, so a run cannot be labelled with a setting its units ignore.
  */
-const SESSION_SWITCHES = ["previewReduction", "previewExcerpts", "previewPreparation", "previewWorkNotes"];
+const SESSION_SWITCHES = ["previewReduction", "previewExcerpts", "previewPreparation", "previewWorkNotes", "previewSegments"];
+/** The levels --segment-effort accepts, as previewSegments.effort does. */
+const SEGMENT_EFFORTS = ["session", "off", "minimal", "low", "medium", "high", "xhigh", "max"];
 const SWITCH_STATES = new Map([
 	["on", true],
 	["off", false],
@@ -299,7 +307,8 @@ function answerText(expected) {
 
 /** A faithful note from the gold files: every answer up to this cut, cited to its first evidence entry. */
 function goldNote(gold, cutIndex, readable) {
-	const cut = gold.checkpoints[cutIndex].afterEntryId;
+	// A replayed round may compact before its gold checkpoint; the note then ends at the last readable entry.
+	const cut = readable.has(gold.checkpoints[cutIndex].afterEntryId) ? gold.checkpoints[cutIndex].afterEntryId : [...readable].at(-1);
 	const seen = new Set();
 	const facts = [];
 	for (const probe of gold.probes) {
@@ -319,6 +328,48 @@ function goldNote(gold, cutIndex, readable) {
 		files: [],
 		gaps: [],
 	};
+}
+
+/**
+ * The loopback's segment over entries `firstId` through `lastId` of `entries`, the session as it stands: every gold
+ * answer up to this cut whose first readable evidence lies in the range, and where the work stands at its end.
+ */
+function goldSegment(gold, cutIndex, entries, firstId, lastId) {
+	const ids = entries.map((entry) => entry.id);
+	const range = new Set(ids.slice(ids.indexOf(firstId), ids.indexOf(lastId) + 1));
+	const readable = new Set(entries.filter((entry) => entry.type === "message").map((entry) => entry.id));
+	const note = goldNote(gold, cutIndex, readable);
+	return { ...note, reasons: note.reasons.filter((fact) => range.has(fact.sources[0])), state: [{ text: `Work continues after ${lastId}.`, sources: [lastId] }], nextSteps: [] };
+}
+
+/**
+ * --replay: a round's entries split where the agent settles, as a session meets them: each step ends with an
+ * assistant reply that calls no tool and that a user message follows, or with the round's last entry.
+ */
+export function settledSteps(entries) {
+	const steps = [];
+	let current = [];
+	entries.forEach((entry, index) => {
+		current.push(entry);
+		const next = entries[index + 1];
+		const settled =
+			entry.type === "message" &&
+			entry.message.role === "assistant" &&
+			entry.message.stopReason !== "toolUse" &&
+			next?.type === "message" &&
+			next.message.role === "user";
+		if (settled || next === undefined) {
+			steps.push(current);
+			current = [];
+		}
+	});
+	return steps;
+}
+
+/** Nearest-rank percentile of the numbers in `values`; null when there are none. */
+export function percentile(values, share) {
+	const sorted = values.filter((value) => typeof value === "number").sort((a, b) => a - b);
+	return sorted.length ? sorted[Math.max(0, Math.ceil(share * sorted.length) - 1)] : null;
 }
 
 async function worker() {
@@ -411,9 +462,12 @@ async function worker() {
 			response.end("data: [DONE]\n\n");
 			return;
 		}
-		const text = writer
-			? JSON.stringify(goldNote(gold, action.cutIndex ?? 0, readable))
-			: JSON.stringify({ status: "unknown" });
+		const range = writer ? serialized.match(/Write a segment note for entries (\S+) through (\S+) only/) : null;
+		const text = range
+			? JSON.stringify(goldSegment(gold, action.cutIndex ?? 0, readLines(action.sessionFile).slice(1), range[1], range[2]))
+			: writer
+				? JSON.stringify(goldNote(gold, action.cutIndex ?? 0, readable))
+				: JSON.stringify({ status: "unknown" });
 		response.write(chunk({ role: "assistant", content: text }, null));
 		response.write(chunk({}, "stop", usage(text)));
 		response.end("data: [DONE]\n\n");
@@ -464,6 +518,8 @@ async function worker() {
 		throw new Error(native ? "The native arm loaded the preview package" : `The preview package did not load: ${JSON.stringify(loaded.errors).slice(0, 300)}`);
 	const sessionManager = stock.SessionManager.open(action.sessionFile);
 	const thinkingLevel = action.provider === "loopback" ? "off" : action.thinking;
+	// --window: the route's window, so Pi's trigger and the preview's segment ranges follow the route, not the catalog.
+	if (action.window) model = { ...model, contextWindow: action.window };
 	const { session } = await stock.createAgentSession({ cwd, agentDir, modelRuntime: runtime, model, thinkingLevel, sessionManager, settingsManager, resourceLoader: loader, noTools: "builtin" });
 	await session.bindExtensions({ onError: (error) => diagnostics.push(String(error?.message ?? error).slice(0, 200)) });
 	const status = async () => {
@@ -534,6 +590,175 @@ async function worker() {
 			if (note && action.type === "repair") result.committedNote = note;
 		}
 		if (action.type === "repair") Object.assign(result, { repairSettings, forwarded });
+	} else if (action.type === "round") {
+		// --replay: one round of a chain. Each step's fixture entries join the session as its own records, IDs kept,
+		// and one real turn follows on the session itself, as the main model's last turn before the user speaks again:
+		// it keeps the provider's cache warm and settles the agent, so the preview writes segments where a session
+		// would. Pi compacts wherever its trigger falls; the round ends with /compact at the gold checkpoint unless a
+		// compaction has just covered it. A failed compaction is retried, as a user retries /compact.
+		const steps = JSON.parse(readFileSync(action.stepsFile, "utf8"));
+		const usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0 };
+		const roundUsage = [];
+		let rounds = 0;
+		session.subscribe((event) => {
+			if (event.type !== "message_end" || event.message?.role !== "assistant") return;
+			rounds++;
+			const reported = event.message.usage;
+			if (reported) {
+				usage.input += reported.input ?? 0;
+				usage.output += reported.output ?? 0;
+				usage.cacheRead += reported.cacheRead ?? 0;
+				usage.cacheWrite += reported.cacheWrite ?? 0;
+				usage.cost += reported.cost?.total ?? 0;
+			}
+			roundUsage.push(reported ? { input: reported.input ?? 0, output: reported.output ?? 0, cacheRead: reported.cacheRead ?? 0, cacheWrite: reported.cacheWrite ?? 0, reasoning: reported.reasoning ?? 0 } : null);
+		});
+		const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
+		const checkpoints = () => sessionManager.getEntries().filter((entry) => entry.type === "compaction").length;
+		// Pi may compact after a turn, and the preview's room check may ask it to: nothing is read before that ends.
+		const quiet = async () => {
+			const until = Date.now() + 900_000;
+			while (session.isCompacting && Date.now() < until) await sleep(250);
+		};
+		// The settled pace: the user speaks again only once the segment in flight has settled.
+		const idle = async () => {
+			const until = Date.now() + 300_000;
+			while (Date.now() < until) {
+				await quiet();
+				if ((await status()).segments?.state !== "preparing") return;
+				await sleep(1_000);
+			}
+		};
+		/** The checkpoint just written, when `appeared`, or the failure just recorded, as one content-free row. */
+		const describe = async (trigger, step, appeared, extra = {}) => {
+			const entry = appeared ? sessionManager.getEntries().findLast((item) => item.type === "compaction") : undefined;
+			const preparation = entry?.details?.preparation ?? {};
+			const after = await status();
+			const committed = appeared && after.lastCompaction?.diskConfirmed === true && entry?.details?.kind === "pi-context-memory";
+			const path = committed ? (preparation.path ?? after.lastCompaction?.path ?? null) : null;
+			const writer = after.lastWriter ?? {};
+			const foreground = committed && path !== "segments" && path !== "complete" && path !== "prefix" && path !== "notes";
+			return {
+				trigger,
+				step,
+				ok: committed,
+				code: after.code ?? null,
+				path,
+				segmentsFallback: preparation.segmentsFallback ?? null,
+				segmentsWaitMs: preparation.segmentsWaitMs ?? null,
+				segments: preparation.segmentIds?.length ?? 0,
+				mergedCallIds: path === "segments" ? (preparation.callIds ?? []) : [],
+				pauseMs: committed ? (after.lastCompaction?.pauseMs ?? null) : null,
+				tokensBefore: entry?.tokensBefore ?? null,
+				coveredThrough: entry?.details?.coveredThrough ?? null,
+				noteBytes: entry?.details?.note ? Buffer.byteLength(JSON.stringify(entry.details.note)) : null,
+				writerCalls: foreground ? (writer.writerCalls ?? 0) : 0,
+				calls: foreground
+					? (writer.writerCallDetails ?? []).map((call) => ({ phase: call.phase, ms: call.ms ?? null, effort: call.effort ?? null, stopReason: call.stopReason ?? null, input: call.usage?.input ?? null, cacheRead: call.usage?.cacheRead ?? null, cacheWrite: call.usage?.cacheWrite ?? null, output: call.usage?.output ?? null, reasoning: call.usage?.reasoning ?? null }))
+					: [],
+				...extra,
+			};
+		};
+		const boundaries = [];
+		const errors = [];
+		/** /compact until it commits or `action.chainAttempts` attempts in all have failed. */
+		const compactNow = async (trigger, step, extra) => {
+			for (let attempt = 1; attempt <= action.chainAttempts; attempt++) {
+				const before = checkpoints();
+				let error;
+				const started = performance.now();
+				try {
+					await session.compact();
+				} catch (cause) {
+					error = String(cause?.message ?? cause).slice(0, 200);
+				}
+				const ms = Math.round(performance.now() - started);
+				await quiet();
+				const row = await describe(trigger, step, checkpoints() > before, { attempt, ms, ...extra, ...(error ? { error } : {}) });
+				boundaries.push(row);
+				if (row.ok) return true;
+			}
+			return false;
+		};
+		let broken = false;
+		for (const [index, step] of steps.entries()) {
+			for (const entry of step) sessionManager._appendEntry({ ...entry, parentId: sessionManager.getLeafId() });
+			session._refreshFinalizedContext();
+			const before = checkpoints();
+			try {
+				await session.prompt(action.prompt);
+			} catch (cause) {
+				errors.push(String(cause?.message ?? cause).slice(0, 200));
+			}
+			await quiet();
+			if (checkpoints() > before) {
+				const row = await describe("auto", index + 1, true, { attempt: 1 });
+				boundaries.push(row);
+				if (!row.ok && !(await compactNow("retry", index + 1))) {
+					broken = true;
+					break;
+				}
+			} else if ((await status()).code) {
+				// An automatic compaction that failed leaves no entry, only the blocked state: the user retries /compact.
+				boundaries.push(await describe("auto", index + 1, false, { attempt: 1 }));
+				if (!(await compactNow("retry", index + 1))) {
+					broken = true;
+					break;
+				}
+			}
+			if (action.pace === "settled") await idle();
+		}
+		// The gold checkpoint: covered already when the last step's turn ended in a compaction.
+		const lastEntry = sessionManager.getEntries().at(-1);
+		if (!broken) {
+			if (lastEntry?.type === "compaction" && boundaries.at(-1)?.ok) boundaries.at(-1).gold = true;
+			else {
+				const coverage = (await status()).segments?.coverage ?? null;
+				broken = !(await compactNow("gold", steps.length, { gold: true, coverage }));
+			}
+		}
+		await quiet();
+		if (action.pace === "settled") await idle();
+		// Every call the preview journaled in this unit, with its catalog cost: segments, writers and repairs.
+		const prices = model.cost ?? { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+		const journalDir = join(agentDir, "context-memory-preview", "calls");
+		const journal = new Map();
+		for (const name of existsSync(journalDir) ? readdirSync(journalDir).filter((item) => item.endsWith(".jsonl")) : [])
+			for (const line of readFileSync(join(journalDir, name), "utf8").split("\n")) {
+				let value;
+				try {
+					value = JSON.parse(line);
+				} catch {
+					continue;
+				}
+				if (value?.v !== 1 || typeof value.call !== "string") continue;
+				if (value.purpose) journal.set(value.call, { id: value.call, purpose: value.purpose, phase: value.step ?? null, outcome: null, dispatched: null, usage: null, costUsd: 0 });
+				else if (journal.has(value.call)) {
+					const call = journal.get(value.call);
+					call.outcome = value.outcome ?? null;
+					call.dispatched = typeof value.dispatched === "boolean" ? value.dispatched : null;
+					if (value.usage) {
+						const { input = 0, output = 0, cacheRead = 0, cacheWrite = 0 } = value.usage;
+						call.usage = { input, output, cacheRead, cacheWrite };
+						call.costUsd = (input * prices.input + output * prices.output + cacheRead * prices.cacheRead + cacheWrite * prices.cacheWrite) / 1_000_000;
+					}
+				}
+			}
+		const journalCalls = [...journal.values()];
+		const sent = journalCalls.filter((call) => call.dispatched !== false);
+		result = {
+			ok: !broken && boundaries.some((row) => row.gold && row.ok),
+			steps: steps.length,
+			boundaries,
+			errors,
+			rounds,
+			usage,
+			roundUsage,
+			journalCalls,
+			requests: rounds + sent.length,
+			costUsd: usage.cost + sent.reduce((sum, call) => sum + call.costUsd, 0),
+			...(action.provider === "openai" ? { openaiResponses: responseItems } : {}),
+		};
 	} else {
 		// "session" keeps the session's own tools, so a warm-up request carries the writer's exact prefix.
 		if (action.condition !== "session") session.setActiveToolsByName(action.condition === "history" ? ["context_history"] : []);
@@ -642,11 +867,28 @@ async function parent() {
 	if (!["slice", "native"].includes(arm)) throw new Error("--arm must be slice or native");
 	if (arm === "native" && (mode !== "probes" || probeConditions.join() !== "none"))
 		throw new Error("--arm native serves only --mode probes with --probe-conditions none: without the package there is no context_history");
+	// --replay: each round's entries arrive step by step with a real turn at every settled point, so segments are
+	// written where a session writes them; --pace says whether the next step waits for the segment in flight, and
+	// --window sets the route's window. Every arm of a comparison replays the same way.
+	const replay = args.includes("--replay");
+	const pace = argument("--pace", "settled");
+	const window = args.includes("--window") ? Number(argument("--window")) : null;
+	const segmentEffort = argument("--segment-effort", "");
+	if (replay && mode !== "probes") throw new Error("--replay applies to probes mode");
+	if (replay && cache !== "session") throw new Error("--replay runs every turn on the session itself: give --cache session");
+	if (replay && arm !== "slice") throw new Error("--replay needs the package");
+	if (!["settled", "immediate"].includes(pace)) throw new Error("--pace takes settled or immediate");
+	if (window !== null && !(Number.isSafeInteger(window) && window >= 32_000 && window <= 1_000_000)) throw new Error("--window takes a token count from 32000 to 1000000");
+	if (segmentEffort && !SEGMENT_EFFORTS.includes(segmentEffort)) throw new Error(`--segment-effort takes ${SEGMENT_EFFORTS.join(", ")}`);
 	const unitMinutes = Number(argument("--unit-minutes", "10"));
 	if (!(unitMinutes > 0)) throw new Error("--unit-minutes must be positive");
 	// The preview switches a run sets, such as previewReduction=on for a candidate, written into every unit's
 	// pi-context-memory.json, and the label of the control run a candidate compares with.
 	const { label: sessionSettings, settings: unitSettings } = parseSessionSettings(argument("--session-settings", ""));
+	if (segmentEffort && unitSettings.previewSegments?.enabled !== true) throw new Error("--segment-effort needs --session-settings previewSegments=on");
+	if (segmentEffort) unitSettings.previewSegments.effort = segmentEffort;
+	// Probe units answer from the committed checkpoint; a segment written in a probe's own turn would only add calls.
+	const probeSettings = unitSettings.previewSegments ? { ...unitSettings, previewSegments: { enabled: false } } : unitSettings;
 	const control = argument("--control", "") || null;
 	if (!["writer", "probes", "smoke", "repair"].includes(mode)) throw new Error("--mode must be writer, probes, smoke or repair");
 	if (!["loopback", "deepseek", "deepseek-local", "openai", "relay"].includes(provider)) throw new Error("--provider must be loopback, deepseek, deepseek-local, openai or relay");
@@ -729,8 +971,8 @@ async function parent() {
 		// Pi's system prompt ends with the working directory, so a directory per unit gives every request its own
 		// prefix after a few hundred tokens; a warm run shares one directory, as one user's session does.
 		const cwd = join(runDir, "cwd", cache === "cold" ? id : "shared");
-		writeUnitSettings(agentDir, unitSettings);
-		const encoded = Buffer.from(JSON.stringify({ ...action, arm, cwd, ...(action.provider === "relay" ? { baseUrl, relay } : {}), ...(equivalenceOut ? { equivalence: true } : {}) })).toString("base64url");
+		writeUnitSettings(agentDir, action.type === "probe" && action.condition !== "session" ? probeSettings : unitSettings);
+		const encoded = Buffer.from(JSON.stringify({ ...action, arm, cwd, ...(window ? { window } : {}), ...(action.provider === "relay" ? { baseUrl, relay } : {}), ...(equivalenceOut ? { equivalence: true } : {}) })).toString("base64url");
 		const child = spawn(process.execPath, [script, "--worker", "--action", encoded, "--package-dir", packageDir, "--stock-root", stockRoot], { cwd: runDir, env: environment(agentDir), stdio: ["ignore", "pipe", "pipe"] });
 		let stdout = "";
 		let stderr = "";
@@ -767,7 +1009,12 @@ async function parent() {
 
 	/** The most input one request of a unit reported: its writer calls and its probe rounds, cached tokens included. */
 	function largestInput(result) {
-		const requests = [...(result.calls ?? []), ...(result.roundUsage ?? []).filter(Boolean)];
+		const requests = [
+			...(result.calls ?? []),
+			...(result.roundUsage ?? []).filter(Boolean),
+			...(result.boundaries ?? []).flatMap((row) => row.calls ?? []),
+			...(result.journalCalls ?? []).map((call) => call.usage).filter(Boolean),
+		];
 		return requests.reduce((most, item) => Math.max(most, (item.input ?? 0) + (item.cacheRead ?? 0) + (item.cacheWrite ?? 0)), 0);
 	}
 
@@ -775,8 +1022,8 @@ async function parent() {
 	function spend(result, measured) {
 		used.units++;
 		if (!measured) return;
-		used.requests += result.forwarded ?? result.writerCalls ?? result.rounds ?? 0;
-		used.costUsd += result.usage?.cost?.total ?? result.usage?.cost ?? 0;
+		used.requests += result.requests ?? result.forwarded ?? result.writerCalls ?? result.rounds ?? 0;
+		used.costUsd += result.costUsd ?? result.usage?.cost?.total ?? result.usage?.cost ?? 0;
 		const largest = largestInput(result);
 		used.largestInput = Math.max(used.largestInput, largest);
 		if (largest > maxInputTokens) used.inputBreaches++;
@@ -866,6 +1113,42 @@ async function parent() {
 		return next;
 	}
 
+	/** --replay: every boundary row, every unit's journal calls and the steps each round took, for the report. */
+	const boundaryRows = [];
+	const roundRows = [];
+	/**
+	 * --replay: one unit replays the round that ends at cut `k` on `file`, step by step, and compacts wherever Pi's
+	 * trigger falls and at the gold checkpoint. Returns the gold checkpoint's attempts, shaped as compactAt's.
+	 */
+	async function replayRound(fixture, k, file, entries) {
+		const steps = settledSteps(entries);
+		mkdirSync(join(runDir, "steps"), { recursive: true });
+		const stepsFile = join(runDir, "steps", `${fixture.gold.id}-cut${k + 1}.json`);
+		writeFileSync(stepsFile, JSON.stringify(steps));
+		const result = await run({ type: "round", provider, fixture: fixture.gold.id, cutIndex: k, sessionFile: file, stepsFile, pace, chainAttempts, prompt: "Reply with the single word OK.", thinking });
+		spend(result, provider !== "loopback");
+		rmSync(stepsFile, { force: true });
+		if (result.crashed) return [{ ...result, ok: false, code: null }];
+		for (const row of result.boundaries) {
+			const line = { fixture: fixture.gold.id, cut: k + 1, ...row };
+			boundaryRows.push(line);
+			record("boundaries.jsonl", line);
+		}
+		const round = { fixture: fixture.gold.id, cut: k + 1, steps: result.steps, rounds: result.rounds, usage: result.usage, requests: result.requests, costUsd: result.costUsd, errors: result.errors, journalCalls: result.journalCalls };
+		roundRows.push(round);
+		record("rounds.jsonl", { ...round, journalCalls: undefined });
+		const gold = result.boundaries.filter((row) => row.gold);
+		const attempts = (gold.length ? gold : [{ ok: false, code: result.boundaries.at(-1)?.code ?? null }]).map((row) => ({ ...row, diagnostics: result.diagnostics, journal: [] }));
+		// The note the gold checkpoint committed, for the cited-answer counts: it is the session's latest.
+		if (attempts.at(-1).ok) {
+			const lines = readLines(file);
+			const last = lines.findLastIndex((entry) => entry.type === "compaction" && entry.details?.kind === "pi-context-memory");
+			const details = lines[last]?.details;
+			if (details?.note) attempts.at(-1).note = noteShape(details.note, condensedBytes(lines.slice(0, last)), details.noteBudget);
+		}
+		return attempts;
+	}
+
 	/** A session file holding the fixture up to cut k, with every earlier cut compacted by the loopback writer. */
 	async function base(fixture, k) {
 		mkdirSync(join(runDir, "chains"), { recursive: true });
@@ -925,7 +1208,7 @@ async function parent() {
 	}
 
 	const shown = Object.fromEntries(Object.entries(limits).map(([name, value]) => [name, Number.isFinite(value) ? value : "unlimited"]));
-	const report = { label, mode, provider, model: provider === "loopback" ? LOOPBACK.id : relay ? `${relay.model.provider}/${relay.id}` : `${MEASURED[provider].provider}/${MEASURED[provider].id}`, ...(relay && relay.id !== relay.model.id ? { catalogModel: `${relay.model.provider}/${relay.model.id}` } : {}), ...(baseUrl ? { endpoint: new URL(baseUrl).host } : provider === "openai" ? { endpoint: OPENAI_HOST } : {}), thinking, cache, arm, ...(cuts ? { cuts } : {}), ...(mode === "probes" ? { probeConditions, compactionsOnly } : {}), ...(mode === "writer" || mode === "repair" ? { attempts } : {}), ...(mode === "probes" ? { chainAttempts } : {}), concurrency, build: build.buildId ?? build.build ?? null, piVersion: hostVersion, fixtures, sessionSettings, unitSettings: Object.keys(unitSettings).length ? unitSettings : null, control, limits: { ...shown, inputTokensPerRequest: Number.isFinite(maxInputTokens) ? maxInputTokens : "unlimited" } };
+	const report = { label, mode, provider, model: provider === "loopback" ? LOOPBACK.id : relay ? `${relay.model.provider}/${relay.id}` : `${MEASURED[provider].provider}/${MEASURED[provider].id}`, ...(relay && relay.id !== relay.model.id ? { catalogModel: `${relay.model.provider}/${relay.model.id}` } : {}), ...(baseUrl ? { endpoint: new URL(baseUrl).host } : provider === "openai" ? { endpoint: OPENAI_HOST } : {}), thinking, cache, arm, ...(cuts ? { cuts } : {}), ...(mode === "probes" ? { probeConditions, compactionsOnly } : {}), ...(mode === "writer" || mode === "repair" ? { attempts } : {}), ...(mode === "probes" ? { chainAttempts } : {}), concurrency, build: build.buildId ?? build.build ?? null, piVersion: hostVersion, fixtures, sessionSettings, ...(segmentEffort ? { segmentEffort } : {}), unitSettings: Object.keys(unitSettings).length ? unitSettings : null, control, limits: { ...shown, inputTokensPerRequest: Number.isFinite(maxInputTokens) ? maxInputTokens : "unlimited" } };
 
 	if (mode === "smoke") {
 		// One small request through the history conversion: the opening turn of P1 and a one-word reply.
@@ -1106,7 +1389,8 @@ async function parent() {
 			const chain = cuts ? cuts.map((cut) => cut - 1) : fixture.gold.checkpoints.map((_, index) => index);
 			if (chain.at(-1) >= fixture.gold.checkpoints.length) throw new Error(`--cuts: ${id} has ${fixture.gold.checkpoints.length} checkpoints`);
 			const file = join(runDir, "chains", `${id}-measured.jsonl`);
-			let lines = [fixture.header, ...span(fixture, -1, chain[0], null)];
+			// --replay starts from the header alone: each round unit adds its own entries as the session meets them.
+			let lines = replay ? [fixture.header] : [fixture.header, ...span(fixture, -1, chain[0], null)];
 			let broken = false;
 			for (const [step, k] of chain.entries()) {
 				const probes = fixture.gold.probes.filter((probe) => probe.checkpoint === fixture.gold.checkpoints[k].id);
@@ -1116,13 +1400,14 @@ async function parent() {
 					continue;
 				}
 				writeLines(file, lines);
-				const measure = cutMeasure(lines.slice(1));
-				await warm(fixture, k, file);
+				const roundEntries = replay ? span(fixture, step === 0 ? -1 : chain[step - 1], k, null) : [];
+				const measure = cutMeasure([...lines.slice(1), ...roundEntries]);
+				if (!replay) await warm(fixture, k, file);
 				if (exhausted()) {
 					used.unstarted += probes.length * probeConditions.length;
 					continue;
 				}
-				const results = await compactAt(fixture, k, provider, file);
+				const results = replay ? await replayRound(fixture, k, file, roundEntries) : await compactAt(fixture, k, provider, file);
 				results.forEach((result, attempt) => {
 					const row = { fixture: id, cut: k + 1, attempt: attempt + 1, ...measure, ok: result.ok, code: result.code, writerCalls: result.writerCalls, repairKind: result.repairKind, quotations: result.quotations, scope: result.scope ?? null, schema: result.schema ?? null, quotationRepair: result.quotationRepair, toolCalls: result.toolCalls ?? 0, toolCallDeclined: result.toolCallDeclined ?? false, calls: result.calls ?? [], path: result.path ?? null, pauseMs: result.pauseMs, usage: result.usage, reduction: result.reduction ?? null, crashed: result.crashed ?? false, journal: result.journal ?? [], note: noteRow(fixture, k, result.note), ...(result.nativeSummaryBytes !== undefined ? { nativeSummaryBytes: result.nativeSummaryBytes } : {}) };
 					compactions.push(row);
@@ -1159,7 +1444,7 @@ async function parent() {
 					record("answers.jsonl", { probe: probe.id, condition, reply: result.reply ?? null, error: result.error ?? null, errorMessage: result.errorMessage ?? null });
 					equivalent(`bench/probes/${id}/cut${k + 1}/${probe.id}/${condition}`, fixture, null, unitClasses(result), { outcome: result.crashed ? "crashed" : score.outcome });
 				});
-				if (step + 1 < chain.length) lines = [...lines, ...span(fixture, k, chain[step + 1], lines.at(-1).id)];
+				if (step + 1 < chain.length && !replay) lines = [...lines, ...span(fixture, k, chain[step + 1], lines.at(-1).id)];
 			}
 		}
 		const rate = (list) => ({ planned: list.length, passed: list.filter((row) => row.pass).length });
@@ -1172,6 +1457,48 @@ async function parent() {
 			missedEntry: Object.fromEntries(Object.entries(missed).map(([condition, value]) => [condition, { cited: rate(value.cited), uncited: rate(value.uncited) }])),
 		};
 		report.overhead = overheadReport({ attempts: compactions, probes: probeRows, warmups });
+		if (replay) report.replay = replaySummary();
+	}
+
+	/**
+	 * --replay's report, the measures WP5 of the 0.8.0 plan compares with the synchronous control: the pause over
+	 * every committed boundary and over those the segments served, the fallback causes and U8's waits, coverage at
+	 * the gold checkpoints, and the calls segments, writers and the session's own turns made, with catalog costs.
+	 */
+	function replaySummary() {
+		const tally = (values) => values.reduce((counts, value) => ({ ...counts, [value]: (counts[value] ?? 0) + 1 }), {});
+		const spread = (values) => ({ count: values.filter((value) => typeof value === "number").length, p50: percentile(values, 0.5), p95: percentile(values, 0.95), max: percentile(values, 1) });
+		const committed = boundaryRows.filter((row) => row.ok);
+		const calls = roundRows.flatMap((round) => round.journalCalls ?? []).filter((call) => call.dispatched !== false);
+		const merged = new Set(committed.flatMap((row) => row.mergedCallIds ?? []));
+		const figures = (list) => {
+			const total = (key) => list.reduce((sum, call) => sum + (call.usage?.[key] ?? 0), 0);
+			const read = total("cacheRead");
+			const input = total("input");
+			return { calls: list.length, usageMissing: list.filter((call) => !call.usage).length, input, cacheRead: read, cacheWrite: total("cacheWrite"), output: total("output"), cacheReadShare: read + input ? Number((read / (read + input)).toFixed(4)) : null, costUsd: Number(list.reduce((sum, call) => sum + (call.costUsd ?? 0), 0).toFixed(4)) };
+		};
+		const segmentCalls = calls.filter((call) => call.purpose === "segment");
+		const warm = roundRows.reduce((sum, round) => ({ rounds: sum.rounds + (round.rounds ?? 0), input: sum.input + (round.usage?.input ?? 0), cacheRead: sum.cacheRead + (round.usage?.cacheRead ?? 0), cacheWrite: sum.cacheWrite + (round.usage?.cacheWrite ?? 0), output: sum.output + (round.usage?.output ?? 0), costUsd: sum.costUsd + (round.usage?.cost ?? 0) }), { rounds: 0, input: 0, cacheRead: 0, cacheWrite: 0, output: 0, costUsd: 0 });
+		return {
+			window,
+			pace,
+			segments: unitSettings.previewSegments?.enabled === true ? (segmentEffort || "session") : "off",
+			steps: roundRows.reduce((sum, round) => sum + (round.steps ?? 0), 0),
+			boundaries: {
+				total: boundaryRows.length,
+				committed: committed.length,
+				failed: boundaryRows.length - committed.length,
+				byTrigger: tally(boundaryRows.map((row) => row.trigger)),
+				paths: tally(committed.map((row) => row.path)),
+				fallbacks: tally(committed.map((row) => row.segmentsFallback).filter(Boolean)),
+				waited: spread(committed.map((row) => row.segmentsWaitMs)),
+			},
+			pauseMs: { all: spread(committed.map((row) => row.pauseMs)), covered: spread(committed.filter((row) => row.path === "segments").map((row) => row.pauseMs)), writer: spread(committed.filter((row) => row.path !== "segments").map((row) => row.pauseMs)) },
+			coverageAtGold: boundaryRows.filter((row) => row.gold && row.attempt === 1).map((row) => row.coverage ?? null),
+			segmentCalls: { ...figures(segmentCalls), merged: segmentCalls.filter((call) => merged.has(call.id)).length, outcomes: tally(segmentCalls.map((call) => call.outcome ?? "unsettled")), discarded: figures(segmentCalls.filter((call) => !merged.has(call.id))) },
+			writerCalls: figures(calls.filter((call) => call.purpose === "compaction")),
+			warmups: { ...warm, costUsd: Number(warm.costUsd.toFixed(4)), cacheReadShare: warm.cacheRead + warm.input ? Number((warm.cacheRead / (warm.cacheRead + warm.input)).toFixed(4)) : null },
+		};
 	}
 
 	if (equivalenceOut) {

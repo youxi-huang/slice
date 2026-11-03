@@ -92,9 +92,9 @@ import type {
 } from "./contracts.ts";
 import { type AppendedExcerpt, selectExcerpts, unusedExcerpts } from "./excerpts.ts";
 import { blockedNotice, inactiveNotice, NoticeGate, notify, readyNotice } from "./notices.ts";
-import type { PreviewPreparation, PreviewSwitch } from "./preparation.ts";
+import type { PreviewPreparation, PreviewSwitch, SegmentEffort } from "./preparation.ts";
 import { projectSummary, RENDERING_OFF, type RenderingSwitch } from "./render-projection.ts";
-import type { PreviewSegments } from "./segments.ts";
+import { type PreviewSegments, segmentLevel } from "./segments.ts";
 import { setStatusLine } from "./status-line.ts";
 import {
 	modelName,
@@ -529,10 +529,15 @@ export class PreviewMemoryController {
 		this.activeTools = tools;
 	}
 
+	/**
+	 * `segmentEffort` gives a segment's writer identity: the session writer at the segments' own level (U5), so a
+	 * chain written at that level classifies as the same writer at the boundary, and a changed level does not.
+	 */
 	private preparationSubmission(
 		ctx: ExtensionContext,
 		customInstructions?: string,
 		epoch = this.preparation?.currentEpoch,
+		segmentEffort?: SegmentEffort,
 	): PreparationSubmission {
 		if (!this.config || !ctx.model || epoch === undefined) throw new Error("CONTEXT_NO_MODEL_OR_SOURCE");
 		const model = resolveWriterModel(this.config, ctx.modelRegistry, ctx.model);
@@ -551,9 +556,14 @@ export class PreviewMemoryController {
 			writer: {
 				role: this.config.writerModel === SESSION_WRITER ? "session" : "fixed",
 				model: modelName(model),
-				effort: writerReasoning(model, this.config, ctx.thinkingLevel),
+				effort: writerReasoning(model, this.config, segmentLevel(segmentEffort, ctx.thinkingLevel)),
 				policyHash: hashEntries([
-					{ writerModel: this.config.writerModel, writerEffort: this.config.writerEffort, model },
+					{
+						writerModel: this.config.writerModel,
+						writerEffort: this.config.writerEffort,
+						model,
+						...(segmentEffort ? { segmentEffort } : {}),
+					},
 				]),
 				...writerContractHashes(PREVIEW_BUILD_ID),
 				contextHash:
@@ -672,7 +682,12 @@ export class PreviewMemoryController {
 			const usage = ctx.getContextUsage();
 			if (!usage?.tokens) return;
 			const trigger = usage.contextWindow - piReserveTokens(this.hostSettings(), ctx.model);
-			const submission = this.preparationSubmission(ctx, undefined, this.segments.currentEpoch);
+			const submission = this.preparationSubmission(
+				ctx,
+				undefined,
+				this.segments.currentEpoch,
+				this.segments.effort,
+			);
 			this.segments.reconcile(submission);
 			const branch = structuredClone(ctx.sessionManager.getBranch());
 			const records = asRecords(branch);
@@ -723,7 +738,7 @@ export class PreviewMemoryController {
 				? { messages, sessionId }
 				: { messages, sessionId, systemPrompt: ctx.getSystemPrompt(), tools: structuredClone(this.activeTools()) };
 			const config = this.config;
-			const thinking = ctx.thinkingLevel;
+			const thinking = segmentLevel(this.segments.effort, ctx.thinkingLevel);
 			this.segments.start(
 				{
 					input,
@@ -1545,6 +1560,7 @@ export class PreviewMemoryController {
 			// the boundary waits at most U8's 15 s for a segment in flight that extends the chain.
 			let segmentsNote: MemoryNote | undefined;
 			let segmentsFallback: SegmentsFallback | undefined;
+			let segmentsWaitMs: number | undefined;
 			let merged: readonly PreparedSegment[] = [];
 			const segments = this.segments;
 			if (path === "sync" && segments?.enabled) {
@@ -1555,7 +1571,7 @@ export class PreviewMemoryController {
 						let boundary: PreparationSubmission;
 						try {
 							boundary = {
-								...this.preparationSubmission(ctx, undefined, segments.currentEpoch),
+								...this.preparationSubmission(ctx, undefined, segments.currentEpoch, segments.effort),
 								noteBudget: policy,
 							};
 						} catch {
@@ -1584,11 +1600,12 @@ export class PreviewMemoryController {
 						return commitPrefix(segmentsNote, end, 0.5);
 					};
 					segmentsFallback = assemble();
-					if (
-						(segmentsFallback === "in-flight" || segmentsFallback === "fit" || segmentsFallback === "cut") &&
-						(await segments.settle(segments.waitMs, event.signal))
-					)
-						segmentsFallback = assemble();
+					if (segmentsFallback === "in-flight" || segmentsFallback === "fit" || segmentsFallback === "cut") {
+						const waiting = performance.now();
+						const settled = await segments.settle(segments.waitMs, event.signal);
+						segmentsWaitMs = Math.round(performance.now() - waiting);
+						if (settled) segmentsFallback = assemble();
+					}
 					if (!segmentsFallback) path = "segments";
 				}
 			}
@@ -1729,6 +1746,7 @@ export class PreviewMemoryController {
 									...(notesFallback ? { notesFallback } : {}),
 									...(preparationFallback ? { preparationFallback } : {}),
 									...(segmentsFallback ? { segmentsFallback } : {}),
+									...(segmentsWaitMs === undefined ? {} : { segmentsWaitMs }),
 								},
 							}
 						: {}),

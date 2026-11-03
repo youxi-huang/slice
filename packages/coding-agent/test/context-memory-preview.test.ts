@@ -71,7 +71,11 @@ import {
 	readyNotice,
 	recoverRefusedNotice,
 } from "../src/extensions/context-memory/preview/notices.ts";
-import { PreviewPreparation, readPreparationSettings } from "../src/extensions/context-memory/preview/preparation.ts";
+import {
+	PreviewPreparation,
+	readPreparationSettings,
+	type SegmentEffort,
+} from "../src/extensions/context-memory/preview/preparation.ts";
 import { PreviewSegments } from "../src/extensions/context-memory/preview/segments.ts";
 
 /** Pi's entries satisfy the core's structural record shapes; the union is widened here, never converted (records.ts). */
@@ -3318,6 +3322,8 @@ describe("preview segments at settled turns (0.8.0 WP2)", () => {
 	let contextTokens: number;
 	let outputs: MemoryNote[];
 	let requests: Context[];
+	/** The reasoning level each writer request asked for; undefined when it asked for none. */
+	let levels: (string | undefined)[];
 	let unknownUsage: boolean;
 	let hold: boolean;
 	let held: { signal?: AbortSignal; release: () => void } | undefined;
@@ -3343,14 +3349,20 @@ describe("preview segments at settled turns (0.8.0 WP2)", () => {
 		contextTokens = 60_000;
 		outputs = [];
 		requests = [];
+		levels = [];
 		unknownUsage = false;
 		hold = false;
 		held = undefined;
 		const registry = {
 			find: () => model,
 			hasConfiguredAuth: () => true,
-			streamSimple: (_model: Model<Api>, context: Context, options?: { signal?: AbortSignal }) => {
+			streamSimple: (
+				_model: Model<Api>,
+				context: Context,
+				options?: { signal?: AbortSignal; reasoning?: string },
+			) => {
 				requests.push(structuredClone(context));
+				levels.push(options?.reasoning);
 				const output = outputs.shift() ?? note();
 				const message: AssistantMessage = {
 					...assistant(),
@@ -3487,7 +3499,7 @@ describe("preview segments at settled turns (0.8.0 WP2)", () => {
 			{ type: "session_compact", compactionEntry: entry, fromExtension: true, reason: "manual", willRetry: false },
 			ctx,
 		);
-		expect(segments.status()).toEqual({ enabled: true, state: "idle", ready: 0 });
+		expect(segments.status()).toEqual({ enabled: true, state: "idle", effort: "session", ready: 0 });
 	});
 
 	it.each(["branch-switch", "writer-change"])(
@@ -3505,7 +3517,7 @@ describe("preview segments at settled turns (0.8.0 WP2)", () => {
 			expect(held?.signal?.aborted).toBe(true);
 			held?.release();
 			await segments.waitForIdle();
-			expect(segments.status()).toEqual({ enabled: true, state: "idle", ready: 0 });
+			expect(segments.status()).toEqual({ enabled: true, state: "idle", effort: "session", ready: 0 });
 		},
 	);
 
@@ -3625,6 +3637,7 @@ describe("preview segments at settled turns (0.8.0 WP2)", () => {
 		const value = await pending;
 		expect(requests).toHaveLength(1);
 		expect(value.details?.preparation).toMatchObject({ path: "segments" });
+		expect(value.details?.preparation?.segmentsWaitMs).toBeGreaterThanOrEqual(0);
 		// The chain reaches the last entry, so it covers everything and the ordinary cut keeps nothing.
 		expect(value.details?.coveredThrough).toBe("reply-2");
 		expect(value.firstKeptEntryId).toBe(CONTEXT_KEEP_NONE);
@@ -3635,6 +3648,7 @@ describe("preview segments at settled turns (0.8.0 WP2)", () => {
 		expect(controller.status(ctx).segments).toEqual({
 			enabled: true,
 			state: "idle",
+			effort: "session",
 			ready: 1,
 			coveredThrough: "reply-1",
 			coverage: 1,
@@ -3644,11 +3658,20 @@ describe("preview segments at settled turns (0.8.0 WP2)", () => {
 	});
 
 	it("parses previewSegments like the other switches: off by default, paused when invalid (U13)", () => {
-		const cases: [string | undefined, { enabled: boolean; error?: string }][] = [
-			[undefined, { enabled: false }],
-			[JSON.stringify({ previewSegments: {} }), { enabled: false }],
-			[JSON.stringify({ previewSegments: { enabled: true } }), { enabled: true }],
-			[JSON.stringify({ previewSegments: { enabled: 1 } }), { enabled: false, error: "invalid-config" }],
+		const cases: [string | undefined, { enabled: boolean; error?: string; effort: string }][] = [
+			[undefined, { enabled: false, effort: "session" }],
+			[JSON.stringify({ previewSegments: {} }), { enabled: false, effort: "session" }],
+			[JSON.stringify({ previewSegments: { enabled: true } }), { enabled: true, effort: "session" }],
+			[JSON.stringify({ previewSegments: { enabled: true, effort: "low" } }), { enabled: true, effort: "low" }],
+			[JSON.stringify({ previewSegments: { enabled: true, effort: "off" } }), { enabled: true, effort: "off" }],
+			[
+				JSON.stringify({ previewSegments: { enabled: 1 } }),
+				{ enabled: false, error: "invalid-config", effort: "session" },
+			],
+			[
+				JSON.stringify({ previewSegments: { enabled: true, effort: "fast" } }),
+				{ enabled: false, error: "invalid-config", effort: "session" },
+			],
 		];
 		for (const [content, expected] of cases) {
 			const agentDir = fs.mkdtempSync(join(tmpdir(), "pi-segment-settings-"));
@@ -3662,8 +3685,10 @@ describe("preview segments at settled turns (0.8.0 WP2)", () => {
 
 	it("tells the doctor when segments are off, inactive, paused or on", () => {
 		const diagnosis = controller.diagnose(ctx);
-		const report = (segmentState: { enabled: boolean; state: string; reason?: string }, writerModel = "session") =>
-			doctorReport(diagnosis, { disabled: false, writerModel, segments: segmentState });
+		const report = (
+			segmentState: { enabled: boolean; state: string; reason?: string; effort?: string },
+			writerModel = "session",
+		) => doctorReport(diagnosis, { disabled: false, writerModel, segments: segmentState });
 		expect(report({ enabled: false, state: "paused", reason: "invalid-config" })).toContain(
 			"segments: off - previewSegments in pi-context-memory.json is not valid, so segments stay off",
 		);
@@ -3673,8 +3698,47 @@ describe("preview segments at settled turns (0.8.0 WP2)", () => {
 		expect(report({ enabled: true, state: "paused", reason: "exhausted-output" })).toContain(
 			"segments: paused - three notes cut off at the output limit in a row. The writer compacts until the next checkpoint",
 		);
-		expect(report({ enabled: true, state: "idle" })).toContain("segments: ok - written at settled turns");
+		expect(report({ enabled: true, state: "idle" })).toContain("segments: ok - written at settled turns and merged");
+		expect(report({ enabled: true, state: "idle", effort: "low" })).toContain(
+			"segments: ok - written at settled turns at thinking level low and merged",
+		);
 		expect(report({ enabled: false, state: "disabled" })).not.toContain("segments:");
+	});
+
+	/** Segments at `effort`, or at the session's level when unset, on a reasoning model at session level `high`. */
+	function reasoningSegments(effort?: SegmentEffort): void {
+		segments.dispose();
+		segments = new PreviewSegments({ enabled: true, journal, ...(effort ? { effort } : {}) });
+		controller = new PreviewMemoryController({
+			config: { ...DEFAULT_MEMORY_CONFIG, writerModel: SESSION_WRITER, noteRepair: false },
+			failureStore: new PreviewFailureStore(join(root, "agent")),
+			segments,
+			journal,
+		});
+		ctx = { ...ctx, model: { ...model, reasoning: true }, thinkingLevel: "high" } as ExtensionContext;
+		controller.sessionStart(ctx);
+	}
+
+	it("writes segments at their own thinking level, which a later change of the session's leaves valid (U5)", async () => {
+		reasoningSegments("low");
+		await settle();
+		expect(levels).toEqual(["low"]);
+		expect(controller.status(ctx).segments).toMatchObject({ effort: "low", ready: 1 });
+		// The segment's identity carries its own level, so the session's new level does not make it another writer.
+		ctx = { ...ctx, thinkingLevel: "medium" } as ExtensionContext;
+		const value = await controller.compact(event(), ctx);
+		expect(levels).toEqual(["low"]);
+		expect(value.details?.preparation).toMatchObject({ path: "segments" });
+	});
+
+	it("mirrors the session's level without one of its own, so a changed level makes them another writer", async () => {
+		reasoningSegments();
+		await settle();
+		expect(levels).toEqual(["high"]);
+		ctx = { ...ctx, thinkingLevel: "medium" } as ExtensionContext;
+		const value = await controller.compact(event(), ctx);
+		expect(levels).toEqual(["high", "medium"]);
+		expect(value.details?.preparation).toMatchObject({ path: "sync", segmentsFallback: "invalid" });
 	});
 
 	it("writes no segment through a fixed writer (U4)", async () => {

@@ -82,6 +82,7 @@ export default function contextMemoryPreview(pi: ExtensionAPI): void {
 	const segments = new PreviewSegments({
 		enabled: preparation.segments.enabled,
 		settingsError: preparation.segments.error,
+		effort: preparation.segments.effort,
 		journal,
 	});
 	const controller = new PreviewMemoryController({

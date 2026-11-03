@@ -68,6 +68,8 @@ const workerCase = argument("--worker", "");
 /** --equivalence-out in the parent; the worker gets --equivalence and collects its classes only then. */
 const equivalenceOut = argument("--equivalence-out", "") ? resolve(argument("--equivalence-out")) : null;
 const equivalenceClasses = args.includes("--equivalence") ? [] : undefined;
+// --segments on measures long-session-overhead with 0.8.0's previewSegments switched on, the release gate's second pass.
+const segmentsOn = argument("--segments", "off") === "on";
 
 function environment(agentDir) {
 	const value = {
@@ -1046,6 +1048,7 @@ async function worker() {
 					return median(times);
 				}
 				writeSettings(true);
+				if (segmentsOn) writeFileSync(join(agentDir, "pi-context-memory.json"), JSON.stringify({ previewSegments: { enabled: true } }));
 				await open(newSession());
 				await prompt(SOURCE_TEXT);
 				const measured = [];
@@ -1132,7 +1135,7 @@ async function runWorker(name, variant, root, timeoutMs, candidate) {
 	rmSync(caseDir, { recursive: true, force: true });
 	mkdirSync(caseDir, { recursive: true });
 	const agentDir = join(caseDir, "agent");
-	const parameters = [script, "--package-dir", candidate, "--stock-root", root, "--output-dir", outputDir, "--worker", name, "--variant", variant, "--perf-checkpoints", argument("--perf-checkpoints", "20"), ...(equivalenceOut ? ["--equivalence"] : [])];
+	const parameters = [script, "--package-dir", candidate, "--stock-root", root, "--output-dir", outputDir, "--worker", name, "--variant", variant, "--perf-checkpoints", argument("--perf-checkpoints", "20"), ...(segmentsOn ? ["--segments", "on"] : []), ...(equivalenceOut ? ["--equivalence"] : [])];
 	const child = spawn(process.execPath, parameters, { cwd: outputDir, env: environment(agentDir), stdio: ["ignore", "pipe", "pipe"] });
 	let stderr = "";
 	child.stdout.on("data", () => {});
@@ -1176,7 +1179,7 @@ async function parent() {
 		package: packageBuild,
 		host: inspectOfficialPi(stockRoot, hostVersion(stockRoot)),
 		...(otherStockRoot ? { otherHost: inspectOfficialPi(otherStockRoot, hostVersion(otherStockRoot)) } : {}),
-		checkpointTarget: Number(argument("--perf-checkpoints", "20")), only: only || null };
+		checkpointTarget: Number(argument("--perf-checkpoints", "20")), only: only || null, segments: segmentsOn ? "on" : "off" };
 	writeFileSync(join(outputDir, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`);
 	const report = { host: "official npm Pi", providers: "loopback HTTP synthetic only", packageCopy: "temporary directory outside the repository", knownGaps: [...KNOWN_GAPS],
 		candidate: { version: packageManifest.version, sourceCommit: packageBuild.sourceCommit, build: packageBuild.build, sourceHash: packageBuild.sourceHash,

@@ -21,14 +21,35 @@ export interface PreviewSwitch {
 	error?: "invalid-config";
 }
 
+/** The thinking level segments are written at: the session's own, or a fixed level (U5). */
+export type SegmentEffort = "session" | "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+const SEGMENT_EFFORTS: readonly string[] = ["session", "off", "minimal", "low", "medium", "high", "xhigh", "max"];
+
+export interface SegmentsSwitch extends PreviewSwitch {
+	effort: SegmentEffort;
+}
+
 type PreparationSettings = PreviewSwitch & {
 	notes: PreviewSwitch;
 	reduction: PreviewSwitch;
 	rendering: RenderingSwitch;
-	segments: PreviewSwitch;
+	segments: SegmentsSwitch;
 };
 
 const settingsCache = new Map<string, PreparationSettings>();
+
+function isSegmentEffort(value: unknown): value is SegmentEffort {
+	return typeof value === "string" && SEGMENT_EFFORTS.includes(value);
+}
+
+/** `previewSegments`: the switch, and `effort`, the session's level unless set; an unknown level turns segments off. */
+export function segmentsSwitch(section: unknown): SegmentsSwitch {
+	const base = previewSwitch(section);
+	const effort = isRecord(section) ? section.effort : undefined;
+	if (effort !== undefined && !isSegmentEffort(effort))
+		return { enabled: false, error: "invalid-config", effort: "session" };
+	return { ...base, effort: effort ?? "session" };
+}
 
 export function previewSwitch(section: unknown): PreviewSwitch {
 	if (section === undefined) return { enabled: false };
@@ -39,7 +60,7 @@ export function previewSwitch(section: unknown): PreviewSwitch {
 
 /**
  * `previewPreparation.enabled` (arm A), `previewWorkNotes.enabled` (arm B), `previewReduction.enabled`
- * (WP2), `previewRendering` with its candidate names (WP3) and 0.8.0's `previewSegments.enabled` in
+ * (WP2), `previewRendering` with its candidate names (WP3) and 0.8.0's `previewSegments` with its effort in
  * pi-context-memory.json, latched for the process like the other settings. Keys from the earlier experiment (call, token and cost budgets) are
  * ignored; an invalid value disables its switch without touching requests or the failure contract.
  */
@@ -56,7 +77,7 @@ export function readPreparationSettings(agentDir: string): PreparationSettings {
 			notes: previewSwitch(record.previewWorkNotes),
 			reduction: previewSwitch(record.previewReduction),
 			rendering: renderingSwitch(record.previewRendering),
-			segments: previewSwitch(record.previewSegments),
+			segments: segmentsSwitch(record.previewSegments),
 		};
 	} catch (error) {
 		const off: PreviewSwitch = missing(error) ? { enabled: false } : { enabled: false, error: "invalid-config" };
@@ -65,7 +86,7 @@ export function readPreparationSettings(agentDir: string): PreparationSettings {
 			notes: off,
 			reduction: off,
 			rendering: { ...RENDERING_OFF, ...(off.error ? { error: off.error } : {}) },
-			segments: off,
+			segments: { ...off, effort: "session" },
 		};
 	}
 	settingsCache.set(path, result);

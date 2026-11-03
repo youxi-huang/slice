@@ -9,7 +9,7 @@ import { readMemoryConfig } from "../packages/coding-agent/src/extensions/contex
 import { readExcerptSettings } from "../packages/coding-agent/src/extensions/context-memory/preview/excerpts.ts";
 import { readPreparationSettings } from "../packages/coding-agent/src/extensions/context-memory/preview/preparation.ts";
 // Importing the bench starts no run: only its helpers are read here.
-import { parseSessionSettings, writeUnitSettings } from "./context-memory-preview-bench.mjs";
+import { parseSessionSettings, percentile, settledSteps, writeUnitSettings } from "./context-memory-preview-bench.mjs";
 
 const script = fileURLToPath(new URL("./context-memory-preview-bench.mjs", import.meta.url));
 
@@ -36,7 +36,7 @@ test("a unit's pi-context-memory.json carries each named switch in the shape the
 		notes: { enabled: false },
 		reduction: { enabled: true },
 		rendering: { enabled: false, candidates: [] },
-		segments: { enabled: false },
+		segments: { enabled: false, effort: "session" },
 	});
 	assert.deepEqual(readExcerptSettings(agentDir), { enabled: false });
 	assert.equal(readMemoryConfig(agentDir).enabled, true);
@@ -57,7 +57,7 @@ test("a unit's pi-context-memory.json carries each named switch in the shape the
 		notes: { enabled: true },
 		reduction: { enabled: true },
 		rendering: { enabled: false, candidates: [] },
-		segments: { enabled: false },
+		segments: { enabled: false, effort: "session" },
 	});
 	assert.deepEqual(readExcerptSettings(everyDir), { enabled: true });
 
@@ -127,7 +127,7 @@ test("without --session-settings no unit gets a settings file, so units run on t
 		notes: { enabled: false },
 		reduction: { enabled: false },
 		rendering: { enabled: false, candidates: [] },
-		segments: { enabled: false },
+		segments: { enabled: false, effort: "session" },
 	});
 	assert.deepEqual(readExcerptSettings(agentDir), { enabled: false });
 });
@@ -162,6 +162,15 @@ test("--provider openai is a provider run on the official API, and the long-rout
 		[["--mode", "probes", "--arm", "pi"], /--arm must be slice or native/],
 		[["--mode", "probes", "--arm", "native"], /--arm native serves only --mode probes with --probe-conditions none/],
 		[["--mode", "writer", "--arm", "native", "--probe-conditions", "none"], /--arm native serves only --mode probes/],
+		// --replay: a probes chain whose every turn runs on the session itself, with the package, at a known pace,
+		// in a window of plausible size; a segment level only with segments switched on.
+		[["--mode", "writer", "--replay"], /--replay applies to probes mode/],
+		[["--mode", "probes", "--replay"], /--replay runs every turn on the session itself: give --cache session/],
+		[["--mode", "probes", "--replay", "--cache", "session", "--arm", "native", "--probe-conditions", "none"], /--replay needs the package/],
+		[["--mode", "probes", "--pace", "eventually"], /--pace takes settled or immediate/],
+		[["--mode", "probes", "--window", "1000"], /--window takes a token count from 32000 to 1000000/],
+		[["--mode", "probes", "--segment-effort", "fast"], /--segment-effort takes session, off/],
+		[["--mode", "probes", "--segment-effort", "low"], /--segment-effort needs --session-settings previewSegments=on/],
 	]) {
 		const result = bench(...flags);
 		assert.notEqual(result.status, 0, flags.join(" "));
@@ -169,4 +178,37 @@ test("--provider openai is a provider run on the official API, and the long-rout
 		assert.doesNotMatch(result.stderr, /preview-build\.json|ENOENT/, flags.join(" "));
 		assert.equal(existsSync(output), false, flags.join(" "));
 	}
+});
+
+test("previewSegments is a session switch, and the preview reads its level from the same object", (t) => {
+	const { settings } = parseSessionSettings("previewSegments=on");
+	assert.deepEqual(settings, { previewSegments: { enabled: true } });
+	const agentDir = join(scratch(t), "segments");
+	writeUnitSettings(agentDir, { previewSegments: { ...settings.previewSegments, effort: "low" } });
+	assert.deepEqual(readPreparationSettings(agentDir).segments, { enabled: true, effort: "low" });
+});
+
+test("--replay splits a round where the agent settles, and reports nearest-rank percentiles", () => {
+	const message = (id, role, stopReason) => ({ type: "message", id, message: { role, ...(stopReason ? { stopReason } : {}) } });
+	const entries = [
+		message("u1", "user"),
+		message("a1", "assistant", "toolUse"),
+		message("t1", "toolResult"),
+		message("a2", "assistant", "stop"),
+		message("u2", "user"),
+		message("a3", "assistant", "stop"),
+		message("u3", "user"),
+		message("a4", "assistant", "toolUse"),
+		message("t4", "toolResult"),
+	];
+	// A tool call's reply settles nothing; the round's last entry ends the last step whatever it is.
+	assert.deepEqual(
+		settledSteps(entries).map((step) => step.map((entry) => entry.id)),
+		[["u1", "a1", "t1", "a2"], ["u2", "a3"], ["u3", "a4", "t4"]],
+	);
+	assert.deepEqual(settledSteps([]), []);
+	assert.equal(percentile([5, 1, 3, null, 4, 2], 0.5), 3);
+	assert.equal(percentile([5, 1, 3, 4, 2], 0.95), 5);
+	assert.equal(percentile([7], 0.95), 7);
+	assert.equal(percentile([null], 0.5), null);
 });

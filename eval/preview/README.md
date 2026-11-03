@@ -166,6 +166,30 @@ summarizes the rest in a second call, which the row counts under `writerCalls`. 
 native run with a Slice run's `history` condition on the same fixtures, model and thinking level: that pair is what a
 user gets with and without the package. The default `--arm slice` is every other run.
 
+`--replay`, in `probes` mode with `--cache session`, measures 0.8.0's segments against the synchronous writer on the
+same terms. Each round of a chain runs in one unit: the round's entries join the session step by step, keeping their
+IDs, and every step ends where the agent settles, with an assistant reply that calls no tool and a user message after
+it. One real turn, `Reply with the single word OK.`, then runs on the session itself, as the main model's last turn
+before the user speaks again: it keeps the provider's cache warm and fires the settled event at which the preview
+writes a segment. Pi compacts wherever its trigger falls, and the round ends with `/compact` at the gold checkpoint
+unless a compaction has just covered it; a failed compaction is retried up to `--chain-attempts` times. Both arms of a
+comparison replay alike and differ only in `--session-settings previewSegments=on|off`; `--segment-effort` sets the
+segments' own thinking level, and probe units always run with segments off, since they answer from the committed
+checkpoint. `--pace settled` lets the segment in flight settle before the next step, the best case; `--pace immediate`
+goes on at once, as a user who never pauses. `--window` sets the route's context window, so Pi's trigger and the
+segment ranges follow the route rather than the catalog: P5's cuts sit under the trigger at 170,000 for cuts 1, 3 and 5
+and at 222,000 for cuts 2 and 4. A window whose trigger falls below a gold cut fails in both arms, because one of P5's
+steps adds a 70,000-token run at once and the writer's request then no longer fits. A round can take longer than the
+default unit limit; give `--unit-minutes 30`.
+
+A replay run writes `boundaries.jsonl`, one content-free row per compaction attempt with its trigger (`auto`, `gold` or
+`retry`), path, segments fallback, U8 wait, pause, coverage at the gold checkpoint and foreground writer calls, and
+`rounds.jsonl` with each round's steps, turns, requests and cost. `summary.json` adds `replay`: the pause's P50, P95
+and maximum over every committed boundary, over those the segments served and over the writer's, fallbacks by cause,
+waits, coverage at each gold checkpoint, and the calls of segments (merged and discarded apart), writers and the
+session's own turns, with cache reads and catalog costs. A round's requests are its turns and every journaled call it
+dispatched, so the run's limits count segments too.
+
 ### Token-overhead report
 
 Writer and probes runs end `summary.json` with `overhead` (report `0.6-overhead-report.1`), which `overhead.ts`

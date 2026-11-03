@@ -2,6 +2,7 @@
 // (U10); U9's limits: the journal's per-interval call limit and spending cap, and a breaker after three
 // consecutive failures of one class until the next commit. Segments never block work: any limit leaves the next
 // boundary to the synchronous writer. Assembly at the boundary is WP3's.
+import type { ThinkingLevel } from "@earendil-works/pi-ai";
 import { segmentBudgetLeft } from "../../../../../compaction-core/src/call-journal.ts";
 import {
 	invalidPreparation,
@@ -15,6 +16,7 @@ import {
 	type SegmentSnapshot,
 } from "../../../../../compaction-core/src/segments.ts";
 import type { CallJournal } from "./call-journal.ts";
+import type { SegmentEffort } from "./preparation.ts";
 import type { WriteMemoryResult, WriterCallHooks } from "./writer.ts";
 
 /** A run still going after this long is cancelled and counted as an error; its calls stay in the journal. */
@@ -35,6 +37,14 @@ export function segmentFailure(error: unknown): SegmentFailure {
 	return "error";
 }
 
+/** The level a segment is written at: the configured one, or the session's when `session` or unset. */
+export function segmentLevel(
+	effort: SegmentEffort | undefined,
+	session: ThinkingLevel | "off" | undefined,
+): ThinkingLevel | "off" | undefined {
+	return effort === undefined || effort === "session" ? session : effort;
+}
+
 export interface SegmentJob {
 	input: SegmentSnapshot;
 	run(signal: AbortSignal, hooks: WriterCallHooks): Promise<WriteMemoryResult>;
@@ -44,6 +54,8 @@ export class PreviewSegments {
 	readonly enabled: boolean;
 	/** How long the boundary may wait for the segment in flight (U8). */
 	readonly waitMs: number;
+	/** The thinking level segments are written at (U5): the session's own unless configured. */
+	readonly effort: SegmentEffort;
 	private readonly deadlineMs: number;
 	private readonly settingsError?: string;
 	private readonly journal: CallJournal;
@@ -60,12 +72,14 @@ export class PreviewSegments {
 		enabled: boolean;
 		settingsError?: string;
 		journal: CallJournal;
+		effort?: SegmentEffort;
 		waitMs?: number;
 		deadlineMs?: number;
 	}) {
 		this.enabled = options.enabled && !options.settingsError;
 		this.settingsError = options.settingsError;
 		this.journal = options.journal;
+		this.effort = options.effort ?? "session";
 		this.waitMs = options.waitMs ?? WAIT_MS;
 		this.deadlineMs = options.deadlineMs ?? DEADLINE_MS;
 	}
@@ -216,6 +230,7 @@ export class PreviewSegments {
 	status(): {
 		enabled: boolean;
 		state: "disabled" | "paused" | "preparing" | "idle";
+		effort?: SegmentEffort;
 		ready: number;
 		coveredThrough?: string;
 		reason?: string;
@@ -230,6 +245,7 @@ export class PreviewSegments {
 		return {
 			enabled: true,
 			state: this.running ? "preparing" : this.broken ? "paused" : "idle",
+			effort: this.effort,
 			ready: this.links.length,
 			...(this.links.length ? { coveredThrough: this.links[this.links.length - 1].snapshot.lastId } : {}),
 			...(this.broken ? { reason: this.broken } : {}),

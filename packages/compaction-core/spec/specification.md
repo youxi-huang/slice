@@ -252,9 +252,10 @@ An extended checkpoint (`contracts.ts` `PreviewCheckpoint`) may add
 observational **preparation metadata** — `preparation: {version: 1, path:
 "complete" | "prefix" | "notes" | "segments" | "sync", candidateId?, callIds?,
 noteIds?, segmentIds?, notesFallback?, preparationFallback?,
-segmentsFallback?}` — linking the checkpoint to the prepared candidate or the
-merged segments and the journaled calls that produced them, and recording why
-work notes, preparation or segments did not serve it; and `userMessages`, the IDs of the user
+segmentsFallback?, segmentsWaitMs?}` — linking the checkpoint to the prepared candidate or the
+merged segments and the journaled calls that produced them, recording why
+work notes, preparation or segments did not serve it, and how long the boundary
+waited for a segment in flight; and `userMessages`, the IDs of the user
 messages a notes-path checkpoint renders verbatim. Neither field extends the
 checkpoint's source scope; checkpoints without them remain valid. An adapter
 for a host other than the reference host additionally identifies the host and

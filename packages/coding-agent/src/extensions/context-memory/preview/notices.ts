@@ -269,7 +269,7 @@ export interface DoctorSettings {
 	/** Every loaded copy of this package, when Pi lists more than one. */
 	copies?: readonly LoadedCopy[];
 	/** 0.8.0 segments, reported only when switched on or misconfigured. */
-	segments?: { enabled: boolean; state: string; reason?: string };
+	segments?: { enabled: boolean; state: string; reason?: string; effort?: string };
 }
 
 const SEGMENT_FAILURES: Record<string, string> = {
@@ -364,7 +364,11 @@ export function doctorReport(diagnosis: PreviewDiagnosis, settings: DoctorSettin
 			`three ${SEGMENT_FAILURES[segments.reason ?? "error"] ?? "failures"} in a row. The writer compacts until the next checkpoint`,
 		);
 	else if (segments?.enabled)
-		line("segments", "ok", "written at settled turns and merged at the next compaction without a writer call");
+		line(
+			"segments",
+			"ok",
+			`written at settled turns${segments.effort && segments.effort !== "session" ? ` at thinking level ${segments.effort}` : ""} and merged at the next compaction without a writer call`,
+		);
 	const manual = diagnosis.manualCompaction;
 	const tokens = manual.contextTokens
 		? ` About ${manual.contextTokens.toLocaleString("en-US")} tokens are in context now.`
