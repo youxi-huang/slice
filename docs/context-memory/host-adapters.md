@@ -7,9 +7,10 @@ replace native compaction, or protect subsequent model requests. Neither
 package is a `Checked` or `Gated` compaction adapter.
 
 The scope and writing prerequisites are in
-[the adapter design](dsh-opencode-adapter-design.md). This implementation stops
-at its explicit DSH persistence gate; it contains no dormant writer or second
-transaction engine. OpenCode V2 is not included.
+[the adapter design](dsh-opencode-adapter-design.md). This implementation is
+retrieval-only; it contains no dormant writer or second transaction engine, and
+DSH writing is planned as described under [DSH writing](#dsh-writing). OpenCode
+V2, released as `@opencode/cli` 2.x, is not included.
 
 Native compaction settings for a given route, such as 200k with a 32k output
 cap, and the three-cycle pressure fixtures for both hosts are in
@@ -165,19 +166,33 @@ ceiling; it inherits no provider credentials. Interactive UI, real providers,
 other OpenCode versions and other operating systems remain untested. This
 optional binary fixture is separate from the ordinary `verify` gate.
 
-## Why DSH writing is deferred
+## DSH writing
 
 The pinned [Session README](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.1-rc.3/packages/core/session/README.md#write-experimental-plugin-records)
-restricts `appendPluginRecord` to its own experimental packages and explicitly
-excludes external plugins. Its best-effort, ignorable records also cannot carry
-Slice's required checkpoint semantics. A TypeScript `SessionEventMap` merge
-does not update the installed persistence event catalog: the official
+restricts `appendPluginRecord` to DSH's own experimental packages and excludes
+external plugins, and its best-effort, ignorable records cannot carry Slice's
+required checkpoint semantics. A TypeScript `SessionEventMap` merge does not
+update the installed persistence event catalog: the official
 `validateStoredEvents` rejects an unknown required `slice/checkpoint` event.
 The adapter regression reproduces that refusal against the installed release.
+None of this changed through 0.2.1-rc.5 or 0.2.2-alpha.3.
 
-The minimum prerequisite is a public external log-record registration contract
-that survives flush, reopen and removal with defined required-record semantics.
-Once available, implement the design's manual transaction and separately prove
-request admission, durable blocking and recovery. Do not mutate
-`KNOWN_SESSION_EVENT_TYPES`, copy the private compaction engine, encode
-checkpoint JSON in summary text, or treat `rawOutput` as plugin state.
+A review on 2026-11-03 found that the rest of a Gated adapter needs no such
+record. A plugin may replace `compaction-basic` with its own
+`CompactionEngine`. An `agent/pre-step` listener may return `reject`, which
+ends the turn before any request is sent. Continuing a turn after a failed
+summary is `compaction-basic`'s own policy, not the host's. What remains is a
+place for the structured checkpoint that survives reopen, and among the native
+events only `compaction/summary` offers one. That event is log-only: the model
+reads the replacement `user/message` that follows it, which carries the
+rendered note alone.
+
+By the maintainer's decision of 2026-11-03, U11 of the
+[v0.8.0 plan](v0.8.0-plan.md), a DSH writing preview stores the structured
+checkpoint in that event, says in its status output and README that it relies
+on a field DSH owns, and runs a reopen test on every listed DSH version. A
+declared backend field on `compaction/summary` is requested from DSH at the
+same time, and the adapter moves to it once DSH ships one. Do not mutate
+`KNOWN_SESSION_EVENT_TYPES`, copy the private compaction engine, or put
+checkpoint JSON in the replacement message the model reads. Until that preview
+passes its own acceptance, `slice-dsh` stays retrieval-only.
