@@ -1,5 +1,90 @@
 # Validation record
 
+## 0.8.0 WP5: segments on GPT-6 Luna and DeepSeek V4.1 Flash, 2026-11-03 UTC
+
+A real-provider run, recorded apart from the synthetic evidence below. Official Pi 1.4.0 with the independent preview,
+fixture P5 replayed as a session meets it (`--replay`, [eval/preview/README.md](../../eval/preview/README.md#runner)):
+each round's entries join the session where the agent settles, a real turn on the session follows every settled step,
+Pi compacts where its trigger falls, and segments are written at the events that write them in use. The 200k route
+(cuts 1, 3 and 5) ran with a 180,000-token window and the 272k route (cuts 2 and 4) with 240,000, both with Pi's
+reserve at 30,000. GPT-6 Luna ran on OpenAI's API, DeepSeek V4.1 Flash on DeepSeek's, keys as network secrets.
+Probes ran with `context_history` only, as a session has it. The maintainer approved 1,600 requests, 300 minutes and
+$9 for Luna and 900 requests, 150 minutes and $6 for DeepSeek; the runs used 810 requests, 157 minutes and $1.95 and 424 requests, 22 minutes and $3.09 at catalog prices.
+
+**The gate is not met.** Where segments served a boundary it paused 45 to 68 ms when the segment was ready and
+3.1 to 9.5 s when the boundary waited for one in flight. Over all boundaries the segments arm never paused less than
+the control on the same day, and on P5's second round it stopped sessions that the control carried through.
+
+### What the first runs found, in order
+
+| Finding | Fix |
+| --- | --- |
+| A 170,000-token window left the session writer no room for its handover at P5's cuts, and the catalog's output maximum (Luna 128,000, DeepSeek 384,000) became the preview's own reserve, so DeepSeek refused with `CONTEXT_CAPACITY` | `--window` caps the output maximum at 32,000 and `--reserve` sets Pi's reserve, `9fed624` |
+| With segments on, a 20-checkpoint session paid 135 ms a request: `segment()` ran its session, failure-state and submission work on every settled turn | It asks first whether a range is due, `9fed624`; 4 ms at 20 checkpoints |
+| Segments were dropped without a trace | `segments.results` in `/compaction-status`, `4ca7ae6` and `bfb6715` |
+| A replay round forced `/compact` after Pi had just compacted, compacting about 4,000 tokens for up to 110 s | A compaction at the round's closing step or the one before stands as its checkpoint, `19ac458` |
+| After a checkpoint, both models wrote every later segment as the whole note again, citing earlier entries in all six sections; every such segment was refused at the range check and the breaker paused segments | The writer keeps a segment to its range, `9b8161f` |
+
+Runs before each fix are kept out of the tables below; they used the same budget.
+
+### U5: the segments' level (Luna at `max`, 200k route, settled pace, build `stock-preview+src.71a4e0f1bef85414`)
+
+| Segments at | Segment calls | Linked | Refused or failed | Boundaries served | Gold answers cited, current and carried | Segment cache share |
+| --- | ---: | ---: | --- | --- | --- | ---: |
+| `max`, the session's | 7 | 1 | 3 past the 120 s deadline | 1 of 3 | 22 of 27, 45 of 49 | 100% |
+| `low` | 5 | 3, 2 kept to their range | 2 `CONTEXT_NOTE_INVALID` | 1 of 3; `ambiguous-supersede` once | 26 of 27, 45 of 49 | 0% |
+| `off` | 6 | 1 | 5 `CONTEXT_NOTE_INVALID` | 1 of 3 | 22 of 27, 44 of 49 | 0% |
+
+By the rule the maintainer set, `low` and `off` show a refusal class the session's level does not, so the session's
+level stays the default. Two facts weigh against that rule's outcome: at `max` a segment over P5's ranges takes longer
+than the 120 s deadline, and below the session's level Luna's segments read nothing from the session's cache. Why the
+lower levels miss the cache was not traced. DeepSeek at `high`
+and `off` both linked their first segments and lost round 2 to the overflow below.
+
+### The gate: immediate pace, with probes
+
+| Model and session level | Route | Arm | Committed boundaries, by path | Refused attempts | Chain | Pause P50 / P95 over committed boundaries | Probes passed (wrong, blocked) |
+| --- | --- | --- | --- | ---: | --- | --- | --- |
+| DeepSeek, `high` | 200k | control | sync 3 | 0 | complete | 17.3 s / 18.1 s | 29 of 30 (0, 0) |
+| DeepSeek, `high` | 200k | segments | segments 1, after a 7.2 s wait | 3 | stopped at cut 3 | 7.3 s / 7.3 s | 9 of 30 (0, 21) |
+| DeepSeek, `high` | 272k | control | sync 2 | 1 | complete | 10.2 s / 13.3 s | 19 of 19 (0, 0) |
+| DeepSeek, `high` | 272k | segments | segments 1, after a 9.4 s wait | 3 | stopped at cut 4 | 9.5 s / 9.5 s | 9 of 19 (0, 10) |
+| Luna, `max` | 200k | control | sync 3 | 0 | complete | 141.0 s / 181.6 s | 26 of 30 (0, 0) |
+| Luna, `max` | 200k | segments | sync 3, each after a 15 s wait for a segment past its deadline | 0 | complete | 124.6 s / 152.1 s | 26 of 30 (0, 0) |
+| Luna, `medium` | 200k | control | sync 3 | 0 | complete | 19.8 s / 22.3 s | 30 of 30 (0, 0) |
+| Luna, `medium` | 200k | segments | segments 1 after a 9.2 s wait; sync 2, one after a 15 s wait | 3 | complete on the third retry | 19.3 s / 43.5 s | 26 of 30 (0, 1) |
+
+Segments ran at the session's level, as U5's rule leaves it. A refused attempt is a compaction the user retries; the
+bench retries up to `--chain-attempts`, two for DeepSeek and four for Luna, and a chain that stays refused blocks
+every later probe. The two DeepSeek segments chains stopped where the overflow below blocked the session: the request
+past the window, then the writer, failed. Luna's `medium` segments chain hit the same overflow and recovered on its
+third retry, after two writer answers the note schema refused for its structure rather than missing sources; its
+control at the same level had also needed retries in an earlier run, two refusals of the same kind, then committed
+every round on the first attempt in the run above. One Luna `medium` probe hung on its request for 15 minutes and
+was ended, as the unit limit would have ended it; it is counted as blocked.
+
+### Why, by weight
+
+1. **The run that crosses the trigger is never a segment.** A range closes only where the agent settles, and the
+   compaction comes at that same settled turn, before the segment it would start. P5's first round ends with a
+   70,000-token run; at DeepSeek's token counts Pi compacts one step before the gold checkpoint, and that run stays
+   verbatim under the prefix path's half-threshold bound.
+2. **The kept tail leaves too little room for the next large input.** The next interval starts at about 75,000 tokens
+   instead of a note's few thousand, reaches 130,000, and P5's 86,000-token paste then takes the request past the
+   window. Pi compacts on the overflow, the session writer has no room left in the window, and the compaction fails:
+   the session is blocked where the control, which kept no tail, compacted normally. This is the most serious result.
+3. **At Luna's daily level, segments overrun their deadline.** All three gate segments at `max` passed 120 s; each
+   boundary waited the full 15 s for them and then ran the writer, so segments made every pause 15 s longer.
+4. **Refusals.** After the range fix, segment notes still failed the note schema at `low` and `off` on Luna; the
+   segment path does not yet report which schema check, which the bench now records for compactions.
+
+U12's condition is not met: no merge was refused for the note schema or the budget, so WP6 does not start. Segments
+stay off by default (U13).
+
+### Not covered
+
+P5 only. One chain per arm for most cells, so P95 over three to five boundaries is the slowest one. Luna's 272k route was still being measured when this entry was written. The cause of Luna's schema refusals at `off`, `low` and `medium` was not captured before `5fabca1`.
+
 ## 0.8.0 offline release gates, with segments off and on, 2026-11-03 UTC
 
 The offline gates of the [0.8.0 plan](v0.8.0-plan.md#release-gates), run before WP5's first provider request. No
