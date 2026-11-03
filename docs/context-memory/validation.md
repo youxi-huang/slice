@@ -9,7 +9,7 @@ Pi compacts where its trigger falls, and segments are written at the events that
 (cuts 1, 3 and 5) ran with a 180,000-token window and the 272k route (cuts 2 and 4) with 240,000, both with Pi's
 reserve at 30,000. GPT-6 Luna ran on OpenAI's API, DeepSeek V4.1 Flash on DeepSeek's, keys as network secrets.
 Probes ran with `context_history` only, as a session has it. The maintainer approved 1,600 requests, 300 minutes and
-$9 for Luna and 900 requests, 150 minutes and $6 for DeepSeek; the runs used 810 requests, 157 minutes and $1.95 and 424 requests, 22 minutes and $3.09 at catalog prices.
+$9 for Luna and 900 requests, 150 minutes and $6 for DeepSeek; the runs used 967 requests, 167 minutes and $2.41 on Luna and 424 requests, 22 minutes and $3.09 on DeepSeek, at catalog prices.
 
 **The gate is not met.** Where segments served a boundary it paused 45 to 68 ms when the segment was ready and
 3.1 to 9.5 s when the boundary waited for one in flight. Over all boundaries the segments arm never paused less than
@@ -140,6 +140,12 @@ loopback provider on official Pi 1.4.0:
 | `extension-v0.5.3`, two, written on Pi 1.3.0 | This build | ready, read back, no error |
 
 The lifecycle fuzz's gate of 200 seeds was met in WP4 with 1,000.
+
+All of it again on the final 0.8.0 code, `6b08fa2`, package `stock-preview+src.72c8ba45c5791e42`, after WP5's fixes
+to the segment range and the writer's rules: acceptance passed 42, 36, 36 and 36 assertions on Pi 1.4.0, 1.3.0, 1.2.0
+and 1.1.0 with segments off and the same with segments on; the strict scenarios passed 157 both ways; overhead per
+request was 0 ms at 10 and 20 checkpoints with segments off and 3 ms with them on; release checks and release
+preparation passed.
 
 ## 0.8.0 WP4: the lifecycle fuzz, 2026-11-03 UTC
 
