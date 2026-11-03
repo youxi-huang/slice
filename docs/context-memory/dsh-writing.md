@@ -1,8 +1,9 @@
 # DSH writing preview
 
 Track T1 of the [v0.8.0 plan](v0.8.0-plan.md#track-t1-dsh-writing-parallel-and-not-a-gate).
-Status: designed on 2026-11-03 for implementation by Codex cloud; nothing here
-is built yet. It applies U11 as the maintainer decided it and settles the
+Status: designed on 2026-11-03 for implementation by Codex cloud. Stage 1 is
+built ([#115](https://github.com/youxi-huang/slice/pull/115)); stages 2 and 3
+are not. It applies U11 as the maintainer decided it and settles the
 contract questions the plan left to this step, so the implementer writes code
 rather than policy. Where this document and the
 [adapter design](dsh-opencode-adapter-design.md#dsh-design) differ, this one
@@ -17,7 +18,7 @@ Retrieval-only `slice-dsh` stays the default; writing is opt-in per profile.
 
 | Stage | Scope | Done when |
 | --- | --- | --- |
-| 1 | Manual `/compact`, the gate, readback and reopen | Stage 1 acceptance passes on rc.5 and on the newest `next` release |
+| 1 | Manual `/compact`, the gate, readback and reopen | Stage 1 acceptance passes on the newest DSH release the acceptance matrix pins |
 | 2 | Automatic compaction at a step boundary | The same acceptance with automatic triggers, plus one provider run inside a budget the maintainer approves before its first request |
 | 3 | Segments | Only after the plan's WP3 lands in the core; DSH adds dispatch and nothing else |
 
@@ -293,10 +294,12 @@ and JSONL components:
    session Slice compacted opens and compacts under it.
 
 On the installed host, with `context-memory-adapters-acceptance.mjs` and the
-loopback provider: rc.5 and the newest `next` release, installed by name, the
-D10 patch applied, fixture P5 through two Slice compactions and one forced
+loopback provider: the newest DSH release in `ADAPTER_HOSTS`, rc.5 today,
+installed by name, the D10 patch applied, fixture P5 through two Slice compactions and one forced
 failure, a reopen in the CLI, and `context_history`. No provider is called in
-stage 1.
+stage 1. Acceptance never follows a registry tag such as `next`: a new DSH
+release joins the matrix by a pinned edit, so CI cannot turn red without a
+change here.
 
 ## Handing off
 

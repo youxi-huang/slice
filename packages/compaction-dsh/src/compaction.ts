@@ -55,9 +55,9 @@ export class SliceCompactionEngine extends CompactionEngine {
 
 	constructor(ctx: Context) {
 		super(ctx);
-		ctx.on("agent/pre-step", async ({ agent, signal }, next) => {
+		ctx.on("agent/pre-step", async ({ agent }, next) => {
 			const decision = await next();
-			const state = await this.state(agent.session, signal);
+			const state = await this.state(agent.session);
 			if (!state.blocked) return decision;
 			ctx.logger.warn(`${state.code}: the message was not sent. Run /compact, then send it again.`);
 			return { kind: "reject" };
@@ -66,8 +66,8 @@ export class SliceCompactionEngine extends CompactionEngine {
 			name: "compaction-status",
 			description: "Show Slice compaction status",
 			recordInput: false,
-			handler: async ({ agent, signal }) => {
-				const state = await this.state(agent.session, signal);
+			handler: async ({ agent }) => {
+				const state = await this.state(agent.session);
 				const reason =
 					state.code === "CONTEXT_PREVIEW_UNSUPPORTED"
 						? "Seeded sessions cannot write. "
@@ -132,10 +132,11 @@ export class SliceCompactionEngine extends CompactionEngine {
 		}
 	}
 
-	state(session: Session, signal: AbortSignal): Promise<Gate> {
+	/** Shared by every caller, so no caller's cancellation may settle it as a block. */
+	state(session: Session): Promise<Gate> {
 		let state = this.states.get(session);
 		if (!state) {
-			state = this.derive(session, signal);
+			state = this.derive(session, new AbortController().signal);
 			this.states.set(session, state);
 		}
 		return state;
@@ -158,7 +159,7 @@ export class SliceCompactionEngine extends CompactionEngine {
 				this.compact(agent, AbortSignal.any([signal, ownerSignal]), sourceCommandId),
 			);
 		} catch (error) {
-			throw new ManualCompactionError("busy", "CONTEXT_WRITER_FAILED: the agent is busy", { cause: error });
+			throw new ManualCompactionError("busy", "CONTEXT_BUSY: the agent is busy", { cause: error });
 		}
 	}
 
@@ -171,7 +172,6 @@ export class SliceCompactionEngine extends CompactionEngine {
 		let failure: ManualCompactionErrorCode = "persistence";
 		let opening: SessionEvent<"compaction/start"> | undefined;
 		let ended = false;
-		let validated = false;
 		try {
 			const { events, seeded } = await this.read(session, signal);
 			failure = "commit";
@@ -183,7 +183,6 @@ export class SliceCompactionEngine extends CompactionEngine {
 			if (open) throw new Error("CONTEXT_STORAGE_UNCERTAIN: a compaction is still open");
 			const records = dshCompactionRecords(events);
 			const previous = validateMemoryCheckpoints(records, undefined, "jcs");
-			validated = true;
 			failure = "summary";
 			const transport = await dshTransport(this.ctx, session, signal);
 			const routed = session.requestHeader()!.config;
@@ -218,7 +217,7 @@ export class SliceCompactionEngine extends CompactionEngine {
 				!toolPairingBalancedAfter(session, last.seq) ||
 				nodes.some((node) => node.seq <= last.seq && !selected.includes(node))
 			) {
-				this.set(session, { ...(await this.state(session, signal)), code: "CONTEXT_NO_CUT" });
+				this.set(session, { ...(await this.state(session)), code: "CONTEXT_NO_CUT" });
 				return null;
 			}
 			const sources = records.slice(0, last.seq + 1);
@@ -319,13 +318,8 @@ export class SliceCompactionEngine extends CompactionEngine {
 			const code = ended
 				? "CONTEXT_STORAGE_UNCERTAIN"
 				: codeOf(error, failure === "persistence" ? "CONTEXT_STORAGE_UNCERTAIN" : "CONTEXT_WRITER_FAILED");
-			const unsupported =
-				!opening && (code === "CONTEXT_PREVIEW_UNSUPPORTED" || code === "CONTEXT_COMPACTOR_CONFLICT");
-			if (opening || (!validated && !unsupported)) this.set(session, { blocked: true, code });
-			else if (unsupported) {
-				const state = await this.states.get(session);
-				if (state) this.set(session, { ...state, code });
-			}
+			// Before the start, nothing was written: the gate stays what the log derives.
+			if (opening) this.set(session, { blocked: true, code });
 			if (opening && !ended) {
 				session.append("compaction/end", {
 					...opening.data,

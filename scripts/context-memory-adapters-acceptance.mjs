@@ -47,12 +47,8 @@ export async function acceptAdapters({ packageRoot, hostsRoot, outputDir }) {
 	const path = process.env.PATH;
 	process.env.PATH = [join(pnpm, "node_modules", ".bin"), path].join(delimiter);
 	const summary = { version: built.version, pnpm: PNPM_VERSION, packages: built.packages, runs: [], passed: false };
-	const nextResult = spawnSync("npm", ["view", OFFICIAL.dsh, "dist-tags.next"], { encoding: "utf8" });
-	assert.equal(nextResult.status, 0, nextResult.stderr);
-	const writingVersions = new Set(["0.2.1-rc.5", nextResult.stdout.trim()]);
-	const hosts = { ...ADAPTER_HOSTS, dsh: [...new Set([...ADAPTER_HOSTS.dsh, ...writingVersions])] };
 	try {
-		for (const [host, versions] of Object.entries(hosts)) {
+		for (const [host, versions] of Object.entries(ADAPTER_HOSTS)) {
 			const item = built.packages.find((entry) => entry.host === host);
 			assert(item, `No built ${host} package`);
 			assert.equal(sha256(join(packageRoot, item.archive)), item.sha256, `${item.archive} changed after the build`);
@@ -81,7 +77,7 @@ export async function acceptAdapters({ packageRoot, hostsRoot, outputDir }) {
 						} finally { await probes.close(); }
 					}
 					const options = parseOptions(["--host", host, "--route", "200k", "--provider", "loopback", "--install", "registry", "--host-root", hostRoot, "--package-dir", join(packageRoot, item.directory), "--output-dir", runDir]);
-					const report = await run(options, { dshWriting: host === "dsh" && writingVersions.has(version) }).finally(() => {
+					const report = await run(options, { dshWriting: host === "dsh" && version === versions.at(-1) }).finally(() => {
 						mkdirSync(evidence, { recursive: true });
 						for (const file of ["report.json", "turns.jsonl", "loopback.jsonl", "host.log"]) {
 							if (existsSync(join(runDir, file))) cpSync(join(runDir, file), join(evidence, file));
@@ -116,7 +112,7 @@ export async function acceptAdapters({ packageRoot, hostsRoot, outputDir }) {
 		}
 	} finally {
 		process.env.PATH = path;
-		summary.passed = summary.runs.length === Object.values(hosts).flat().length && summary.runs.every((row) => row.passed);
+		summary.passed = summary.runs.length === Object.values(ADAPTER_HOSTS).flat().length && summary.runs.every((row) => row.passed);
 		writeFileSync(join(outputDir, "adapters-acceptance.json"), `${JSON.stringify(summary, null, 2)}\n`);
 	}
 	return summary;

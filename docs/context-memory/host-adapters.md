@@ -225,7 +225,7 @@ Slice wrote. The package's bundle patch continues to insert only `slice-history`
 
 The existing installation acceptance runner runs the native lifecycle probes
 and the writing regressions against the official DSH components it installs,
-then installs the built archive by name. On rc.5 and the current `next` release
+then installs the built archive by name. On the newest DSH release in its matrix
 it runs P5 through two manual Slice compactions, a forced writer failure and
 blocked step, recovery, CLI reopen and original-history retrieval. It also
 checks the two-engine conflict and removal of the opt-in patch. These are

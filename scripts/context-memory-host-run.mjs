@@ -756,8 +756,9 @@ export async function run(options, { dshWriting = false } = {}) {
 			// D10: record the actual host response when both engine rows are enabled.
 			host.configure(undefined, true);
 			const conflict = await host.send("Synthetic compactor conflict probe.", 120_000);
-			assert.match(conflict.diagnostics, /CONTEXT_COMPACTOR_CONFLICT|service.*compaction.*registered/i);
-			report.compactorConflict = "Slice refuses to load while compaction-basic is enabled";
+			// D10: record which side refused, Slice's own check or DSH's service registry.
+			report.compactorConflict = conflict.diagnostics.match(/CONTEXT_COMPACTOR_CONFLICT|service.*compaction.*registered/i)?.[0];
+			assert(report.compactorConflict, conflict.diagnostics);
 			host.useBasic();
 			host.configure("/compact");
 			assert.equal((await host.send("Synthetic task after removing the opt-in patch.", 120_000)).failed, null);

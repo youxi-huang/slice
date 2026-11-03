@@ -3,7 +3,6 @@
 	"version": "0.0.0",
 	"private": true,
 	"type": "module",
-	"exports": { ".": "./src/index.ts", "./compaction": "./src/compaction.ts" },
 	"license": "MIT",
 	"description": "Read-only Slice history tool for DeepSeek Harness",
 	"dependencies": {

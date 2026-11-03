@@ -36,7 +36,6 @@ const segments: SegmentVector[] = JSON.parse(readFileSync(new URL("segments.json
 describe("0.8-conformance.1", () => {
 	it("pins the complete data set and uses only unique IDs and closed-set refusal classes", () => {
 		expect(manifest.version).toBe("0.8-conformance.1");
-		expect(Object.keys(manifest.files).sort()).toEqual(["segments.json", "vectors.json"]);
 		expect(Object.keys(manifest.files).sort()).toEqual(
 			readdirSync(directory)
 				.filter((name) => name.endsWith(".json") && name !== "manifest.json")

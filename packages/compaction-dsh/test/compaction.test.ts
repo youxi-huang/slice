@@ -350,7 +350,7 @@ describe("DSH manual Slice transaction", () => {
 		const original = events[h.original];
 		if (original.type === "user/message") original.data = user("Changed source under the same seq.");
 		const cold = await setup({ seed: events });
-		expect(await cold.engine.state(cold.session, signal())).toMatchObject({
+		expect(await cold.engine.state(cold.session)).toMatchObject({
 			blocked: true,
 			code: "CONTEXT_SOURCE_CHANGED",
 		});
@@ -377,7 +377,7 @@ describe("DSH manual Slice transaction", () => {
 			await expect(cold.compact()).rejects.toBeInstanceOf(ManualCompactionError);
 			expect(cold.session.seq).toBe(before);
 			expect(await cold.gate()).toMatchObject({ kind: "reject" });
-			expect(await cold.engine.state(cold.session, signal())).toMatchObject({ code: "CONTEXT_SOURCE_CHANGED" });
+			expect(await cold.engine.state(cold.session)).toMatchObject({ code: "CONTEXT_SOURCE_CHANGED" });
 		},
 	);
 
@@ -416,5 +416,19 @@ describe("DSH manual Slice transaction", () => {
 		h.ctx.on("agent/pre-step", async () => ({ kind: "reject" }));
 		expect(await h.gate()).toMatchObject({ kind: "reject" });
 		expect(() => Slice.apply(h.ctx)).toThrow("CONTEXT_COMPACTOR_CONFLICT");
+	});
+
+	it("does not keep a block from a first step that was cancelled", async () => {
+		const h = await setup();
+		const abort = new AbortController();
+		abort.abort();
+		await h.ctx
+			.waterfall(
+				"agent/pre-step",
+				{ agent: h.agent as unknown as Agent, messages: [], turn: 1, step: 1, signal: abort.signal },
+				async () => ({ kind: "enter" as const, messages: [] }),
+			)
+			.catch(() => undefined);
+		expect(await h.gate()).toMatchObject({ kind: "enter" });
 	});
 });
