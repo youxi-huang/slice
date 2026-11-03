@@ -1,0 +1,3027 @@
+[
+	{
+		"id": "segment-valid",
+		"stage": "segment",
+		"records": [
+			{
+				"type": "message",
+				"id": "u1",
+				"parentId": null,
+				"timestamp": "2026-01-01T00:00:00.000Z",
+				"message": {
+					"role": "user",
+					"content": "Use amber for the sample flag."
+				}
+			},
+			{
+				"type": "message",
+				"id": "a1",
+				"parentId": "u1",
+				"timestamp": "2026-01-01T00:00:01.000Z",
+				"message": {
+					"role": "assistant",
+					"content": [
+						{
+							"type": "text",
+							"text": "Synthetic progress."
+						}
+					],
+					"stopReason": "stop"
+				}
+			}
+		],
+		"link": {
+			"firstId": "u1",
+			"lastId": "a1",
+			"note": {
+				"instructions": [],
+				"failedPaths": [],
+				"reasons": [],
+				"state": [
+					{
+						"text": "Use amber for the sample flag.",
+						"sources": [
+							"u1"
+						],
+						"quote": "Use amber for the sample flag."
+					}
+				],
+				"nextSteps": [],
+				"files": [],
+				"gaps": []
+			}
+		},
+		"expected": {
+			"outcome": "commit"
+		}
+	},
+	{
+		"id": "segment-citation-outside-range",
+		"stage": "segment",
+		"records": [
+			{
+				"type": "message",
+				"id": "u1",
+				"parentId": null,
+				"timestamp": "2026-01-01T00:00:00.000Z",
+				"message": {
+					"role": "user",
+					"content": "Use amber for the sample flag."
+				}
+			},
+			{
+				"type": "message",
+				"id": "a1",
+				"parentId": "u1",
+				"timestamp": "2026-01-01T00:00:01.000Z",
+				"message": {
+					"role": "assistant",
+					"content": [
+						{
+							"type": "text",
+							"text": "Synthetic progress."
+						}
+					],
+					"stopReason": "stop"
+				}
+			},
+			{
+				"type": "message",
+				"id": "u2",
+				"parentId": "a1",
+				"timestamp": "2026-01-01T00:00:02.000Z",
+				"message": {
+					"role": "user",
+					"content": "Use teal now."
+				}
+			},
+			{
+				"type": "message",
+				"id": "a2",
+				"parentId": "u2",
+				"timestamp": "2026-01-01T00:00:03.000Z",
+				"message": {
+					"role": "assistant",
+					"content": [
+						{
+							"type": "text",
+							"text": "Synthetic progress."
+						}
+					],
+					"stopReason": "stop"
+				}
+			}
+		],
+		"link": {
+			"firstId": "u2",
+			"lastId": "a2",
+			"note": {
+				"instructions": [],
+				"failedPaths": [],
+				"reasons": [],
+				"state": [
+					{
+						"text": "Use amber for the sample flag.",
+						"sources": [
+							"u1"
+						],
+						"quote": "Use amber for the sample flag."
+					}
+				],
+				"nextSteps": [],
+				"files": [],
+				"gaps": []
+			}
+		},
+		"expected": {
+			"outcome": "refusal",
+			"code": "CONTEXT_NOTE_SCOPE"
+		}
+	},
+	{
+		"id": "segment-supersedes-earlier-record",
+		"stage": "segment",
+		"records": [
+			{
+				"type": "message",
+				"id": "u1",
+				"parentId": null,
+				"timestamp": "2026-01-01T00:00:00.000Z",
+				"message": {
+					"role": "user",
+					"content": "Use amber for the sample flag."
+				}
+			},
+			{
+				"type": "message",
+				"id": "a1",
+				"parentId": "u1",
+				"timestamp": "2026-01-01T00:00:01.000Z",
+				"message": {
+					"role": "assistant",
+					"content": [
+						{
+							"type": "text",
+							"text": "Synthetic progress."
+						}
+					],
+					"stopReason": "stop"
+				}
+			},
+			{
+				"type": "message",
+				"id": "u2",
+				"parentId": "a1",
+				"timestamp": "2026-01-01T00:00:02.000Z",
+				"message": {
+					"role": "user",
+					"content": "Use teal now."
+				}
+			},
+			{
+				"type": "message",
+				"id": "a2",
+				"parentId": "u2",
+				"timestamp": "2026-01-01T00:00:03.000Z",
+				"message": {
+					"role": "assistant",
+					"content": [
+						{
+							"type": "text",
+							"text": "Synthetic progress."
+						}
+					],
+					"stopReason": "stop"
+				}
+			}
+		],
+		"link": {
+			"firstId": "u2",
+			"lastId": "a2",
+			"note": {
+				"instructions": [],
+				"failedPaths": [],
+				"reasons": [],
+				"state": [
+					{
+						"text": "Use teal now.",
+						"sources": [
+							"u2"
+						],
+						"quote": "Use teal now.",
+						"supersedes": [
+							"u1"
+						]
+					}
+				],
+				"nextSteps": [],
+				"files": [],
+				"gaps": []
+			}
+		},
+		"expected": {
+			"outcome": "commit"
+		}
+	},
+	{
+		"id": "segment-chain-valid",
+		"stage": "segment-chain",
+		"records": [
+			{
+				"type": "message",
+				"id": "u1",
+				"parentId": null,
+				"timestamp": "2026-01-01T00:00:00.000Z",
+				"message": {
+					"role": "user",
+					"content": "Use amber for the sample flag."
+				}
+			},
+			{
+				"type": "message",
+				"id": "a1",
+				"parentId": "u1",
+				"timestamp": "2026-01-01T00:00:01.000Z",
+				"message": {
+					"role": "assistant",
+					"content": [
+						{
+							"type": "text",
+							"text": "Synthetic progress."
+						}
+					],
+					"stopReason": "stop"
+				}
+			},
+			{
+				"type": "message",
+				"id": "u2",
+				"parentId": "a1",
+				"timestamp": "2026-01-01T00:00:02.000Z",
+				"message": {
+					"role": "user",
+					"content": "The sample check reports green."
+				}
+			},
+			{
+				"type": "message",
+				"id": "a2",
+				"parentId": "u2",
+				"timestamp": "2026-01-01T00:00:03.000Z",
+				"message": {
+					"role": "assistant",
+					"content": [
+						{
+							"type": "text",
+							"text": "Synthetic progress."
+						}
+					],
+					"stopReason": "stop"
+				}
+			},
+			{
+				"type": "message",
+				"id": "u3",
+				"parentId": "a2",
+				"timestamp": "2026-01-01T00:00:04.000Z",
+				"message": {
+					"role": "user",
+					"content": "Keep the sample label."
+				}
+			},
+			{
+				"type": "message",
+				"id": "a3",
+				"parentId": "u3",
+				"timestamp": "2026-01-01T00:00:05.000Z",
+				"message": {
+					"role": "assistant",
+					"content": [
+						{
+							"type": "text",
+							"text": "Synthetic progress."
+						}
+					],
+					"stopReason": "stop"
+				}
+			}
+		],
+		"links": [
+			{
+				"firstId": "u1",
+				"lastId": "a1",
+				"note": {
+					"instructions": [],
+					"failedPaths": [],
+					"reasons": [],
+					"state": [
+						{
+							"text": "Use amber for the sample flag.",
+							"sources": [
+								"u1"
+							]
+						}
+					],
+					"nextSteps": [],
+					"files": [],
+					"gaps": []
+				}
+			},
+			{
+				"firstId": "u2",
+				"lastId": "a2",
+				"note": {
+					"instructions": [],
+					"failedPaths": [],
+					"reasons": [],
+					"state": [
+						{
+							"text": "The sample check reports green.",
+							"sources": [
+								"u2"
+							]
+						}
+					],
+					"nextSteps": [],
+					"files": [],
+					"gaps": []
+				}
+			},
+			{
+				"firstId": "u3",
+				"lastId": "a3",
+				"note": {
+					"instructions": [],
+					"failedPaths": [],
+					"reasons": [],
+					"state": [
+						{
+							"text": "Keep the sample label.",
+							"sources": [
+								"u3"
+							]
+						}
+					],
+					"nextSteps": [],
+					"files": [],
+					"gaps": []
+				}
+			}
+		],
+		"expected": {
+			"links": 3,
+			"coveredThrough": "a3"
+		}
+	},
+	{
+		"id": "segment-chain-last-link-before-later-turns",
+		"stage": "segment-chain",
+		"records": [
+			{
+				"type": "message",
+				"id": "u1",
+				"parentId": null,
+				"timestamp": "2026-01-01T00:00:00.000Z",
+				"message": {
+					"role": "user",
+					"content": "Use amber for the sample flag."
+				}
+			},
+			{
+				"type": "message",
+				"id": "a1",
+				"parentId": "u1",
+				"timestamp": "2026-01-01T00:00:01.000Z",
+				"message": {
+					"role": "assistant",
+					"content": [
+						{
+							"type": "text",
+							"text": "Synthetic progress."
+						}
+					],
+					"stopReason": "stop"
+				}
+			},
+			{
+				"type": "message",
+				"id": "u2",
+				"parentId": "a1",
+				"timestamp": "2026-01-01T00:00:02.000Z",
+				"message": {
+					"role": "user",
+					"content": "The sample check reports green."
+				}
+			},
+			{
+				"type": "message",
+				"id": "a2",
+				"parentId": "u2",
+				"timestamp": "2026-01-01T00:00:03.000Z",
+				"message": {
+					"role": "assistant",
+					"content": [
+						{
+							"type": "text",
+							"text": "Synthetic progress."
+						}
+					],
+					"stopReason": "stop"
+				}
+			},
+			{
+				"type": "message",
+				"id": "u3",
+				"parentId": "a2",
+				"timestamp": "2026-01-01T00:00:04.000Z",
+				"message": {
+					"role": "user",
+					"content": "Keep the sample label."
+				}
+			},
+			{
+				"type": "message",
+				"id": "a3",
+				"parentId": "u3",
+				"timestamp": "2026-01-01T00:00:05.000Z",
+				"message": {
+					"role": "assistant",
+					"content": [
+						{
+							"type": "text",
+							"text": "Synthetic progress."
+						}
+					],
+					"stopReason": "stop"
+				}
+			}
+		],
+		"links": [
+			{
+				"firstId": "u1",
+				"lastId": "a1",
+				"note": {
+					"instructions": [],
+					"failedPaths": [],
+					"reasons": [],
+					"state": [
+						{
+							"text": "Use amber for the sample flag.",
+							"sources": [
+								"u1"
+							]
+						}
+					],
+					"nextSteps": [],
+					"files": [],
+					"gaps": []
+				}
+			},
+			{
+				"firstId": "u2",
+				"lastId": "a2",
+				"note": {
+					"instructions": [],
+					"failedPaths": [],
+					"reasons": [],
+					"state": [
+						{
+							"text": "The sample check reports green.",
+							"sources": [
+								"u2"
+							]
+						}
+					],
+					"nextSteps": [],
+					"files": [],
+					"gaps": []
+				}
+			}
+		],
+		"expected": {
+			"links": 2,
+			"coveredThrough": "a2"
+		}
+	},
+	{
+		"id": "segment-chain-after-base-coverage",
+		"stage": "segment-chain",
+		"records": [
+			{
+				"type": "message",
+				"id": "u1",
+				"parentId": null,
+				"timestamp": "2026-01-01T00:00:00.000Z",
+				"message": {
+					"role": "user",
+					"content": "Use amber for the sample flag."
+				}
+			},
+			{
+				"type": "message",
+				"id": "a1",
+				"parentId": "u1",
+				"timestamp": "2026-01-01T00:00:01.000Z",
+				"message": {
+					"role": "assistant",
+					"content": [
+						{
+							"type": "text",
+							"text": "Synthetic progress."
+						}
+					],
+					"stopReason": "stop"
+				}
+			},
+			{
+				"type": "compaction",
+				"id": "c1",
+				"parentId": "a1",
+				"timestamp": "2026-01-01T00:00:02.000Z",
+				"summary": "Synthetic base checkpoint.",
+				"firstKeptEntryId": "u2",
+				"tokensBefore": 100,
+				"details": {
+					"coveredThrough": "a1"
+				}
+			},
+			{
+				"type": "message",
+				"id": "u2",
+				"parentId": "c1",
+				"timestamp": "2026-01-01T00:00:03.000Z",
+				"message": {
+					"role": "user",
+					"content": "The sample check reports green."
+				}
+			},
+			{
+				"type": "message",
+				"id": "a2",
+				"parentId": "u2",
+				"timestamp": "2026-01-01T00:00:04.000Z",
+				"message": {
+					"role": "assistant",
+					"content": [
+						{
+							"type": "text",
+							"text": "Synthetic progress."
+						}
+					],
+					"stopReason": "stop"
+				}
+			}
+		],
+		"links": [
+			{
+				"firstId": "c1",
+				"lastId": "a2",
+				"note": {
+					"instructions": [],
+					"failedPaths": [],
+					"reasons": [],
+					"state": [
+						{
+							"text": "The sample check reports green.",
+							"sources": [
+								"u2"
+							]
+						}
+					],
+					"nextSteps": [],
+					"files": [],
+					"gaps": []
+				}
+			}
+		],
+		"expected": {
+			"links": 1,
+			"coveredThrough": "a2"
+		}
+	},
+	{
+		"id": "segment-chain-base-unsupported",
+		"stage": "segment-chain",
+		"records": [
+			{
+				"type": "message",
+				"id": "u1",
+				"parentId": null,
+				"timestamp": "2026-01-01T00:00:00.000Z",
+				"message": {
+					"role": "user",
+					"content": "Use amber for the sample flag."
+				}
+			},
+			{
+				"type": "message",
+				"id": "a1",
+				"parentId": "u1",
+				"timestamp": "2026-01-01T00:00:01.000Z",
+				"message": {
+					"role": "assistant",
+					"content": [
+						{
+							"type": "text",
+							"text": "Synthetic progress."
+						}
+					],
+					"stopReason": "stop"
+				}
+			},
+			{
+				"type": "compaction",
+				"id": "c1",
+				"parentId": "a1",
+				"timestamp": "2026-01-01T00:00:02.000Z",
+				"summary": "Synthetic base checkpoint.",
+				"firstKeptEntryId": "u2",
+				"tokensBefore": 100,
+				"details": {}
+			},
+			{
+				"type": "message",
+				"id": "u2",
+				"parentId": "c1",
+				"timestamp": "2026-01-01T00:00:03.000Z",
+				"message": {
+					"role": "user",
+					"content": "The sample check reports green."
+				}
+			},
+			{
+				"type": "message",
+				"id": "a2",
+				"parentId": "u2",
+				"timestamp": "2026-01-01T00:00:04.000Z",
+				"message": {
+					"role": "assistant",
+					"content": [
+						{
+							"type": "text",
+							"text": "Synthetic progress."
+						}
+					],
+					"stopReason": "stop"
+				}
+			}
+		],
+		"links": [
+			{
+				"firstId": "c1",
+				"lastId": "a2",
+				"note": {
+					"instructions": [],
+					"failedPaths": [],
+					"reasons": [],
+					"state": [
+						{
+							"text": "The sample check reports green.",
+							"sources": [
+								"u2"
+							]
+						}
+					],
+					"nextSteps": [],
+					"files": [],
+					"gaps": []
+				}
+			}
+		],
+		"expected": {
+			"links": 0,
+			"stop": {
+				"index": 0,
+				"reason": "base-unsupported"
+			}
+		}
+	},
+	{
+		"id": "segment-chain-not-contiguous",
+		"stage": "segment-chain",
+		"records": [
+			{
+				"type": "message",
+				"id": "u1",
+				"parentId": null,
+				"timestamp": "2026-01-01T00:00:00.000Z",
+				"message": {
+					"role": "user",
+					"content": "Use amber for the sample flag."
+				}
+			},
+			{
+				"type": "message",
+				"id": "a1",
+				"parentId": "u1",
+				"timestamp": "2026-01-01T00:00:01.000Z",
+				"message": {
+					"role": "assistant",
+					"content": [
+						{
+							"type": "text",
+							"text": "Synthetic progress."
+						}
+					],
+					"stopReason": "stop"
+				}
+			},
+			{
+				"type": "message",
+				"id": "u2",
+				"parentId": "a1",
+				"timestamp": "2026-01-01T00:00:02.000Z",
+				"message": {
+					"role": "user",
+					"content": "The sample check reports green."
+				}
+			},
+			{
+				"type": "message",
+				"id": "a2",
+				"parentId": "u2",
+				"timestamp": "2026-01-01T00:00:03.000Z",
+				"message": {
+					"role": "assistant",
+					"content": [
+						{
+							"type": "text",
+							"text": "Synthetic progress."
+						}
+					],
+					"stopReason": "stop"
+				}
+			},
+			{
+				"type": "message",
+				"id": "u3",
+				"parentId": "a2",
+				"timestamp": "2026-01-01T00:00:04.000Z",
+				"message": {
+					"role": "user",
+					"content": "Keep the sample label."
+				}
+			},
+			{
+				"type": "message",
+				"id": "a3",
+				"parentId": "u3",
+				"timestamp": "2026-01-01T00:00:05.000Z",
+				"message": {
+					"role": "assistant",
+					"content": [
+						{
+							"type": "text",
+							"text": "Synthetic progress."
+						}
+					],
+					"stopReason": "stop"
+				}
+			}
+		],
+		"links": [
+			{
+				"firstId": "u1",
+				"lastId": "a1",
+				"note": {
+					"instructions": [],
+					"failedPaths": [],
+					"reasons": [],
+					"state": [
+						{
+							"text": "Use amber for the sample flag.",
+							"sources": [
+								"u1"
+							]
+						}
+					],
+					"nextSteps": [],
+					"files": [],
+					"gaps": []
+				}
+			},
+			{
+				"firstId": "u3",
+				"lastId": "a3",
+				"note": {
+					"instructions": [],
+					"failedPaths": [],
+					"reasons": [],
+					"state": [
+						{
+							"text": "Keep the sample label.",
+							"sources": [
+								"u3"
+							]
+						}
+					],
+					"nextSteps": [],
+					"files": [],
+					"gaps": []
+				}
+			}
+		],
+		"expected": {
+			"links": 1,
+			"coveredThrough": "a1",
+			"stop": {
+				"index": 1,
+				"reason": "not-contiguous"
+			}
+		}
+	},
+	{
+		"id": "segment-chain-chain-mismatch",
+		"stage": "segment-chain",
+		"records": [
+			{
+				"type": "message",
+				"id": "u1",
+				"parentId": null,
+				"timestamp": "2026-01-01T00:00:00.000Z",
+				"message": {
+					"role": "user",
+					"content": "Use amber for the sample flag."
+				}
+			},
+			{
+				"type": "message",
+				"id": "a1",
+				"parentId": "u1",
+				"timestamp": "2026-01-01T00:00:01.000Z",
+				"message": {
+					"role": "assistant",
+					"content": [
+						{
+							"type": "text",
+							"text": "Synthetic progress."
+						}
+					],
+					"stopReason": "stop"
+				}
+			},
+			{
+				"type": "message",
+				"id": "u2",
+				"parentId": "a1",
+				"timestamp": "2026-01-01T00:00:02.000Z",
+				"message": {
+					"role": "user",
+					"content": "The sample check reports green."
+				}
+			},
+			{
+				"type": "message",
+				"id": "a2",
+				"parentId": "u2",
+				"timestamp": "2026-01-01T00:00:03.000Z",
+				"message": {
+					"role": "assistant",
+					"content": [
+						{
+							"type": "text",
+							"text": "Synthetic progress."
+						}
+					],
+					"stopReason": "stop"
+				}
+			},
+			{
+				"type": "message",
+				"id": "u3",
+				"parentId": "a2",
+				"timestamp": "2026-01-01T00:00:04.000Z",
+				"message": {
+					"role": "user",
+					"content": "Keep the sample label."
+				}
+			},
+			{
+				"type": "message",
+				"id": "a3",
+				"parentId": "u3",
+				"timestamp": "2026-01-01T00:00:05.000Z",
+				"message": {
+					"role": "assistant",
+					"content": [
+						{
+							"type": "text",
+							"text": "Synthetic progress."
+						}
+					],
+					"stopReason": "stop"
+				}
+			}
+		],
+		"links": [
+			{
+				"firstId": "u1",
+				"lastId": "a1",
+				"note": {
+					"instructions": [],
+					"failedPaths": [],
+					"reasons": [],
+					"state": [
+						{
+							"text": "Use amber for the sample flag.",
+							"sources": [
+								"u1"
+							]
+						}
+					],
+					"nextSteps": [],
+					"files": [],
+					"gaps": []
+				}
+			},
+			{
+				"firstId": "u2",
+				"lastId": "a2",
+				"chainHash": "synthetic-other-chain",
+				"note": {
+					"instructions": [],
+					"failedPaths": [],
+					"reasons": [],
+					"state": [
+						{
+							"text": "The sample check reports green.",
+							"sources": [
+								"u2"
+							]
+						}
+					],
+					"nextSteps": [],
+					"files": [],
+					"gaps": []
+				}
+			},
+			{
+				"firstId": "u3",
+				"lastId": "a3",
+				"note": {
+					"instructions": [],
+					"failedPaths": [],
+					"reasons": [],
+					"state": [
+						{
+							"text": "Keep the sample label.",
+							"sources": [
+								"u3"
+							]
+						}
+					],
+					"nextSteps": [],
+					"files": [],
+					"gaps": []
+				}
+			}
+		],
+		"expected": {
+			"links": 1,
+			"coveredThrough": "a1",
+			"stop": {
+				"index": 1,
+				"reason": "chain-mismatch"
+			}
+		}
+	},
+	{
+		"id": "segment-chain-session-changed",
+		"stage": "segment-chain",
+		"records": [
+			{
+				"type": "message",
+				"id": "u1",
+				"parentId": null,
+				"timestamp": "2026-01-01T00:00:00.000Z",
+				"message": {
+					"role": "user",
+					"content": "Use amber for the sample flag."
+				}
+			},
+			{
+				"type": "message",
+				"id": "a1",
+				"parentId": "u1",
+				"timestamp": "2026-01-01T00:00:01.000Z",
+				"message": {
+					"role": "assistant",
+					"content": [
+						{
+							"type": "text",
+							"text": "Synthetic progress."
+						}
+					],
+					"stopReason": "stop"
+				}
+			}
+		],
+		"links": [
+			{
+				"firstId": "u1",
+				"lastId": "a1",
+				"note": {
+					"instructions": [],
+					"failedPaths": [],
+					"reasons": [],
+					"state": [
+						{
+							"text": "Use amber for the sample flag.",
+							"sources": [
+								"u1"
+							]
+						}
+					],
+					"nextSteps": [],
+					"files": [],
+					"gaps": []
+				}
+			}
+		],
+		"boundary": {
+			"session": "synthetic-other-session"
+		},
+		"expected": {
+			"links": 0,
+			"stop": {
+				"index": 0,
+				"reason": "session-changed"
+			}
+		}
+	},
+	{
+		"id": "segment-chain-epoch-changed",
+		"stage": "segment-chain",
+		"records": [
+			{
+				"type": "message",
+				"id": "u1",
+				"parentId": null,
+				"timestamp": "2026-01-01T00:00:00.000Z",
+				"message": {
+					"role": "user",
+					"content": "Use amber for the sample flag."
+				}
+			},
+			{
+				"type": "message",
+				"id": "a1",
+				"parentId": "u1",
+				"timestamp": "2026-01-01T00:00:01.000Z",
+				"message": {
+					"role": "assistant",
+					"content": [
+						{
+							"type": "text",
+							"text": "Synthetic progress."
+						}
+					],
+					"stopReason": "stop"
+				}
+			}
+		],
+		"links": [
+			{
+				"firstId": "u1",
+				"lastId": "a1",
+				"note": {
+					"instructions": [],
+					"failedPaths": [],
+					"reasons": [],
+					"state": [
+						{
+							"text": "Use amber for the sample flag.",
+							"sources": [
+								"u1"
+							]
+						}
+					],
+					"nextSteps": [],
+					"files": [],
+					"gaps": []
+				}
+			}
+		],
+		"boundary": {
+			"epoch": 2
+		},
+		"expected": {
+			"links": 0,
+			"stop": {
+				"index": 0,
+				"reason": "epoch-changed"
+			}
+		}
+	},
+	{
+		"id": "segment-chain-branch-changed",
+		"stage": "segment-chain",
+		"records": [
+			{
+				"type": "message",
+				"id": "u1",
+				"parentId": null,
+				"timestamp": "2026-01-01T00:00:00.000Z",
+				"message": {
+					"role": "user",
+					"content": "Use amber for the sample flag."
+				}
+			},
+			{
+				"type": "message",
+				"id": "a1",
+				"parentId": "u1",
+				"timestamp": "2026-01-01T00:00:01.000Z",
+				"message": {
+					"role": "assistant",
+					"content": [
+						{
+							"type": "text",
+							"text": "Synthetic progress."
+						}
+					],
+					"stopReason": "stop"
+				}
+			},
+			{
+				"type": "message",
+				"id": "u2",
+				"parentId": "a1",
+				"timestamp": "2026-01-01T00:00:02.000Z",
+				"message": {
+					"role": "user",
+					"content": "The sample check reports green."
+				}
+			},
+			{
+				"type": "message",
+				"id": "a2",
+				"parentId": "u2",
+				"timestamp": "2026-01-01T00:00:03.000Z",
+				"message": {
+					"role": "assistant",
+					"content": [
+						{
+							"type": "text",
+							"text": "Synthetic progress."
+						}
+					],
+					"stopReason": "stop"
+				}
+			}
+		],
+		"links": [
+			{
+				"firstId": "u1",
+				"lastId": "a1",
+				"note": {
+					"instructions": [],
+					"failedPaths": [],
+					"reasons": [],
+					"state": [
+						{
+							"text": "Use amber for the sample flag.",
+							"sources": [
+								"u1"
+							]
+						}
+					],
+					"nextSteps": [],
+					"files": [],
+					"gaps": []
+				}
+			},
+			{
+				"firstId": "u2",
+				"lastId": "a2",
+				"note": {
+					"instructions": [],
+					"failedPaths": [],
+					"reasons": [],
+					"state": [
+						{
+							"text": "The sample check reports green.",
+							"sources": [
+								"u2"
+							]
+						}
+					],
+					"nextSteps": [],
+					"files": [],
+					"gaps": []
+				}
+			}
+		],
+		"boundary": {
+			"records": [
+				{
+					"type": "message",
+					"id": "u1",
+					"parentId": null,
+					"timestamp": "2026-01-01T00:00:00.000Z",
+					"message": {
+						"role": "user",
+						"content": "Use amber for the sample flag."
+					}
+				},
+				{
+					"type": "message",
+					"id": "a1",
+					"parentId": "u1",
+					"timestamp": "2026-01-01T00:00:01.000Z",
+					"message": {
+						"role": "assistant",
+						"content": [
+							{
+								"type": "text",
+								"text": "Synthetic progress."
+							}
+						],
+						"stopReason": "stop"
+					}
+				},
+				{
+					"type": "message",
+					"id": "u2",
+					"parentId": "a1",
+					"timestamp": "2026-01-01T00:00:02.000Z",
+					"message": {
+						"role": "user",
+						"content": "The sample check reports green."
+					}
+				},
+				{
+					"type": "message",
+					"id": "a2-sibling",
+					"parentId": "u2",
+					"timestamp": "2026-01-01T00:00:03.000Z",
+					"message": {
+						"role": "assistant",
+						"content": [
+							{
+								"type": "text",
+								"text": "Synthetic progress."
+							}
+						],
+						"stopReason": "stop"
+					}
+				}
+			]
+		},
+		"expected": {
+			"links": 1,
+			"coveredThrough": "a1",
+			"stop": {
+				"index": 1,
+				"reason": "branch-changed"
+			}
+		}
+	},
+	{
+		"id": "segment-chain-base-checkpoint-changed",
+		"stage": "segment-chain",
+		"records": [
+			{
+				"type": "message",
+				"id": "u1",
+				"parentId": null,
+				"timestamp": "2026-01-01T00:00:00.000Z",
+				"message": {
+					"role": "user",
+					"content": "Use amber for the sample flag."
+				}
+			},
+			{
+				"type": "message",
+				"id": "a1",
+				"parentId": "u1",
+				"timestamp": "2026-01-01T00:00:01.000Z",
+				"message": {
+					"role": "assistant",
+					"content": [
+						{
+							"type": "text",
+							"text": "Synthetic progress."
+						}
+					],
+					"stopReason": "stop"
+				}
+			},
+			{
+				"type": "compaction",
+				"id": "c1",
+				"parentId": "a1",
+				"timestamp": "2026-01-01T00:00:02.000Z",
+				"summary": "Synthetic base checkpoint.",
+				"firstKeptEntryId": "u2",
+				"tokensBefore": 100,
+				"details": {
+					"coveredThrough": "a1"
+				}
+			},
+			{
+				"type": "message",
+				"id": "u2",
+				"parentId": "c1",
+				"timestamp": "2026-01-01T00:00:03.000Z",
+				"message": {
+					"role": "user",
+					"content": "The sample check reports green."
+				}
+			},
+			{
+				"type": "message",
+				"id": "a2",
+				"parentId": "u2",
+				"timestamp": "2026-01-01T00:00:04.000Z",
+				"message": {
+					"role": "assistant",
+					"content": [
+						{
+							"type": "text",
+							"text": "Synthetic progress."
+						}
+					],
+					"stopReason": "stop"
+				}
+			}
+		],
+		"links": [
+			{
+				"firstId": "c1",
+				"lastId": "a2",
+				"note": {
+					"instructions": [],
+					"failedPaths": [],
+					"reasons": [],
+					"state": [
+						{
+							"text": "The sample check reports green.",
+							"sources": [
+								"u2"
+							]
+						}
+					],
+					"nextSteps": [],
+					"files": [],
+					"gaps": []
+				}
+			}
+		],
+		"boundary": {
+			"records": [
+				{
+					"type": "message",
+					"id": "u1",
+					"parentId": null,
+					"timestamp": "2026-01-01T00:00:00.000Z",
+					"message": {
+						"role": "user",
+						"content": "Use amber for the sample flag."
+					}
+				},
+				{
+					"type": "message",
+					"id": "a1",
+					"parentId": "u1",
+					"timestamp": "2026-01-01T00:00:01.000Z",
+					"message": {
+						"role": "assistant",
+						"content": [
+							{
+								"type": "text",
+								"text": "Synthetic progress."
+							}
+						],
+						"stopReason": "stop"
+					}
+				},
+				{
+					"type": "compaction",
+					"id": "c1",
+					"parentId": "a1",
+					"timestamp": "2026-01-01T00:00:02.000Z",
+					"summary": "Revised synthetic base checkpoint.",
+					"firstKeptEntryId": "u2",
+					"tokensBefore": 100,
+					"details": {
+						"coveredThrough": "a1"
+					}
+				},
+				{
+					"type": "message",
+					"id": "u2",
+					"parentId": "c1",
+					"timestamp": "2026-01-01T00:00:03.000Z",
+					"message": {
+						"role": "user",
+						"content": "The sample check reports green."
+					}
+				},
+				{
+					"type": "message",
+					"id": "a2",
+					"parentId": "u2",
+					"timestamp": "2026-01-01T00:00:04.000Z",
+					"message": {
+						"role": "assistant",
+						"content": [
+							{
+								"type": "text",
+								"text": "Synthetic progress."
+							}
+						],
+						"stopReason": "stop"
+					}
+				}
+			]
+		},
+		"expected": {
+			"links": 0,
+			"stop": {
+				"index": 0,
+				"reason": "base-checkpoint-changed"
+			}
+		}
+	},
+	{
+		"id": "segment-chain-source-changed",
+		"stage": "segment-chain",
+		"records": [
+			{
+				"type": "message",
+				"id": "u1",
+				"parentId": null,
+				"timestamp": "2026-01-01T00:00:00.000Z",
+				"message": {
+					"role": "user",
+					"content": "Use amber for the sample flag."
+				}
+			},
+			{
+				"type": "message",
+				"id": "a1",
+				"parentId": "u1",
+				"timestamp": "2026-01-01T00:00:01.000Z",
+				"message": {
+					"role": "assistant",
+					"content": [
+						{
+							"type": "text",
+							"text": "Synthetic progress."
+						}
+					],
+					"stopReason": "stop"
+				}
+			},
+			{
+				"type": "message",
+				"id": "u2",
+				"parentId": "a1",
+				"timestamp": "2026-01-01T00:00:02.000Z",
+				"message": {
+					"role": "user",
+					"content": "The sample check reports green."
+				}
+			},
+			{
+				"type": "message",
+				"id": "a2",
+				"parentId": "u2",
+				"timestamp": "2026-01-01T00:00:03.000Z",
+				"message": {
+					"role": "assistant",
+					"content": [
+						{
+							"type": "text",
+							"text": "Synthetic progress."
+						}
+					],
+					"stopReason": "stop"
+				}
+			},
+			{
+				"type": "message",
+				"id": "u3",
+				"parentId": "a2",
+				"timestamp": "2026-01-01T00:00:04.000Z",
+				"message": {
+					"role": "user",
+					"content": "Keep the sample label."
+				}
+			},
+			{
+				"type": "message",
+				"id": "a3",
+				"parentId": "u3",
+				"timestamp": "2026-01-01T00:00:05.000Z",
+				"message": {
+					"role": "assistant",
+					"content": [
+						{
+							"type": "text",
+							"text": "Synthetic progress."
+						}
+					],
+					"stopReason": "stop"
+				}
+			}
+		],
+		"links": [
+			{
+				"firstId": "u1",
+				"lastId": "a1",
+				"note": {
+					"instructions": [],
+					"failedPaths": [],
+					"reasons": [],
+					"state": [
+						{
+							"text": "Use amber for the sample flag.",
+							"sources": [
+								"u1"
+							]
+						}
+					],
+					"nextSteps": [],
+					"files": [],
+					"gaps": []
+				}
+			},
+			{
+				"firstId": "u2",
+				"lastId": "a2",
+				"note": {
+					"instructions": [],
+					"failedPaths": [],
+					"reasons": [],
+					"state": [
+						{
+							"text": "The sample check reports green.",
+							"sources": [
+								"u2"
+							],
+							"quote": "sample check"
+						}
+					],
+					"nextSteps": [],
+					"files": [],
+					"gaps": []
+				}
+			},
+			{
+				"firstId": "u3",
+				"lastId": "a3",
+				"note": {
+					"instructions": [],
+					"failedPaths": [],
+					"reasons": [],
+					"state": [
+						{
+							"text": "Keep the sample label.",
+							"sources": [
+								"u3"
+							]
+						}
+					],
+					"nextSteps": [],
+					"files": [],
+					"gaps": []
+				}
+			}
+		],
+		"boundary": {
+			"records": [
+				{
+					"type": "message",
+					"id": "u1",
+					"parentId": null,
+					"timestamp": "2026-01-01T00:00:00.000Z",
+					"message": {
+						"role": "user",
+						"content": "Use amber for the sample flag."
+					}
+				},
+				{
+					"type": "message",
+					"id": "a1",
+					"parentId": "u1",
+					"timestamp": "2026-01-01T00:00:01.000Z",
+					"message": {
+						"role": "assistant",
+						"content": [
+							{
+								"type": "text",
+								"text": "Synthetic progress."
+							}
+						],
+						"stopReason": "stop"
+					}
+				},
+				{
+					"type": "message",
+					"id": "u2",
+					"parentId": "a1",
+					"timestamp": "2026-01-01T00:00:02.000Z",
+					"message": {
+						"role": "user",
+						"content": "The sample check reports red."
+					}
+				},
+				{
+					"type": "message",
+					"id": "a2",
+					"parentId": "u2",
+					"timestamp": "2026-01-01T00:00:03.000Z",
+					"message": {
+						"role": "assistant",
+						"content": [
+							{
+								"type": "text",
+								"text": "Synthetic progress."
+							}
+						],
+						"stopReason": "stop"
+					}
+				},
+				{
+					"type": "message",
+					"id": "u3",
+					"parentId": "a2",
+					"timestamp": "2026-01-01T00:00:04.000Z",
+					"message": {
+						"role": "user",
+						"content": "Keep the sample label."
+					}
+				},
+				{
+					"type": "message",
+					"id": "a3",
+					"parentId": "u3",
+					"timestamp": "2026-01-01T00:00:05.000Z",
+					"message": {
+						"role": "assistant",
+						"content": [
+							{
+								"type": "text",
+								"text": "Synthetic progress."
+							}
+						],
+						"stopReason": "stop"
+					}
+				}
+			]
+		},
+		"expected": {
+			"links": 1,
+			"coveredThrough": "a1",
+			"stop": {
+				"index": 1,
+				"reason": "source-changed"
+			}
+		}
+	},
+	{
+		"id": "segment-chain-writer-changed",
+		"stage": "segment-chain",
+		"records": [
+			{
+				"type": "message",
+				"id": "u1",
+				"parentId": null,
+				"timestamp": "2026-01-01T00:00:00.000Z",
+				"message": {
+					"role": "user",
+					"content": "Use amber for the sample flag."
+				}
+			},
+			{
+				"type": "message",
+				"id": "a1",
+				"parentId": "u1",
+				"timestamp": "2026-01-01T00:00:01.000Z",
+				"message": {
+					"role": "assistant",
+					"content": [
+						{
+							"type": "text",
+							"text": "Synthetic progress."
+						}
+					],
+					"stopReason": "stop"
+				}
+			}
+		],
+		"links": [
+			{
+				"firstId": "u1",
+				"lastId": "a1",
+				"note": {
+					"instructions": [],
+					"failedPaths": [],
+					"reasons": [],
+					"state": [
+						{
+							"text": "Use amber for the sample flag.",
+							"sources": [
+								"u1"
+							]
+						}
+					],
+					"nextSteps": [],
+					"files": [],
+					"gaps": []
+				}
+			}
+		],
+		"boundary": {
+			"writer": {
+				"model": "synthetic/other-segment"
+			}
+		},
+		"expected": {
+			"links": 0,
+			"stop": {
+				"index": 0,
+				"reason": "writer-changed"
+			}
+		}
+	},
+	{
+		"id": "segment-chain-configuration-invalid",
+		"stage": "segment-chain",
+		"records": [
+			{
+				"type": "message",
+				"id": "u1",
+				"parentId": null,
+				"timestamp": "2026-01-01T00:00:00.000Z",
+				"message": {
+					"role": "user",
+					"content": "Use amber for the sample flag."
+				}
+			},
+			{
+				"type": "message",
+				"id": "a1",
+				"parentId": "u1",
+				"timestamp": "2026-01-01T00:00:01.000Z",
+				"message": {
+					"role": "assistant",
+					"content": [
+						{
+							"type": "text",
+							"text": "Synthetic progress."
+						}
+					],
+					"stopReason": "stop"
+				}
+			}
+		],
+		"links": [
+			{
+				"firstId": "u1",
+				"lastId": "a1",
+				"note": {
+					"instructions": [],
+					"failedPaths": [],
+					"reasons": [],
+					"state": [
+						{
+							"text": "Use amber for the sample flag.",
+							"sources": [
+								"u1"
+							]
+						}
+					],
+					"nextSteps": [],
+					"files": [],
+					"gaps": []
+				}
+			}
+		],
+		"boundary": {
+			"writer": {
+				"contextHash": ""
+			}
+		},
+		"expected": {
+			"links": 0,
+			"stop": {
+				"index": 0,
+				"reason": "configuration-invalid"
+			}
+		}
+	},
+	{
+		"id": "segment-chain-custom-instructions",
+		"stage": "segment-chain",
+		"records": [
+			{
+				"type": "message",
+				"id": "u1",
+				"parentId": null,
+				"timestamp": "2026-01-01T00:00:00.000Z",
+				"message": {
+					"role": "user",
+					"content": "Use amber for the sample flag."
+				}
+			},
+			{
+				"type": "message",
+				"id": "a1",
+				"parentId": "u1",
+				"timestamp": "2026-01-01T00:00:01.000Z",
+				"message": {
+					"role": "assistant",
+					"content": [
+						{
+							"type": "text",
+							"text": "Synthetic progress."
+						}
+					],
+					"stopReason": "stop"
+				}
+			}
+		],
+		"links": [
+			{
+				"firstId": "u1",
+				"lastId": "a1",
+				"note": {
+					"instructions": [],
+					"failedPaths": [],
+					"reasons": [],
+					"state": [
+						{
+							"text": "Use amber for the sample flag.",
+							"sources": [
+								"u1"
+							]
+						}
+					],
+					"nextSteps": [],
+					"files": [],
+					"gaps": []
+				}
+			}
+		],
+		"boundary": {
+			"customInstructions": "Focus on the sample flag."
+		},
+		"expected": {
+			"links": 0,
+			"stop": {
+				"index": 0,
+				"reason": "custom-instructions"
+			}
+		}
+	},
+	{
+		"id": "segment-chain-submission-budget",
+		"stage": "segment-chain",
+		"records": [
+			{
+				"type": "message",
+				"id": "u1",
+				"parentId": null,
+				"timestamp": "2026-01-01T00:00:00.000Z",
+				"message": {
+					"role": "user",
+					"content": "Keep the invented workshop inventory: amber flags, teal labels, brass clips, paper boxes and wooden trays."
+				}
+			},
+			{
+				"type": "message",
+				"id": "a1",
+				"parentId": "u1",
+				"timestamp": "2026-01-01T00:00:01.000Z",
+				"message": {
+					"role": "assistant",
+					"content": [
+						{
+							"type": "text",
+							"text": "Synthetic progress."
+						}
+					],
+					"stopReason": "stop"
+				}
+			}
+		],
+		"links": [
+			{
+				"firstId": "u1",
+				"lastId": "a1",
+				"note": {
+					"instructions": [],
+					"failedPaths": [],
+					"reasons": [],
+					"state": [
+						{
+							"text": "The invented workshop inventory begins with amber flags in a shallow wooden tray. Each flag has a plain paper sleeve and a small brass clip. The teal labels occupy a separate box so a reader can tell the two colours apart without opening a sleeve. No item in this example describes a real workshop or a stored user session. The paper boxes have square lids, and the wooden trays have rounded handles. A sample clerk places one flag beside each tray while checking the inventory, then returns it to its sleeve. The brass clips stay with their sleeves throughout the check. The teal labels are counted by row, with the left row counted before the right row. A blank card at the front of the box records that the count is complete. The card carries no name, address or account identifier. The next tray holds spare sleeves folded flat beneath another blank card. Its clips are arranged along the lower edge where they can be counted without moving the sleeves. A small cardboard divider keeps the clips away from the labels. When the count finishes, the clerk closes the paper lids and places the trays on the lower shelf. The amber flags remain in their original order. The teal labels remain in their separate box. The spare sleeves remain flat beneath their card. The divider stays in place, and every brass clip stays attached to the sleeve that held it at the start. This deliberately detailed invented inventory fits the frozen segment allowance. At the later boundary the available note allowance is smaller, so this same valid note must end the usable chain on size alone. Its source identifier, range, user horizon, writer identity, session and epoch all remain the ones recorded when the segment was prepared.",
+							"sources": [
+								"u1"
+							]
+						}
+					],
+					"nextSteps": [],
+					"files": [],
+					"gaps": []
+				}
+			}
+		],
+		"boundary": {
+			"noteBudget": {
+				"baseTokens": 500,
+				"hardTokens": 500
+			}
+		},
+		"expected": {
+			"links": 0,
+			"stop": {
+				"index": 0,
+				"reason": "submission-budget"
+			}
+		}
+	},
+	{
+		"id": "segment-chain-user-horizon-incomplete",
+		"stage": "segment-chain",
+		"records": [
+			{
+				"type": "message",
+				"id": "u1",
+				"parentId": null,
+				"timestamp": "2026-01-01T00:00:00.000Z",
+				"message": {
+					"role": "user",
+					"content": "Use amber for the sample flag."
+				}
+			},
+			{
+				"type": "message",
+				"id": "a1",
+				"parentId": "u1",
+				"timestamp": "2026-01-01T00:00:01.000Z",
+				"message": {
+					"role": "assistant",
+					"content": [
+						{
+							"type": "text",
+							"text": "Synthetic progress."
+						}
+					],
+					"stopReason": "stop"
+				}
+			},
+			{
+				"type": "message",
+				"id": "u2",
+				"parentId": "a1",
+				"timestamp": "2026-01-01T00:00:02.000Z",
+				"message": {
+					"role": "user",
+					"content": "The sample check reports green."
+				}
+			},
+			{
+				"type": "message",
+				"id": "a2",
+				"parentId": "u2",
+				"timestamp": "2026-01-01T00:00:03.000Z",
+				"message": {
+					"role": "assistant",
+					"content": [
+						{
+							"type": "text",
+							"text": "Synthetic progress."
+						}
+					],
+					"stopReason": "stop"
+				}
+			},
+			{
+				"type": "message",
+				"id": "u3",
+				"parentId": "a2",
+				"timestamp": "2026-01-01T00:00:04.000Z",
+				"message": {
+					"role": "user",
+					"content": "Keep the sample label."
+				}
+			},
+			{
+				"type": "message",
+				"id": "a3",
+				"parentId": "u3",
+				"timestamp": "2026-01-01T00:00:05.000Z",
+				"message": {
+					"role": "assistant",
+					"content": [
+						{
+							"type": "text",
+							"text": "Synthetic progress."
+						}
+					],
+					"stopReason": "stop"
+				}
+			}
+		],
+		"links": [
+			{
+				"firstId": "u1",
+				"lastId": "a1",
+				"note": {
+					"instructions": [],
+					"failedPaths": [],
+					"reasons": [],
+					"state": [
+						{
+							"text": "Use amber for the sample flag.",
+							"sources": [
+								"u1"
+							]
+						}
+					],
+					"nextSteps": [],
+					"files": [],
+					"gaps": []
+				}
+			},
+			{
+				"firstId": "u2",
+				"lastId": "a2",
+				"processedUserEntryIds": [
+					"u1"
+				],
+				"note": {
+					"instructions": [],
+					"failedPaths": [],
+					"reasons": [],
+					"state": [
+						{
+							"text": "The sample check reports green.",
+							"sources": [
+								"u2"
+							]
+						}
+					],
+					"nextSteps": [],
+					"files": [],
+					"gaps": []
+				}
+			},
+			{
+				"firstId": "u3",
+				"lastId": "a3",
+				"note": {
+					"instructions": [],
+					"failedPaths": [],
+					"reasons": [],
+					"state": [
+						{
+							"text": "Keep the sample label.",
+							"sources": [
+								"u3"
+							]
+						}
+					],
+					"nextSteps": [],
+					"files": [],
+					"gaps": []
+				}
+			}
+		],
+		"expected": {
+			"links": 1,
+			"coveredThrough": "a1",
+			"stop": {
+				"index": 1,
+				"reason": "user-horizon-incomplete"
+			}
+		}
+	},
+	{
+		"id": "segment-merge-adds-instructions-and-latest-plan",
+		"stage": "segment-merge",
+		"records": [
+			{
+				"type": "message",
+				"id": "u1",
+				"parentId": null,
+				"timestamp": "2026-01-01T00:00:00.000Z",
+				"message": {
+					"role": "user",
+					"content": "Use amber for the sample flag."
+				}
+			},
+			{
+				"type": "message",
+				"id": "a1",
+				"parentId": "u1",
+				"timestamp": "2026-01-01T00:00:01.000Z",
+				"message": {
+					"role": "assistant",
+					"content": [
+						{
+							"type": "text",
+							"text": "Synthetic progress."
+						}
+					],
+					"stopReason": "stop"
+				}
+			},
+			{
+				"type": "message",
+				"id": "u2",
+				"parentId": "a1",
+				"timestamp": "2026-01-01T00:00:02.000Z",
+				"message": {
+					"role": "user",
+					"content": "Keep the sample label. Check its spelling next."
+				}
+			},
+			{
+				"type": "message",
+				"id": "a2",
+				"parentId": "u2",
+				"timestamp": "2026-01-01T00:00:03.000Z",
+				"message": {
+					"role": "assistant",
+					"content": [
+						{
+							"type": "text",
+							"text": "Synthetic progress."
+						}
+					],
+					"stopReason": "stop"
+				}
+			}
+		],
+		"links": [
+			{
+				"firstId": "u1",
+				"lastId": "a1",
+				"note": {
+					"instructions": [
+						{
+							"text": "Use amber for the sample flag.",
+							"sources": [
+								"u1"
+							],
+							"quote": "Use amber for the sample flag."
+						}
+					],
+					"failedPaths": [],
+					"reasons": [],
+					"state": [
+						{
+							"text": "The sample flag is amber.",
+							"sources": [
+								"u1"
+							]
+						}
+					],
+					"nextSteps": [
+						{
+							"text": "Inspect the sample flag.",
+							"sources": [
+								"u1"
+							]
+						}
+					],
+					"files": [],
+					"gaps": [
+						"Which shade of amber?"
+					]
+				}
+			},
+			{
+				"firstId": "u2",
+				"lastId": "a2",
+				"note": {
+					"instructions": [
+						{
+							"text": "Keep the sample label.",
+							"sources": [
+								"u2"
+							],
+							"quote": "Keep the sample label."
+						}
+					],
+					"failedPaths": [],
+					"reasons": [],
+					"state": [
+						{
+							"text": "The sample label is retained.",
+							"sources": [
+								"u2"
+							]
+						}
+					],
+					"nextSteps": [
+						{
+							"text": "Check its spelling next.",
+							"sources": [
+								"u2"
+							],
+							"quote": "Check its spelling next."
+						}
+					],
+					"files": [],
+					"gaps": [
+						"Which spelling is preferred?"
+					]
+				}
+			}
+		],
+		"expected": {
+			"note": {
+				"instructions": [
+					{
+						"text": "Use amber for the sample flag.",
+						"sources": [
+							"u1"
+						],
+						"quote": "Use amber for the sample flag."
+					},
+					{
+						"text": "Keep the sample label.",
+						"sources": [
+							"u2"
+						],
+						"quote": "Keep the sample label."
+					}
+				],
+				"failedPaths": [],
+				"reasons": [],
+				"state": [
+					{
+						"text": "The sample flag is amber.",
+						"sources": [
+							"u1"
+						]
+					},
+					{
+						"text": "The sample label is retained.",
+						"sources": [
+							"u2"
+						]
+					}
+				],
+				"nextSteps": [
+					{
+						"text": "Check its spelling next.",
+						"sources": [
+							"u2"
+						],
+						"quote": "Check its spelling next."
+					}
+				],
+				"files": [],
+				"gaps": [
+					"Which spelling is preferred?"
+				]
+			}
+		}
+	},
+	{
+		"id": "segment-merge-previous-correction-keeps-plan-and-gaps",
+		"stage": "segment-merge",
+		"records": [
+			{
+				"type": "message",
+				"id": "u1",
+				"parentId": null,
+				"timestamp": "2026-01-01T00:00:00.000Z",
+				"message": {
+					"role": "user",
+					"content": "Use amber for the sample flag."
+				}
+			},
+			{
+				"type": "message",
+				"id": "a1",
+				"parentId": "u1",
+				"timestamp": "2026-01-01T00:00:01.000Z",
+				"message": {
+					"role": "assistant",
+					"content": [
+						{
+							"type": "text",
+							"text": "Inspect the label next."
+						}
+					],
+					"stopReason": "stop"
+				}
+			},
+			{
+				"type": "compaction",
+				"id": "c1",
+				"parentId": "a1",
+				"timestamp": "2026-01-01T00:00:02.000Z",
+				"summary": "Synthetic base checkpoint.",
+				"firstKeptEntryId": "u2",
+				"tokensBefore": 100,
+				"details": {
+					"coveredThrough": "a1"
+				}
+			},
+			{
+				"type": "message",
+				"id": "u2",
+				"parentId": "c1",
+				"timestamp": "2026-01-01T00:00:03.000Z",
+				"message": {
+					"role": "user",
+					"content": "Use teal now."
+				}
+			},
+			{
+				"type": "message",
+				"id": "a2",
+				"parentId": "u2",
+				"timestamp": "2026-01-01T00:00:04.000Z",
+				"message": {
+					"role": "assistant",
+					"content": [
+						{
+							"type": "text",
+							"text": "Synthetic progress."
+						}
+					],
+					"stopReason": "stop"
+				}
+			}
+		],
+		"previous": {
+			"instructions": [],
+			"failedPaths": [],
+			"reasons": [],
+			"state": [
+				{
+					"text": "Use amber for the sample flag.",
+					"sources": [
+						"u1"
+					],
+					"quote": "Use amber for the sample flag."
+				}
+			],
+			"nextSteps": [
+				{
+					"text": "Inspect the label next.",
+					"sources": [
+						"a1"
+					],
+					"quote": "Inspect the label next."
+				}
+			],
+			"files": [],
+			"gaps": [
+				"Which shade should the sample use?"
+			]
+		},
+		"links": [
+			{
+				"firstId": "c1",
+				"lastId": "a2",
+				"note": {
+					"instructions": [],
+					"failedPaths": [],
+					"reasons": [],
+					"state": [
+						{
+							"text": "Use teal now.",
+							"sources": [
+								"u2"
+							],
+							"quote": "Use teal now.",
+							"supersedes": [
+								"u1"
+							]
+						}
+					],
+					"nextSteps": [],
+					"files": [],
+					"gaps": []
+				}
+			}
+		],
+		"expected": {
+			"note": {
+				"instructions": [],
+				"failedPaths": [],
+				"reasons": [],
+				"state": [
+					{
+						"text": "Use teal now.",
+						"sources": [
+							"u2"
+						],
+						"quote": "Use teal now.",
+						"supersedes": [
+							"u1"
+						]
+					}
+				],
+				"nextSteps": [
+					{
+						"text": "Inspect the label next.",
+						"sources": [
+							"a1"
+						],
+						"quote": "Inspect the label next."
+					}
+				],
+				"files": [],
+				"gaps": [
+					"Which shade should the sample use?"
+				]
+			}
+		}
+	},
+	{
+		"id": "segment-merge-instruction-superseded",
+		"stage": "segment-merge",
+		"records": [
+			{
+				"type": "message",
+				"id": "u1",
+				"parentId": null,
+				"timestamp": "2026-01-01T00:00:00.000Z",
+				"message": {
+					"role": "user",
+					"content": "Use amber for the sample flag."
+				}
+			},
+			{
+				"type": "message",
+				"id": "a1",
+				"parentId": "u1",
+				"timestamp": "2026-01-01T00:00:01.000Z",
+				"message": {
+					"role": "assistant",
+					"content": [
+						{
+							"type": "text",
+							"text": "Synthetic progress."
+						}
+					],
+					"stopReason": "stop"
+				}
+			},
+			{
+				"type": "message",
+				"id": "u2",
+				"parentId": "a1",
+				"timestamp": "2026-01-01T00:00:02.000Z",
+				"message": {
+					"role": "user",
+					"content": "Use teal now."
+				}
+			},
+			{
+				"type": "message",
+				"id": "a2",
+				"parentId": "u2",
+				"timestamp": "2026-01-01T00:00:03.000Z",
+				"message": {
+					"role": "assistant",
+					"content": [
+						{
+							"type": "text",
+							"text": "Synthetic progress."
+						}
+					],
+					"stopReason": "stop"
+				}
+			}
+		],
+		"links": [
+			{
+				"firstId": "u1",
+				"lastId": "a1",
+				"note": {
+					"instructions": [
+						{
+							"text": "Use amber for the sample flag.",
+							"sources": [
+								"u1"
+							],
+							"quote": "Use amber for the sample flag."
+						}
+					],
+					"failedPaths": [],
+					"reasons": [],
+					"state": [
+						{
+							"text": "The sample flag is amber.",
+							"sources": [
+								"u1"
+							]
+						}
+					],
+					"nextSteps": [],
+					"files": [],
+					"gaps": []
+				}
+			},
+			{
+				"firstId": "u2",
+				"lastId": "a2",
+				"note": {
+					"instructions": [],
+					"failedPaths": [],
+					"reasons": [],
+					"state": [
+						{
+							"text": "Use teal now.",
+							"sources": [
+								"u2"
+							],
+							"quote": "Use teal now.",
+							"supersedes": [
+								"u1"
+							]
+						}
+					],
+					"nextSteps": [],
+					"files": [],
+					"gaps": []
+				}
+			}
+		],
+		"expected": {
+			"refusal": "instruction-superseded"
+		}
+	},
+	{
+		"id": "segment-merge-ambiguous-supersede",
+		"stage": "segment-merge",
+		"records": [
+			{
+				"type": "message",
+				"id": "u1",
+				"parentId": null,
+				"timestamp": "2026-01-01T00:00:00.000Z",
+				"message": {
+					"role": "user",
+					"content": "The sample flag is amber. Its label is round."
+				}
+			},
+			{
+				"type": "message",
+				"id": "a1",
+				"parentId": "u1",
+				"timestamp": "2026-01-01T00:00:01.000Z",
+				"message": {
+					"role": "assistant",
+					"content": [
+						{
+							"type": "text",
+							"text": "Synthetic progress."
+						}
+					],
+					"stopReason": "stop"
+				}
+			},
+			{
+				"type": "compaction",
+				"id": "c1",
+				"parentId": "a1",
+				"timestamp": "2026-01-01T00:00:02.000Z",
+				"summary": "Synthetic base checkpoint.",
+				"firstKeptEntryId": "u2",
+				"tokensBefore": 100,
+				"details": {
+					"coveredThrough": "a1"
+				}
+			},
+			{
+				"type": "message",
+				"id": "u2",
+				"parentId": "c1",
+				"timestamp": "2026-01-01T00:00:03.000Z",
+				"message": {
+					"role": "user",
+					"content": "The sample flag is teal now."
+				}
+			},
+			{
+				"type": "message",
+				"id": "a2",
+				"parentId": "u2",
+				"timestamp": "2026-01-01T00:00:04.000Z",
+				"message": {
+					"role": "assistant",
+					"content": [
+						{
+							"type": "text",
+							"text": "Synthetic progress."
+						}
+					],
+					"stopReason": "stop"
+				}
+			}
+		],
+		"previous": {
+			"instructions": [],
+			"failedPaths": [],
+			"reasons": [],
+			"state": [
+				{
+					"text": "The sample flag is amber.",
+					"sources": [
+						"u1"
+					],
+					"quote": "The sample flag is amber."
+				},
+				{
+					"text": "Its label is round.",
+					"sources": [
+						"u1"
+					],
+					"quote": "Its label is round."
+				}
+			],
+			"nextSteps": [],
+			"files": [],
+			"gaps": []
+		},
+		"links": [
+			{
+				"firstId": "c1",
+				"lastId": "a2",
+				"note": {
+					"instructions": [],
+					"failedPaths": [],
+					"reasons": [],
+					"state": [
+						{
+							"text": "The sample flag is teal now.",
+							"sources": [
+								"u2"
+							],
+							"quote": "The sample flag is teal now.",
+							"supersedes": [
+								"u1"
+							]
+						}
+					],
+					"nextSteps": [],
+					"files": [],
+					"gaps": []
+				}
+			}
+		],
+		"expected": {
+			"refusal": "ambiguous-supersede"
+		}
+	},
+	{
+		"id": "segment-merge-schema",
+		"stage": "segment-merge",
+		"records": [
+			{
+				"type": "message",
+				"id": "u1",
+				"parentId": null,
+				"timestamp": "2026-01-01T00:00:00.000Z",
+				"message": {
+					"role": "user",
+					"content": "The invented workshop has forty labelled trays, each with its own coloured sample."
+				}
+			},
+			{
+				"type": "message",
+				"id": "a1",
+				"parentId": "u1",
+				"timestamp": "2026-01-01T00:00:01.000Z",
+				"message": {
+					"role": "assistant",
+					"content": [
+						{
+							"type": "text",
+							"text": "Synthetic progress."
+						}
+					],
+					"stopReason": "stop"
+				}
+			},
+			{
+				"type": "compaction",
+				"id": "c1",
+				"parentId": "a1",
+				"timestamp": "2026-01-01T00:00:02.000Z",
+				"summary": "Synthetic base checkpoint.",
+				"firstKeptEntryId": "u2",
+				"tokensBefore": 100,
+				"details": {
+					"coveredThrough": "a1"
+				}
+			},
+			{
+				"type": "message",
+				"id": "u2",
+				"parentId": "c1",
+				"timestamp": "2026-01-01T00:00:03.000Z",
+				"message": {
+					"role": "user",
+					"content": "A new sample arrived."
+				}
+			},
+			{
+				"type": "message",
+				"id": "a2",
+				"parentId": "u2",
+				"timestamp": "2026-01-01T00:00:04.000Z",
+				"message": {
+					"role": "assistant",
+					"content": [
+						{
+							"type": "text",
+							"text": "Synthetic progress."
+						}
+					],
+					"stopReason": "stop"
+				}
+			}
+		],
+		"previous": {
+			"instructions": [],
+			"failedPaths": [],
+			"reasons": [],
+			"state": [
+				{
+					"text": "Tray 01 holds an amber sample.",
+					"sources": [
+						"u1"
+					]
+				},
+				{
+					"text": "Tray 02 holds a teal sample.",
+					"sources": [
+						"u1"
+					]
+				},
+				{
+					"text": "Tray 03 holds a violet sample.",
+					"sources": [
+						"u1"
+					]
+				},
+				{
+					"text": "Tray 04 holds a silver sample.",
+					"sources": [
+						"u1"
+					]
+				},
+				{
+					"text": "Tray 05 holds a coral sample.",
+					"sources": [
+						"u1"
+					]
+				},
+				{
+					"text": "Tray 06 holds a green sample.",
+					"sources": [
+						"u1"
+					]
+				},
+				{
+					"text": "Tray 07 holds a blue sample.",
+					"sources": [
+						"u1"
+					]
+				},
+				{
+					"text": "Tray 08 holds a yellow sample.",
+					"sources": [
+						"u1"
+					]
+				},
+				{
+					"text": "Tray 09 holds an orange sample.",
+					"sources": [
+						"u1"
+					]
+				},
+				{
+					"text": "Tray 10 holds a red sample.",
+					"sources": [
+						"u1"
+					]
+				},
+				{
+					"text": "Tray 11 holds an indigo sample.",
+					"sources": [
+						"u1"
+					]
+				},
+				{
+					"text": "Tray 12 holds a cream sample.",
+					"sources": [
+						"u1"
+					]
+				},
+				{
+					"text": "Tray 13 holds a white sample.",
+					"sources": [
+						"u1"
+					]
+				},
+				{
+					"text": "Tray 14 holds a grey sample.",
+					"sources": [
+						"u1"
+					]
+				},
+				{
+					"text": "Tray 15 holds a black sample.",
+					"sources": [
+						"u1"
+					]
+				},
+				{
+					"text": "Tray 16 holds a brown sample.",
+					"sources": [
+						"u1"
+					]
+				},
+				{
+					"text": "Tray 17 holds a bronze sample.",
+					"sources": [
+						"u1"
+					]
+				},
+				{
+					"text": "Tray 18 holds a copper sample.",
+					"sources": [
+						"u1"
+					]
+				},
+				{
+					"text": "Tray 19 holds a gold sample.",
+					"sources": [
+						"u1"
+					]
+				},
+				{
+					"text": "Tray 20 holds a rose sample.",
+					"sources": [
+						"u1"
+					]
+				},
+				{
+					"text": "Tray 21 holds a mint sample.",
+					"sources": [
+						"u1"
+					]
+				},
+				{
+					"text": "Tray 22 holds a plum sample.",
+					"sources": [
+						"u1"
+					]
+				},
+				{
+					"text": "Tray 23 holds a lilac sample.",
+					"sources": [
+						"u1"
+					]
+				},
+				{
+					"text": "Tray 24 holds a mauve sample.",
+					"sources": [
+						"u1"
+					]
+				},
+				{
+					"text": "Tray 25 holds a peach sample.",
+					"sources": [
+						"u1"
+					]
+				},
+				{
+					"text": "Tray 26 holds an ivory sample.",
+					"sources": [
+						"u1"
+					]
+				},
+				{
+					"text": "Tray 27 holds an olive sample.",
+					"sources": [
+						"u1"
+					]
+				},
+				{
+					"text": "Tray 28 holds a navy sample.",
+					"sources": [
+						"u1"
+					]
+				},
+				{
+					"text": "Tray 29 holds a cyan sample.",
+					"sources": [
+						"u1"
+					]
+				},
+				{
+					"text": "Tray 30 holds a magenta sample.",
+					"sources": [
+						"u1"
+					]
+				},
+				{
+					"text": "Tray 31 holds a maroon sample.",
+					"sources": [
+						"u1"
+					]
+				},
+				{
+					"text": "Tray 32 holds a beige sample.",
+					"sources": [
+						"u1"
+					]
+				},
+				{
+					"text": "Tray 33 holds a tan sample.",
+					"sources": [
+						"u1"
+					]
+				},
+				{
+					"text": "Tray 34 holds a lime sample.",
+					"sources": [
+						"u1"
+					]
+				},
+				{
+					"text": "Tray 35 holds a scarlet sample.",
+					"sources": [
+						"u1"
+					]
+				},
+				{
+					"text": "Tray 36 holds a crimson sample.",
+					"sources": [
+						"u1"
+					]
+				},
+				{
+					"text": "Tray 37 holds a turquoise sample.",
+					"sources": [
+						"u1"
+					]
+				},
+				{
+					"text": "Tray 38 holds an ochre sample.",
+					"sources": [
+						"u1"
+					]
+				},
+				{
+					"text": "Tray 39 holds a lavender sample.",
+					"sources": [
+						"u1"
+					]
+				},
+				{
+					"text": "Tray 40 holds a charcoal sample.",
+					"sources": [
+						"u1"
+					]
+				}
+			],
+			"nextSteps": [],
+			"files": [],
+			"gaps": []
+		},
+		"links": [
+			{
+				"firstId": "c1",
+				"lastId": "a2",
+				"note": {
+					"instructions": [],
+					"failedPaths": [],
+					"reasons": [],
+					"state": [
+						{
+							"text": "A new sample arrived.",
+							"sources": [
+								"u2"
+							],
+							"quote": "A new sample arrived."
+						}
+					],
+					"nextSteps": [],
+					"files": [],
+					"gaps": []
+				}
+			}
+		],
+		"expected": {
+			"refusal": "schema"
+		}
+	}
+]

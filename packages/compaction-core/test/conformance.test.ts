@@ -6,6 +6,7 @@ import {
 	checkpointBranch,
 	materializeCandidate,
 	runCoreVector,
+	type SegmentVector,
 	type Serialization,
 } from "../conformance/runner.ts";
 import { serializeCanonicalRecord } from "../src/canonical.ts";
@@ -22,16 +23,20 @@ import {
 import { diagnoseQuotes } from "../src/quote-diagnostics.ts";
 import { diagnoseSchema, schemaCounts } from "../src/schema-diagnostics.ts";
 import { diagnoseScope } from "../src/scope-diagnostics.ts";
+import type { ChainStop } from "../src/segments.ts";
+import type { MergeRefusal } from "../src/work-notes.ts";
 
 const directory = new URL("../conformance/", import.meta.url);
 const manifest: { version: string; files: Record<string, string> } = JSON.parse(
 	readFileSync(new URL("manifest.json", directory), "utf8"),
 );
 const vectors: ConformanceVector[] = JSON.parse(readFileSync(new URL("vectors.json", directory), "utf8"));
+const segments: SegmentVector[] = JSON.parse(readFileSync(new URL("segments.json", directory), "utf8"));
 
-describe("0.7-conformance.1", () => {
+describe("0.8-conformance.1", () => {
 	it("pins the complete data set and uses only unique IDs and closed-set refusal classes", () => {
-		expect(manifest.version).toBe("0.7-conformance.1");
+		expect(manifest.version).toBe("0.8-conformance.1");
+		expect(Object.keys(manifest.files).sort()).toEqual(["segments.json", "vectors.json"]);
 		expect(Object.keys(manifest.files).sort()).toEqual(
 			readdirSync(directory)
 				.filter((name) => name.endsWith(".json") && name !== "manifest.json")
@@ -47,15 +52,69 @@ describe("0.7-conformance.1", () => {
 			).toBe(digest);
 		}
 		expect(vectors).toHaveLength(34);
-		expect(new Set(vectors.map((vector) => vector.id)).size).toBe(vectors.length);
-		for (const vector of vectors) {
+		expect(segments).toHaveLength(24);
+		const all = [...vectors, ...segments];
+		expect(new Set(all.map((vector) => vector.id)).size).toBe(all.length);
+		for (const vector of all) {
 			expect(vector.id).toMatch(/^[a-z0-9-]+$/);
-			if (vector.expected.outcome === "refusal")
+			if ("outcome" in vector.expected && vector.expected.outcome === "refusal")
 				expect(PROJECT_CODES.has(vector.expected.code), vector.id).toBe(true);
 			for (const [index, record] of vector.records.entries())
 				expect(record.parentId).toBe(vector.records[index - 1]?.id ?? null);
 		}
 	});
+
+	it("covers every chain stop and merge refusal in the segment contract", () => {
+		const stops: Record<ChainStop, true> = {
+			"session-changed": true,
+			"epoch-changed": true,
+			"branch-changed": true,
+			"base-checkpoint-changed": true,
+			"source-changed": true,
+			"writer-changed": true,
+			"configuration-invalid": true,
+			"custom-instructions": true,
+			"submission-budget": true,
+			"user-horizon-incomplete": true,
+			"base-unsupported": true,
+			"not-contiguous": true,
+			"chain-mismatch": true,
+		};
+		const refusals: Record<MergeRefusal, true> = {
+			"instruction-superseded": true,
+			"ambiguous-supersede": true,
+			schema: true,
+		};
+		expect(
+			new Set(
+				segments.flatMap((vector) =>
+					vector.stage === "segment-chain" && vector.expected.stop ? [vector.expected.stop.reason] : [],
+				),
+			),
+		).toEqual(new Set(Object.keys(stops)));
+		expect(
+			new Set(
+				segments.flatMap((vector) =>
+					vector.stage === "segment-merge" && "refusal" in vector.expected ? [vector.expected.refusal] : [],
+				),
+			),
+		).toEqual(new Set(Object.keys(refusals)));
+	});
+
+	for (const vector of segments) {
+		it(vector.id, () => {
+			const before = structuredClone(vector);
+			if (
+				vector.stage === "segment" &&
+				vector.expected.outcome === "refusal" &&
+				vector.expected.code === "CONTEXT_NOTE_SCOPE"
+			)
+				// The source and quotation are valid in the dispatch prefix; only the segment's range excludes them.
+				expect(() => validateNoteContent(vector.link.note, vector.records)).not.toThrow();
+			expect(runCoreVector(vector)).toEqual(vector.expected);
+			expect(vector).toEqual(before);
+		});
+	}
 
 	for (const vector of vectors) {
 		const serializations: Serialization[] =
