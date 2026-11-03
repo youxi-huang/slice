@@ -1,5 +1,6 @@
 // 0.8.0 WP1: the segment contract. Every record and sentence is invented.
 import { describe, expect, it } from "vitest";
+import { type CallRecord, SEGMENT_CALLS_PER_INTERVAL, segmentBudgetLeft, segmentSpend } from "../src/call-journal.ts";
 import { selectNoteBudget } from "../src/config.ts";
 import { CONTEXT_MEMORY_KIND } from "../src/identity.ts";
 import type { MemoryNote, NoteFact } from "../src/notes.ts";
@@ -11,7 +12,9 @@ import {
 	finalizeSegment,
 	freezeSegmentInput,
 	mergeChain,
+	nextSegmentRange,
 	type PreparedSegment,
+	segmentRangeTokens,
 } from "../src/segments.ts";
 
 const timestamp = "2026-01-01T00:00:00.000Z";
@@ -244,5 +247,134 @@ describe("merging a chain without a model call (0.8.0 WP1, U6)", () => {
 		expect(mergeChain(previous, [quiet])).toMatchObject({ note: { gaps: ["Which port does staging use?"] } });
 		const listed = segment(records, "u2", "a2", [], note({ state: [fact("u2")], gaps: ["Is build 8 due?"] }));
 		expect(mergeChain(previous, [listed])).toMatchObject({ note: { gaps: ["Is build 8 due?"] } });
+	});
+});
+
+describe("choosing the next range (0.8.0 WP2, U3)", () => {
+	const trigger = 150_000;
+	const long = (id: string, parentId: string) => user(id, parentId, "x".repeat(3 * 22_500));
+
+	it("takes 15 % of the trigger, between 8,192 and 32,000 tokens", () => {
+		expect(segmentRangeTokens(150_000)).toBe(22_500);
+		expect(segmentRangeTokens(10_000)).toBe(8_192);
+		expect(segmentRangeTokens(400_000)).toBe(32_000);
+	});
+
+	it("starts the first link at half the trigger and covers everything uncovered", () => {
+		const records = branch();
+		expect(nextSegmentRange(records, { triggerTokens: trigger, contextTokens: 74_999 })).toEqual({
+			defer: "below-start",
+		});
+		expect(nextSegmentRange(records, { triggerTokens: trigger, contextTokens: 75_000 })).toMatchObject({
+			range: { firstId: "u1", lastId: "a3" },
+		});
+	});
+
+	it("closes a later link only after a range's worth of new history", () => {
+		const records = branch();
+		expect(nextSegmentRange(records, { chainEnd: "a1", triggerTokens: trigger, contextTokens: 0 })).toEqual({
+			defer: "too-small",
+		});
+		const grown = [...records, long("u4", "a3"), reply("a4", "u4")];
+		expect(nextSegmentRange(grown, { chainEnd: "a3", triggerTokens: trigger, contextTokens: 0 })).toMatchObject({
+			range: { firstId: "u4", lastId: "a4" },
+		});
+		expect(nextSegmentRange(grown, { chainEnd: "a4", triggerTokens: trigger, contextTokens: 0 })).toEqual({
+			defer: "too-small",
+		});
+	});
+
+	it("defers at a turn that has not settled, without advancing", () => {
+		const open = [...branch(), long("u4", "a3")];
+		expect(nextSegmentRange(open, { chainEnd: "a3", triggerTokens: trigger, contextTokens: 0 })).toEqual({
+			defer: "unsettled",
+		});
+		const pending: SessionRecord = {
+			type: "message",
+			id: "a4",
+			parentId: "u4",
+			timestamp,
+			message: {
+				role: "assistant",
+				content: [{ type: "toolCall", id: "call-1", name: "read", arguments: {} }],
+				stopReason: "toolUse",
+			},
+		};
+		const unanswered = [...open, pending, reply("a5", "a4")];
+		expect(nextSegmentRange(unanswered, { chainEnd: "a3", triggerTokens: trigger, contextTokens: 0 })).toEqual({
+			defer: "unsettled",
+		});
+		const answered = [
+			...open,
+			pending,
+			{
+				type: "message",
+				id: "t4",
+				parentId: "a4",
+				timestamp,
+				message: { role: "toolResult", toolCallId: "call-1", content: [{ type: "text", text: "Synthetic file." }] },
+			} satisfies SessionRecord,
+			reply("a5", "t4"),
+		];
+		expect(nextSegmentRange(answered, { chainEnd: "a3", triggerTokens: trigger, contextTokens: 0 })).toMatchObject({
+			range: { firstId: "u4", lastId: "a5" },
+		});
+	});
+
+	it("starts after the base checkpoint's coverage, and refuses a chain end off the branch", () => {
+		const base: SessionRecord = {
+			type: "compaction",
+			id: "c1",
+			parentId: "a1",
+			timestamp,
+			summary: "Context memory.",
+			firstKeptEntryId: "u2",
+			tokensBefore: 100,
+			details: { kind: CONTEXT_MEMORY_KIND, coveredThrough: "a1" },
+		};
+		const records = [user("u1", null), reply("a1", "u1"), base, user("u2", "c1"), reply("a2", "u2")];
+		expect(nextSegmentRange(records, { triggerTokens: trigger, contextTokens: trigger })).toMatchObject({
+			range: { firstId: "c1", lastId: "a2" },
+		});
+		const native = [...records];
+		native[2] = { ...base, details: {} };
+		expect(nextSegmentRange(native, { triggerTokens: trigger, contextTokens: trigger })).toEqual({
+			defer: "base-unsupported",
+		});
+		expect(nextSegmentRange(records, { chainEnd: "gone", triggerTokens: trigger, contextTokens: 0 })).toEqual({
+			defer: "not-contiguous",
+		});
+	});
+});
+
+describe("the segment spending cap (0.8.0 WP2, U9)", () => {
+	const settled = (interval: string, input: number, extra: Partial<CallRecord> = {}): CallRecord => ({
+		purpose: "segment",
+		interval,
+		settled: true,
+		dispatched: true,
+		complete: true,
+		usage: { input, output: 100, cacheRead: 50_000, cacheWrite: 0, totalTokens: input + 50_100, cost: 0 },
+		...extra,
+	});
+
+	it("counts uncached tokens of the interval's segment calls, never cache reads", () => {
+		const records = [
+			settled("cp-1", 1_000),
+			settled("cp-2", 9_000),
+			{ ...settled("cp-1", 1), purpose: "compaction" as const },
+		];
+		expect(segmentSpend(records, "cp-1")).toEqual({ calls: 1, uncachedTokens: 1_100, unknown: false });
+	});
+
+	it("stops at the trigger's worth of uncached tokens, at the call limit, and at any unknown usage", () => {
+		expect(segmentBudgetLeft(segmentSpend([settled("cp-1", 1_000)], "cp-1"), 150_000)).toBe(true);
+		expect(segmentBudgetLeft(segmentSpend([settled("cp-1", 149_900)], "cp-1"), 150_000)).toBe(false);
+		const many = Array.from({ length: SEGMENT_CALLS_PER_INTERVAL }, () => settled("cp-1", 10));
+		expect(segmentBudgetLeft(segmentSpend(many, "cp-1"), 150_000)).toBe(false);
+		const unsettled: CallRecord = { purpose: "segment", interval: "cp-1", settled: false };
+		expect(segmentBudgetLeft(segmentSpend([unsettled], "cp-1"), 150_000)).toBe(false);
+		const neverSent: CallRecord = { purpose: "segment", interval: "cp-1", settled: true, dispatched: false };
+		expect(segmentSpend([neverSent], "cp-1")).toEqual({ calls: 0, uncachedTokens: 0, unknown: false });
 	});
 });

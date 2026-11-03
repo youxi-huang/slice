@@ -71,6 +71,7 @@ import {
 	recoverRefusedNotice,
 } from "../src/extensions/context-memory/preview/notices.ts";
 import { PreviewPreparation } from "../src/extensions/context-memory/preview/preparation.ts";
+import { PreviewSegments } from "../src/extensions/context-memory/preview/segments.ts";
 
 /** Pi's entries satisfy the core's structural record shapes; the union is widened here, never converted (records.ts). */
 const asRecords = (entries: readonly SessionEntry[]): readonly SessionRecord[] =>
@@ -3289,5 +3290,228 @@ describe("preview leaves the session writer room and compacts after a stopped tu
 		const value = await controller().compact(event(), ctx);
 		expect(value.firstKeptEntryId).toBe("stopped-input");
 		expect(JSON.stringify(requests[0].messages.slice(0, -1))).not.toContain("Read the next part.");
+	});
+});
+
+describe("preview segments at settled turns (0.8.0 WP2)", () => {
+	let root: string;
+	let session: SyntheticSession;
+	let journal: CallJournal;
+	let segments: PreviewSegments;
+	let controller: PreviewMemoryController;
+	let ctx: ExtensionContext;
+	let contextTokens: number;
+	let outputs: MemoryNote[];
+	let requests: Context[];
+	let unknownUsage: boolean;
+	let hold: boolean;
+	let held: { signal?: AbortSignal; release: () => void } | undefined;
+	const model: Model<Api> = {
+		id: "preview-test",
+		name: "Synthetic writer",
+		provider: "preview-test",
+		api: "openai-completions",
+		baseUrl: "http://127.0.0.1:9/v1",
+		reasoning: false,
+		input: ["text"],
+		contextWindow: 128_000,
+		maxTokens: 8192,
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+	};
+	const zero = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0 };
+	beforeEach(() => {
+		root = fs.mkdtempSync(join(tmpdir(), "pi-preview-segments-"));
+		session = new SyntheticSession(root);
+		journal = new CallJournal(join(root, "agent"));
+		segments = new PreviewSegments({ enabled: true, journal });
+		// Pi's default reserve leaves a 111,616-token trigger in this window; the first segment waits for half of it.
+		contextTokens = 60_000;
+		outputs = [];
+		requests = [];
+		unknownUsage = false;
+		hold = false;
+		held = undefined;
+		const registry = {
+			find: () => model,
+			hasConfiguredAuth: () => true,
+			streamSimple: (_model: Model<Api>, context: Context, options?: { signal?: AbortSignal }) => {
+				requests.push(structuredClone(context));
+				const output = outputs.shift() ?? note();
+				const message: AssistantMessage = {
+					...assistant(),
+					content: [{ type: "text", text: JSON.stringify(output) }],
+					...(unknownUsage ? { usage: { ...zero, cost: { ...zero, total: 0 } } } : {}),
+				};
+				const stream = createAssistantMessageEventStream();
+				const finish = () => {
+					stream.push({ type: "done", reason: "stop", message });
+					stream.end(message);
+				};
+				if (hold) held = { signal: options?.signal, release: finish };
+				else finish();
+				return stream;
+			},
+		};
+		ctx = {
+			sessionManager: session,
+			model,
+			modelRegistry: registry,
+			thinkingLevel: "off",
+			getSystemPrompt: () => "Synthetic system prompt.",
+			hasPendingMessages: () => false,
+			getContextUsage: () => ({ tokens: contextTokens, contextWindow: 128_000, percent: null }),
+			hasUI: false,
+			ui: { notify: vi.fn() },
+			abort: vi.fn(),
+		} as unknown as ExtensionContext;
+		controller = new PreviewMemoryController({
+			config: { ...DEFAULT_MEMORY_CONFIG, writerModel: SESSION_WRITER, noteRepair: false },
+			failureStore: new PreviewFailureStore(join(root, "agent")),
+			segments,
+			journal,
+		});
+		controller.sessionStart(ctx);
+	});
+	afterEach(async () => {
+		held?.release();
+		segments.dispose();
+		await segments.waitForIdle();
+		vi.restoreAllMocks();
+		fs.rmSync(root, { recursive: true, force: true });
+	});
+	async function settle(): Promise<void> {
+		controller.segment(ctx);
+		await segments.waitForIdle();
+	}
+	/** A settled turn; a long one carries more than a later range's 16,742 tokens. */
+	function turn(id: number, text: string): void {
+		session.append({
+			type: "message",
+			id: `source-${id}`,
+			parentId: session.getLeafId(),
+			timestamp,
+			message: { role: "user", content: text, timestamp: id },
+		});
+		session.append({
+			type: "message",
+			id: `reply-${id}`,
+			parentId: session.getLeafId(),
+			timestamp,
+			message: assistant(),
+		});
+	}
+	const long = (text: string) => `${text} ${"Synthetic padding. ".repeat(3_000)}`;
+	const fact = (id: number, text: string): MemoryNote => ({
+		instructions: [],
+		failedPaths: [],
+		reasons: [],
+		state: [{ text, sources: [`source-${id}`] }],
+		nextSteps: [],
+		files: [],
+		gaps: [],
+	});
+	const instruction = (context: Context) => {
+		const last = context.messages.at(-1);
+		return typeof last?.content === "string" ? last.content : "";
+	};
+
+	it("waits for half the trigger, then writes the first segment over everything uncovered in the session's request", async () => {
+		contextTokens = 50_000;
+		await settle();
+		expect(requests).toHaveLength(0);
+		contextTokens = 60_000;
+		await settle();
+		expect(requests).toHaveLength(1);
+		expect(requests[0].messages.slice(0, -1)).toHaveLength(2);
+		expect(instruction(requests[0])).toContain("Write a segment note for entries source-1 through reply-1 only");
+		expect(segments.status()).toMatchObject({ state: "idle", links: 1, coveredThrough: "reply-1" });
+		expect(controller.status(ctx).calls).toMatchObject({ segmentCalls: 1, preparationCalls: 0, compactionCalls: 0 });
+	});
+
+	it("closes a later link only after a range's worth of new history, on top of the merged note", async () => {
+		await settle();
+		turn(2, "Use port 4318 now.");
+		await settle();
+		expect(requests).toHaveLength(1);
+		turn(3, long("The synthetic build is green."));
+		outputs.push(fact(3, "The synthetic build is green."));
+		await settle();
+		expect(requests).toHaveLength(2);
+		const text = instruction(requests[1]);
+		expect(text).toContain("Write a segment note for entries source-2 through reply-3 only");
+		expect(JSON.parse(text.slice(text.indexOf("Attachments:\n") + 13)).previousNote).toEqual(note());
+		expect(segments.status()).toMatchObject({ links: 2, coveredThrough: "reply-3" });
+	});
+
+	it("stops after three refusals of one class in a row, until the next checkpoint commits", async () => {
+		await settle();
+		for (const id of [2, 3, 4]) {
+			turn(id, long(`Synthetic step ${id}.`));
+			// Cites source-1, which lies before the range.
+			outputs.push(note());
+			await settle();
+		}
+		expect(requests).toHaveLength(4);
+		expect(segments.status()).toMatchObject({ state: "paused", reason: "refusal", links: 1 });
+		turn(5, long("Synthetic step 5."));
+		await settle();
+		expect(requests).toHaveLength(4);
+		const value = await controller.compact(
+			{
+				type: "session_before_compact",
+				reason: "manual",
+				willRetry: false,
+				signal: new AbortController().signal,
+				preparation: { tokensBefore: 2000 },
+			} as SessionBeforeCompactEvent,
+			ctx,
+		);
+		const entry = saved(session, value);
+		session.append(entry);
+		controller.committed(
+			{ type: "session_compact", compactionEntry: entry, fromExtension: true, reason: "manual", willRetry: false },
+			ctx,
+		);
+		expect(segments.status()).toEqual({ enabled: true, state: "idle", links: 0 });
+	});
+
+	it.each(["branch-switch", "writer-change"])(
+		"cancels the segment in flight at a %s and counts no failure",
+		async (change) => {
+			hold = true;
+			controller.segment(ctx);
+			await vi.waitFor(() => expect(held).toBeDefined());
+			if (change === "branch-switch") controller.invalidatePreparation("branch-switch");
+			else {
+				// The session writer's context identity covers the system prompt.
+				(ctx as { getSystemPrompt: () => string }).getSystemPrompt = () => "Changed synthetic system prompt.";
+				controller.segment(ctx);
+			}
+			expect(held?.signal?.aborted).toBe(true);
+			held?.release();
+			await segments.waitForIdle();
+			expect(segments.status()).toEqual({ enabled: true, state: "idle", links: 0 });
+		},
+	);
+
+	it("sends nothing more in the interval once a call's usage is unknown", async () => {
+		unknownUsage = true;
+		await settle();
+		turn(2, long("Synthetic step 2."));
+		await settle();
+		expect(requests).toHaveLength(1);
+		expect(journal.segmentSpend("synthetic-session", "none")).toEqual({ calls: 1, uncachedTokens: 0, unknown: true });
+	});
+
+	it("writes no segment through a fixed writer (U4)", async () => {
+		const fixed = new PreviewMemoryController({
+			config: { ...DEFAULT_MEMORY_CONFIG, writerModel: "preview-test/preview-test", noteRepair: false },
+			failureStore: new PreviewFailureStore(join(root, "agent")),
+			segments,
+			journal,
+		});
+		fixed.segment(ctx);
+		await segments.waitForIdle();
+		expect(requests).toHaveLength(0);
 	});
 });

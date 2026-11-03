@@ -1,0 +1,186 @@
+// 0.8.0 WP2: the segment scheduler. One segment in flight per session; validated links kept in memory as a chain
+// (U10); U9's limits: the journal's per-interval call limit and spending cap, and a breaker after three
+// consecutive failures of one class until the next commit. Segments never block work: any limit leaves the next
+// boundary to the synchronous writer. Assembly at the boundary is WP3's.
+import { segmentBudgetLeft } from "../../../../../compaction-core/src/call-journal.ts";
+import {
+	invalidPreparation,
+	type PreparationSubmission,
+} from "../../../../../compaction-core/src/preparation-candidate.ts";
+import {
+	chainHash,
+	classifyChain,
+	finalizeSegment,
+	type PreparedSegment,
+	type SegmentSnapshot,
+} from "../../../../../compaction-core/src/segments.ts";
+import type { CallJournal } from "./call-journal.ts";
+import type { WriteMemoryResult, WriterCallHooks } from "./writer.ts";
+
+/** A run still going after this long is cancelled and counted as an error; its calls stay in the journal. */
+const DEADLINE_MS = 120_000;
+/** U9: consecutive failures of one class that stop segments until the next commit. */
+const BREAKER_FAILURES = 3;
+
+/** U9's failure classes; anything else a run throws is an error. Cancellation is not a failure. */
+export type SegmentFailure = "refusal" | "tool-call" | "exhausted-output" | "error";
+
+export function segmentFailure(error: unknown): SegmentFailure {
+	const message = error instanceof Error ? error.message : "";
+	if (message.startsWith("CONTEXT_NOTE_")) return "refusal";
+	if (message.startsWith("CONTEXT_WRITER_FAILED: toolUse")) return "tool-call";
+	if (message.startsWith("CONTEXT_WRITER_FAILED: length")) return "exhausted-output";
+	return "error";
+}
+
+export interface SegmentJob {
+	input: SegmentSnapshot;
+	run(signal: AbortSignal, hooks: WriterCallHooks): Promise<WriteMemoryResult>;
+}
+
+export class PreviewSegments {
+	readonly enabled: boolean;
+	private readonly journal: CallJournal;
+	private sessionId?: string;
+	private epoch = 0;
+	private links: PreparedSegment[] = [];
+	private running?: { abort: AbortController; settled: Promise<void>; input: SegmentSnapshot };
+	private streak?: { kind: SegmentFailure; count: number };
+	private broken?: SegmentFailure;
+	private disposed = false;
+
+	constructor(options: { enabled: boolean; journal: CallJournal }) {
+		this.enabled = options.enabled;
+		this.journal = options.journal;
+	}
+
+	get currentEpoch(): number {
+		return this.epoch;
+	}
+
+	/** The validated links in order, for the next range and for WP3's merge. */
+	get chain(): readonly PreparedSegment[] {
+		return this.links;
+	}
+
+	activate(sessionId: string): void {
+		if (this.sessionId === sessionId) return;
+		this.invalidate();
+		this.streak = undefined;
+		this.broken = undefined;
+		this.sessionId = sessionId;
+	}
+
+	/** Keeps the chain's longest valid prefix and cancels a run whose input no longer matches the session. */
+	reconcile(submission: PreparationSubmission): void {
+		if (this.running && invalidPreparation(this.running.input.preparation, submission)) this.running.abort.abort();
+		this.links = [...classifyChain(this.links, submission).links];
+	}
+
+	/** Cheap check before choosing a range: one run at a time, an intact breaker, and budget left in the interval. */
+	mayStart(sessionId: string, interval: string, triggerTokens: number): boolean {
+		return (
+			this.enabled &&
+			!this.disposed &&
+			!this.running &&
+			!this.broken &&
+			this.journal.writable(sessionId) &&
+			segmentBudgetLeft(this.journal.segmentSpend(sessionId, interval), triggerTokens)
+		);
+	}
+
+	start(job: SegmentJob, interval: string, triggerTokens: number): boolean {
+		const input = job.input;
+		if (!this.mayStart(input.preparation.sessionId, interval, triggerTokens)) return false;
+		this.activate(input.preparation.sessionId);
+		if (input.preparation.epoch !== this.epoch || input.chainHash !== chainHash(this.links)) return false;
+		const abort = new AbortController();
+		const task = { abort, settled: Promise.resolve(), input };
+		this.running = task;
+		let late = false;
+		const timer = setTimeout(() => {
+			late = true;
+			abort.abort();
+		}, DEADLINE_MS);
+		timer.unref();
+		const journal = this.journal.hooks(input.preparation.sessionId, "segment", interval);
+		const callIds: string[] = [];
+		const hooks: WriterCallHooks = {
+			beforeDispatch: async (call) => {
+				const id = await journal.beforeDispatch(call);
+				callIds.push(id);
+				return id;
+			},
+			afterDispatch: journal.afterDispatch,
+		};
+		const current = () =>
+			!this.disposed && input.preparation.epoch === this.epoch && this.sessionId === input.preparation.sessionId;
+		// Generation is queued after the host event returns; the task turn never waits for it.
+		task.settled = Promise.resolve()
+			.then(() => {
+				abort.signal.throwIfAborted();
+				return job.run(abort.signal, hooks);
+			})
+			.then((written) => {
+				if (abort.signal.aborted || !current()) return;
+				const link = finalizeSegment(input, {
+					note: written.note,
+					provenance: {
+						writerRole: input.preparation.writer.role,
+						writerModel: written.writerModel,
+						writerEffort: written.writerEffort,
+						callIds,
+					},
+				});
+				// A reconcile may have shortened the chain while this link was written; it then no longer extends it.
+				if (input.chainHash !== chainHash(this.links)) return;
+				this.links.push(link);
+				this.streak = undefined;
+			})
+			.catch((error) => {
+				if ((abort.signal.aborted && !late) || !current()) return;
+				const kind = late ? "error" : segmentFailure(error);
+				this.streak = { kind, count: this.streak?.kind === kind ? this.streak.count + 1 : 1 };
+				if (this.streak.count >= BREAKER_FAILURES) this.broken = kind;
+			})
+			.finally(() => {
+				clearTimeout(timer);
+				if (this.running === task) this.running = undefined;
+			});
+		return true;
+	}
+
+	/** Tests and harnesses may wait; task events never do. */
+	async waitForIdle(): Promise<void> {
+		await this.running?.settled;
+	}
+
+	/** A confirmed checkpoint starts a new interval: a new chain, and the breaker closes again. */
+	committed(): void {
+		this.invalidate();
+		this.streak = undefined;
+		this.broken = undefined;
+	}
+
+	/** A session, branch or writer change: the run in flight is cancelled at once and the chain is dropped. */
+	invalidate(): void {
+		this.running?.abort.abort();
+		this.links = [];
+		this.epoch++;
+	}
+
+	dispose(): void {
+		this.disposed = true;
+		this.invalidate();
+	}
+
+	status() {
+		return {
+			enabled: this.enabled,
+			state: this.running ? "preparing" : this.broken ? "paused" : "idle",
+			links: this.links.length,
+			...(this.links.length ? { coveredThrough: this.links[this.links.length - 1].snapshot.lastId } : {}),
+			...(this.broken ? { reason: this.broken } : {}),
+		};
+	}
+}

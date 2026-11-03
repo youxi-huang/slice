@@ -54,6 +54,12 @@ import {
 	reduceRecords,
 } from "../../../../../compaction-core/src/reduction.ts";
 import {
+	chainHash,
+	freezeSegmentInput,
+	mergeChain,
+	nextSegmentRange,
+} from "../../../../../compaction-core/src/segments.ts";
+import {
 	assertUserMessages,
 	carriedUserMessages,
 	coveredUserMessages,
@@ -84,6 +90,7 @@ import { type AppendedExcerpt, selectExcerpts, unusedExcerpts } from "./excerpts
 import { blockedNotice, inactiveNotice, NoticeGate, notify, readyNotice } from "./notices.ts";
 import type { PreviewPreparation, PreviewSwitch } from "./preparation.ts";
 import { projectSummary, RENDERING_OFF, type RenderingSwitch } from "./render-projection.ts";
+import type { PreviewSegments } from "./segments.ts";
 import { setStatusLine } from "./status-line.ts";
 import {
 	modelName,
@@ -362,6 +369,8 @@ export interface PreviewControllerOptions {
 	/** The running Pi version; tests substitute other releases. */
 	hostVersion?: string;
 	preparation?: PreviewPreparation;
+	/** 0.8.0 WP2: segments prepared over closed ranges at settled turns; WP3 adds their switch and the merge. */
+	segments?: PreviewSegments;
 	/** Records every writer call; without one, calls are observed only in memory. */
 	journal?: CallJournal;
 	/** Arm B: commit merged work notes without a writer call when the prefix path allows it. */
@@ -404,6 +413,7 @@ export class PreviewMemoryController {
 	private pendingSessionNotice?: { sessionId: string; key: string; text: string };
 	readonly notices = new NoticeGate();
 	private readonly preparation?: PreviewPreparation;
+	private readonly segments?: PreviewSegments;
 	private readonly journal?: CallJournal;
 	private readonly workNotes: PreviewSwitch;
 	private readonly excerpts: PreviewSwitch;
@@ -436,6 +446,7 @@ export class PreviewMemoryController {
 		this.configError = options.configError;
 		this.hostVersion = options.hostVersion ?? VERSION;
 		this.preparation = options.preparation;
+		this.segments = options.segments;
 		this.journal = options.journal;
 		this.workNotes = options.workNotes ?? { enabled: false };
 		this.excerpts = options.excerpts ?? { enabled: false };
@@ -511,8 +522,12 @@ export class PreviewMemoryController {
 		this.activeTools = tools;
 	}
 
-	private preparationSubmission(ctx: ExtensionContext, customInstructions?: string): PreparationSubmission {
-		if (!this.config || !ctx.model || !this.preparation) throw new Error("CONTEXT_NO_MODEL_OR_SOURCE");
+	private preparationSubmission(
+		ctx: ExtensionContext,
+		customInstructions?: string,
+		epoch = this.preparation?.currentEpoch,
+	): PreparationSubmission {
+		if (!this.config || !ctx.model || epoch === undefined) throw new Error("CONTEXT_NO_MODEL_OR_SOURCE");
 		const model = resolveWriterModel(this.config, ctx.modelRegistry, ctx.model);
 		const branch = ctx.sessionManager.getBranch();
 		const previous = latestMemory(asRecords(branch));
@@ -524,7 +539,7 @@ export class PreviewMemoryController {
 		);
 		return {
 			sessionId: ctx.sessionManager.getSessionId(),
-			epoch: this.preparation.currentEpoch,
+			epoch,
 			branch: asRecords(branch),
 			writer: {
 				role: this.config.writerModel === SESSION_WRITER ? "session" : "fixed",
@@ -632,12 +647,113 @@ export class PreviewMemoryController {
 		}
 	}
 
+	/**
+	 * 0.8.0 WP2: a settled turn may close the next segment's range (U3) and send it through the session writer's
+	 * transport and the call journal, under U9's limits. Optional work like `prepare`: nothing here blocks the
+	 * task, fails the session or enters commit state.
+	 */
+	segment(ctx: ExtensionContext): void {
+		if (!this.segments?.enabled || !this.config || !ctx.model) return;
+		try {
+			const sessionId = ctx.sessionManager.getSessionId();
+			this.segments.activate(sessionId);
+			// U4: a segment rides the session's own request, so only the session writer writes one.
+			if (this.config.writerModel !== SESSION_WRITER) return;
+			if (this.safeInactive(ctx) || this.configError || ctx.hasPendingMessages()) return;
+			assertPreviewSession(ctx.sessionManager, this.hostVersion);
+			if (this.store.inspect(ctx.sessionManager).state !== "ready" || this.stickyFailures.has(sessionId)) return;
+			const usage = ctx.getContextUsage();
+			if (!usage?.tokens) return;
+			const trigger = usage.contextWindow - piReserveTokens(this.hostSettings(), ctx.model);
+			const submission = this.preparationSubmission(ctx, undefined, this.segments.currentEpoch);
+			this.segments.reconcile(submission);
+			const branch = structuredClone(ctx.sessionManager.getBranch());
+			const records = asRecords(branch);
+			const interval = checkpointInterval(branch);
+			if (!this.segments.mayStart(sessionId, interval, trigger)) return;
+			const chain = this.segments.chain;
+			const choice = nextSegmentRange(records, {
+				chainEnd: chain.at(-1)?.snapshot.lastId,
+				triggerTokens: trigger,
+				contextTokens: usage.tokens,
+			});
+			if (!("range" in choice)) return;
+			// The current note: the base checkpoint's with the chain merged in. A chain that already leaves its
+			// boundary to the writer gains nothing from another link.
+			let current = latestMemory(records)?.memory.note;
+			if (chain.length) {
+				const merged = mergeChain(current, chain);
+				if (!("note" in merged)) return;
+				current = merged.note;
+			}
+			const { firstId, lastId } = choice.range;
+			const input = freezeSegmentInput({
+				...submission,
+				branch: records,
+				coveredThrough: lastId,
+				processedUserEntryIds: branch
+					.filter((entry) => entry.type === "message" && entry.message.role === "user")
+					.map((entry) => entry.id),
+				firstId,
+				chainHash: chainHash(chain),
+			});
+			const uncovered = branch.slice(branch.findIndex((entry) => entry.id === firstId));
+			const sessionModel = structuredClone(ctx.model);
+			const registry = ctx.modelRegistry;
+			const capturedRegistry = {
+				find: (provider: string, id: string) =>
+					provider === sessionModel.provider && id === sessionModel.id ? sessionModel : undefined,
+				hasConfiguredAuth: registry.hasConfiguredAuth.bind(registry),
+				streamSimple: registry.streamSimple.bind(registry),
+			};
+			// The segment writer reads the same reduced prefix the session's own requests carry (G4).
+			const projection = ctx.sessionManager.buildSessionProjection();
+			const reductionView = this.reducedView(branch, ctx.model);
+			const messages = structuredClone(
+				convertToLlm(reductionView ? applyReduction(projection.messages, reductionView) : projection.messages),
+			);
+			const prefix = carriesSystemPrompt(messages)
+				? { messages, sessionId }
+				: { messages, sessionId, systemPrompt: ctx.getSystemPrompt(), tools: structuredClone(this.activeTools()) };
+			const config = this.config;
+			const thinking = ctx.thinkingLevel;
+			this.segments.start(
+				{
+					input,
+					run: (signal, callHooks) =>
+						writeMemory({
+							config,
+							registry: capturedRegistry,
+							sessionModel,
+							sessionThinkingLevel: thinking,
+							prefix,
+							previous: current,
+							increments: [],
+							uncovered,
+							branch,
+							noteTokens: submission.noteBudget.hardTokens,
+							baseNoteTokens: submission.noteBudget.baseTokens,
+							signal,
+							callHooks,
+							segment: { firstId, lastId },
+						}),
+				},
+				interval,
+				trigger,
+			);
+		} catch {
+			// Optional work must never call fail(), begin() or abort the user's task.
+		}
+	}
+
 	invalidatePreparation(reason: string): void {
 		this.preparation?.invalidate(reason);
+		this.segments?.invalidate();
 	}
 
 	shutdownPreparation(): void {
 		this.preparation?.dispose();
+		this.segments?.dispose();
 	}
 
 	/**
@@ -1571,6 +1687,7 @@ export class PreviewMemoryController {
 				if (started !== undefined) last.pauseMs = Math.round(performance.now() - started);
 			}
 			this.preparation?.committed();
+			this.segments?.committed();
 			this.stickyFailures.delete(ctx.sessionManager.getSessionId());
 			this.observedFailures.delete(ctx.sessionManager.getSessionId());
 			this.readyStatus(ctx);
@@ -1603,6 +1720,7 @@ export class PreviewMemoryController {
 			}
 			this.store.recover(ctx.sessionManager, leaf, sourceHash);
 			this.preparation?.committed();
+			this.segments?.committed();
 			this.stagedCompactions.delete(ctx.sessionManager.getSessionId());
 			this.stickyFailures.delete(ctx.sessionManager.getSessionId());
 			this.observedFailures.delete(ctx.sessionManager.getSessionId());

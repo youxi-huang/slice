@@ -255,3 +255,36 @@ describe("compaction core: citations outside the branch", () => {
 		expect(withoutOutOfScope(superseding, branch)).toBeUndefined();
 	});
 });
+
+describe("compaction core: segment requests (0.8.0 WP2, U4)", () => {
+	it("closes the session's request with an instruction that names the range and cites only inside it", async () => {
+		const transport = scripted([answer(note({ state: [{ text: "Use blue-green.", sources: ["u2"] }] }))], {
+			role: "session",
+			prefixTokens: () => 1000,
+		});
+		const previous = note();
+		const result = await writeMemory(
+			options({ previous, uncovered: [branch[1]], segment: { firstId: "u2", lastId: "u2" } }),
+			transport.open,
+		);
+		expect(result.note.state).toEqual([{ text: "Use blue-green.", sources: ["u2"] }]);
+		const [{ request }] = transport.sent;
+		if (request.kind !== "handover") throw new Error("expected the session handover");
+		expect(request.instruction).toContain("Write a segment note for entries u2 through u2 only");
+		expect(request.instruction).not.toContain("Write the memory note that lets the next model continue");
+		const manifest = request.instruction.slice(request.instruction.indexOf("Entry IDs for citations"));
+		expect(manifest).toContain("u2 user");
+		expect(manifest).not.toContain("u1 user");
+		const attachments = JSON.parse(request.instruction.slice(request.instruction.indexOf("Attachments:\n") + 13));
+		expect(attachments).toMatchObject({ previousNote: previous });
+		expect(attachments.referencedEvidence).toBeUndefined();
+	});
+
+	it("refuses a segment for a fixed writer before any request", async () => {
+		const transport = scripted([answer(note())]);
+		await expect(
+			writeMemory(options({ uncovered: [branch[1]], segment: { firstId: "u2", lastId: "u2" } }), transport.open),
+		).rejects.toThrow(/^CONTEXT_WRITER_UNAVAILABLE/);
+		expect(transport.sent).toHaveLength(0);
+	});
+});

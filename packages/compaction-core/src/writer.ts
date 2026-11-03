@@ -211,6 +211,12 @@ export interface WriteMemoryOptions {
 	onProgress?: (progress: WriterProgress) => void;
 	/** Optional durable per-provider-call reservation and settlement, independent of cumulative progress. */
 	callHooks?: WriterCallHooks;
+	/**
+	 * 0.8.0 U4: write a segment over the range from `firstId` through `lastId`, whose records are `uncovered`,
+	 * instead of a whole note. `previous` is the current merged note and `branch` ends with the range. Only the
+	 * session writer writes segments: its request is the session's own, so the provider's cache serves it.
+	 */
+	segment?: { readonly firstId: string; readonly lastId: string };
 }
 
 /**
@@ -856,6 +862,8 @@ export async function writeMemory<TRequest, TResponse extends WriterResponse>(
 			phase = "generate";
 		}
 	};
+	if (options.segment && transport.role !== "session")
+		throw new Error("CONTEXT_WRITER_UNAVAILABLE: a segment needs the session writer");
 	const result =
 		transport.role === "session"
 			? await writeWithSession(transport, options, complete, writerEffort, accept, declineToolCall)
@@ -1026,14 +1034,22 @@ function handoverInstruction(
 	quotable: readonly QuotableOriginal[],
 ): string {
 	const manifest = sources.map((entry) => entryOpening(entry, head));
+	const segment = options.segment;
 	const attachments = {
 		previousNote: options.previous,
 		incrementCandidates: options.increments,
-		referencedEvidence: referencedEvidence(options.previous, options.branch, options.noteTokens),
+		// Evidence for earlier entries would invite citations a segment may not make.
+		referencedEvidence: segment
+			? undefined
+			: referencedEvidence(options.previous, options.branch, options.noteTokens),
 		focus: options.customInstructions,
 	};
 	return [
-		"Internal context-compaction request, not a new user task or ruling. For this writer response only, produce the memory JSON instead of executing task actions, and call no tool: the tools are listed only because this request shares the session's context, and a tool call is not run. This control step neither completes nor cancels the original task and does not change its permissions. Do not cite or summarize this control instruction as user evidence. Write the memory note that lets the next model continue the original requests from recorded progress after the messages above are removed from its context.",
+		`Internal context-compaction request, not a new user task or ruling. For this writer response only, produce the memory JSON instead of executing task actions, and call no tool: the tools are listed only because this request shares the session's context, and a tool call is not run. This control step neither completes nor cancels the original task and does not change its permissions. Do not cite or summarize this control instruction as user evidence. ${
+			segment
+				? `Write a segment note for entries ${segment.firstId} through ${segment.lastId} only: what those entries add to or change in previousNote, the current note attached below, which a later step merges with it. Cite only the entry IDs listed below; when an entry here replaces an earlier fact or ruling, name the earlier entry in supersedes. Leave out what previousNote already holds unchanged. Give nextSteps or gaps only when these entries change the plan or the open questions, and then give the whole current list.`
+				: "Write the memory note that lets the next model continue the original requests from recorded progress after the messages above are removed from its context."
+		}`,
 		NOTE_FORMAT,
 		NOTE_RULES,
 		continuationInstruction(options),

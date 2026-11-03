@@ -8,7 +8,10 @@
 /** Optional preparation never sends more provider requests than this in one attempt. */
 export const PREPARATION_CALLS_PER_ATTEMPT = 8;
 
-export type CallPurpose = "preparation" | "compaction";
+/** 0.8.0 U9: segment calls per checkpoint interval, repairs included. */
+export const SEGMENT_CALLS_PER_INTERVAL = 8;
+
+export type CallPurpose = "preparation" | "compaction" | "segment";
 
 export interface CallUsage {
 	input: number;
@@ -28,6 +31,7 @@ export interface CallSummary {
 	calls: number;
 	preparationCalls: number;
 	compactionCalls: number;
+	segmentCalls: number;
 	/** Recorded before dispatch but never settled: interrupted, still in flight, or settled after a write failure. */
 	unsettled: number;
 	/** Settled without any reported usage. */
@@ -68,6 +72,7 @@ export function summarizeCalls(records: Iterable<CallRecord>, gap?: CallJournalG
 		calls: 0,
 		preparationCalls: 0,
 		compactionCalls: 0,
+		segmentCalls: 0,
 		unsettled: 0,
 		unknownUsage: 0,
 		partialUsage: 0,
@@ -78,6 +83,7 @@ export function summarizeCalls(records: Iterable<CallRecord>, gap?: CallJournalG
 		if (record.settled && record.dispatched === false) continue;
 		summary.calls++;
 		if (record.purpose === "preparation") summary.preparationCalls++;
+		else if (record.purpose === "segment") summary.segmentCalls++;
 		else summary.compactionCalls++;
 		if (!record.settled) summary.unsettled++;
 		else if (!record.usage) summary.unknownUsage++;
@@ -87,4 +93,33 @@ export function summarizeCalls(records: Iterable<CallRecord>, gap?: CallJournalG
 		}
 	}
 	return summary;
+}
+
+/** What one interval's segment calls have spent, for U9's call limit and spending cap. */
+export interface SegmentSpend {
+	calls: number;
+	/** Input, cache writes and output: the tokens a cache miss multiplies. Cache reads are U4's intended path. */
+	uncachedTokens: number;
+	/** A dispatched call with no reported usage, settled or not. */
+	unknown: boolean;
+}
+
+export function segmentSpend(records: Iterable<CallRecord>, interval: string): SegmentSpend {
+	const spend: SegmentSpend = { calls: 0, uncachedTokens: 0, unknown: false };
+	for (const record of records) {
+		if (record.purpose !== "segment" || record.interval !== interval) continue;
+		if (record.settled && record.dispatched === false) continue;
+		spend.calls++;
+		if (!record.usage) spend.unknown = true;
+		else spend.uncachedTokens += record.usage.input + record.usage.cacheWrite + record.usage.output;
+	}
+	return spend;
+}
+
+/**
+ * U9's spending cap, a starting value WP5 measures: one interval's segments may spend as many uncached tokens as the
+ * trigger holds, about what one synchronous compaction reads when its cache misses. Unknown usage spends it all.
+ */
+export function segmentBudgetLeft(spend: SegmentSpend, triggerTokens: number): boolean {
+	return !spend.unknown && spend.calls < SEGMENT_CALLS_PER_INTERVAL && spend.uncachedTokens < triggerTokens;
 }

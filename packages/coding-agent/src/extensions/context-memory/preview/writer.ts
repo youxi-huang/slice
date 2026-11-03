@@ -136,6 +136,8 @@ export interface WriteMemoryOptions {
 	onProgress?: (progress: WriterProgress) => void;
 	/** Optional durable per-provider-call reservation and settlement, independent of cumulative progress. */
 	callHooks?: WriterCallHooks;
+	/** 0.8.0 U4: write a segment over `uncovered`, the range from `firstId` through `lastId`. */
+	segment?: { readonly firstId: string; readonly lastId: string };
 }
 
 /**
@@ -313,6 +315,7 @@ export async function writeMemory(options: WriteMemoryOptions): Promise<WriteMem
 			activeRequests: options.activeRequests ? asRecords(options.activeRequests) : undefined,
 			onProgress: options.onProgress,
 			callHooks: options.callHooks,
+			segment: options.segment,
 		},
 		() => piTransport(options),
 	);

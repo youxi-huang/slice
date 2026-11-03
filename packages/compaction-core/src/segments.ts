@@ -1,9 +1,10 @@
 // 0.8.0 WP1: segments, preparation candidates over closed ranges of the branch that the boundary merges without a
 // model call. A segment is frozen and validated exactly as a preparation candidate is, with three additions: the
 // first record of its range, the chain of validated segments before it, and a note that cites only inside its
-// range. Range selection, dispatch and assembly belong to WP2 and WP3.
+// range. WP2 adds the choice of each range (U3); dispatch belongs to the host, and assembly to WP3.
+import { assertToolPairs } from "./guards.ts";
 import { hashEntries, isRecord } from "./identity.ts";
-import { type MemoryNote, noteSections } from "./notes.ts";
+import { compactedSourceTokens, type MemoryNote, noteSections } from "./notes.ts";
 import {
 	type CandidateClassification,
 	classifyPreparation,
@@ -115,6 +116,57 @@ function chainStart(branch: readonly SessionRecord[]): number | undefined {
 		return end < 0 ? undefined : end + 1;
 	}
 	return 0;
+}
+
+/** U3's starting value for a later link's range: 15 % of the trigger, between 8,192 and 32,000 tokens. */
+export function segmentRangeTokens(triggerTokens: number): number {
+	return Math.min(32_000, Math.max(8_192, Math.floor(triggerTokens * 0.15)));
+}
+
+/** Why no range closes now. Each one defers without advancing the chain. */
+export type RangeDeferral = "base-unsupported" | "not-contiguous" | "unsettled" | "below-start" | "too-small";
+
+export interface SegmentRange {
+	readonly firstId: string;
+	readonly lastId: string;
+	/** The range's new history, estimated as the core estimates compacted sources. */
+	readonly tokens: number;
+}
+
+/**
+ * U3: the next range to prepare, or why none closes now. A range starts right after the chain's last link, or
+ * after the base checkpoint's coverage for the first link of an interval, and ends at the branch's last record,
+ * which must close a settled turn: an assistant reply that stopped, with every tool call in the range answered.
+ * The first link waits until the context passes half the trigger and then covers everything uncovered, so a
+ * session that never nears compaction pays nothing; each later link waits for `segmentRangeTokens` of new history.
+ */
+export function nextSegmentRange(
+	branch: readonly SessionRecord[],
+	options: { chainEnd?: string; triggerTokens: number; contextTokens: number },
+): { range: SegmentRange } | { defer: RangeDeferral } {
+	let start: number | undefined;
+	if (options.chainEnd === undefined) {
+		start = chainStart(branch);
+		if (start === undefined) return { defer: "base-unsupported" };
+		if (options.contextTokens < Math.floor(options.triggerTokens / 2)) return { defer: "below-start" };
+	} else {
+		start = branch.findIndex((record) => record.id === options.chainEnd) + 1;
+		if (start === 0) return { defer: "not-contiguous" };
+	}
+	const range = branch.slice(start);
+	const last = range.at(-1);
+	if (!last) return { defer: "too-small" };
+	if (last.type !== "message" || last.message.role !== "assistant" || last.message.stopReason !== "stop")
+		return { defer: "unsettled" };
+	try {
+		assertToolPairs(range.flatMap((record) => (record.type === "message" ? [record.message] : [])));
+	} catch {
+		return { defer: "unsettled" };
+	}
+	const tokens = compactedSourceTokens(range);
+	const minimum = options.chainEnd === undefined ? 1 : segmentRangeTokens(options.triggerTokens);
+	if (tokens < minimum) return { defer: "too-small" };
+	return { range: { firstId: range[0].id, lastId: last.id, tokens } };
 }
 
 /**

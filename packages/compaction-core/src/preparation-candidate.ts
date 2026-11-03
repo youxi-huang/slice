@@ -267,14 +267,18 @@ export function finalizePreparation(input: PreparationSnapshot, result: Preparat
 	});
 }
 
-/** Mechanical source/horizon eligibility only; this does not prove semantic preservation of user rulings. */
-export function classifyPreparation(
-	candidate: PreparedCandidate,
+type InvalidReason = Extract<CandidateClassification, { status: "invalid" }>["reason"];
+
+/**
+ * Why a frozen input no longer matches the submission, or undefined while it does. 0.8.0 (WP2) split it from
+ * `classifyPreparation` unchanged, so a run still in flight is cancelled the moment its input turns invalid.
+ */
+export function invalidPreparation(
+	input: PreparationSnapshot,
 	submission: PreparationSubmission,
-): CandidateClassification {
-	const input = candidate.input;
-	if (submission.sessionId !== input.sessionId) return { status: "invalid", reason: "session-changed" };
-	if (submission.epoch !== input.epoch) return { status: "invalid", reason: "epoch-changed" };
+): InvalidReason | undefined {
+	if (submission.sessionId !== input.sessionId) return "session-changed";
+	if (submission.epoch !== input.epoch) return "epoch-changed";
 	const branch = submission.branch;
 	if (
 		!linearBranch(branch) ||
@@ -282,19 +286,31 @@ export function classifyPreparation(
 			(entry, index) => branch[index]?.id !== entry.id || branch[index]?.parentId !== entry.parentId,
 		)
 	)
-		return { status: "invalid", reason: "branch-changed" };
+		return "branch-changed";
 	if (JSON.stringify(lastCheckpoint(branch)) !== JSON.stringify(input.baseCheckpoint))
-		return { status: "invalid", reason: "base-checkpoint-changed" };
+		return "base-checkpoint-changed";
 	const prefix = branch.slice(0, input.coverage.entryIds.length);
-	if (hashEntries(prefix) !== input.coverage.sourceHash) return { status: "invalid", reason: "source-changed" };
-	let hardTokens: number;
+	if (hashEntries(prefix) !== input.coverage.sourceHash) return "source-changed";
 	try {
-		if (hashEntries([writerIdentity(submission.writer)]) !== hashEntries([input.writer]))
-			return { status: "invalid", reason: "writer-changed" };
-		hardTokens = storedNoteLimit(submission.noteBudget);
+		if (hashEntries([writerIdentity(submission.writer)]) !== hashEntries([input.writer])) return "writer-changed";
+		storedNoteLimit(submission.noteBudget);
 	} catch {
-		return { status: "invalid", reason: "configuration-invalid" };
+		return "configuration-invalid";
 	}
+	return undefined;
+}
+
+/** Mechanical source/horizon eligibility only; this does not prove semantic preservation of user rulings. */
+export function classifyPreparation(
+	candidate: PreparedCandidate,
+	submission: PreparationSubmission,
+): CandidateClassification {
+	const input = candidate.input;
+	const invalid = invalidPreparation(input, submission);
+	if (invalid) return { status: "invalid", reason: invalid };
+	const branch = submission.branch;
+	const prefix = branch.slice(0, input.coverage.entryIds.length);
+	const hardTokens = storedNoteLimit(submission.noteBudget);
 	if (candidate.bytes > hardTokens * 3) return { status: "stale-reusable", reason: "submission-budget" };
 	if (submission.customInstructions?.trim()) return { status: "stale-reusable", reason: "custom-instructions" };
 	const tail = branch.slice(input.coverage.entryIds.length);
