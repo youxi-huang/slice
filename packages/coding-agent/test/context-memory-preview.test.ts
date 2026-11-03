@@ -3481,7 +3481,13 @@ describe("preview segments at settled turns (0.8.0 WP2)", () => {
 		expect(requests).toHaveLength(4);
 		expect(segments.status()).toMatchObject({ state: "paused", reason: "refusal", ready: 1 });
 		// Each refusal is counted by its code, so a run can say how often segments cite outside their range.
-		expect(segments.status().results).toEqual({ linked: 1, cancelled: 0, stale: 0, failed: { CONTEXT_NOTE_SCOPE: 3 }, dropped: {} });
+		expect(segments.status().results).toEqual({
+			linked: 1,
+			cancelled: 0,
+			stale: 0,
+			failed: { CONTEXT_NOTE_SCOPE: 3 },
+			dropped: {},
+		});
 		turn(5, long("Synthetic step 5."));
 		await settle();
 		expect(requests).toHaveLength(4);
