@@ -4,6 +4,7 @@
 // boundary to the synchronous writer. Assembly at the boundary is WP3's.
 import type { ThinkingLevel } from "@earendil-works/pi-ai";
 import { segmentBudgetLeft } from "../../../../../compaction-core/src/call-journal.ts";
+import { noteSections } from "../../../../../compaction-core/src/notes.ts";
 import {
 	invalidPreparation,
 	type PreparationSubmission,
@@ -49,9 +50,18 @@ export interface SegmentResults {
 	stale: number;
 	failed: Record<string, number>;
 	dropped: Record<string, number>;
+	/** Notes that cited outside their range, by the section that did: what the scope refusals consist of. */
+	outOfRange: Record<string, number>;
 }
 
-const noResults = (): SegmentResults => ({ linked: 0, cancelled: 0, stale: 0, failed: {}, dropped: {} });
+const noResults = (): SegmentResults => ({
+	linked: 0,
+	cancelled: 0,
+	stale: 0,
+	failed: {},
+	dropped: {},
+	outOfRange: {},
+});
 
 /** The error code a failed run carries, such as `CONTEXT_NOTE_SCOPE`; `error` when it carries none. */
 function failureCode(error: unknown): string {
@@ -185,6 +195,11 @@ export class PreviewSegments {
 					if (!late && this.sessionId === input.preparation.sessionId) this.results.cancelled++;
 					return;
 				}
+				// Content-free: which sections cite outside the range, counted before the range check refuses the note.
+				const range = new Set(input.rangeIds);
+				for (const section of noteSections)
+					if (written.note[section].some((item) => item.sources.some((id) => !range.has(id))))
+						this.results.outOfRange[section] = (this.results.outOfRange[section] ?? 0) + 1;
 				const link = finalizeSegment(input, {
 					note: written.note,
 					provenance: {
@@ -289,7 +304,12 @@ export class PreviewSegments {
 			state: this.running ? "preparing" : this.broken ? "paused" : "idle",
 			effort: this.effort,
 			ready: this.links.length,
-			results: { ...this.results, failed: { ...this.results.failed }, dropped: { ...this.results.dropped } },
+			results: {
+				...this.results,
+				failed: { ...this.results.failed },
+				dropped: { ...this.results.dropped },
+				outOfRange: { ...this.results.outOfRange },
+			},
 			...(this.links.length ? { coveredThrough: this.links[this.links.length - 1].snapshot.lastId } : {}),
 			...(this.broken ? { reason: this.broken } : {}),
 		};

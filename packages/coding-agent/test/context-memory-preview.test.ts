@@ -3487,6 +3487,7 @@ describe("preview segments at settled turns (0.8.0 WP2)", () => {
 			stale: 0,
 			failed: { CONTEXT_NOTE_SCOPE: 3 },
 			dropped: {},
+			outOfRange: { instructions: 3, state: 3 },
 		});
 		turn(5, long("Synthetic step 5."));
 		await settle();
@@ -3512,7 +3513,14 @@ describe("preview segments at settled turns (0.8.0 WP2)", () => {
 			state: "idle",
 			effort: "session",
 			ready: 0,
-			results: { linked: 1, cancelled: 0, stale: 0, failed: { CONTEXT_NOTE_SCOPE: 3 }, dropped: {} },
+			results: {
+				linked: 1,
+				cancelled: 0,
+				stale: 0,
+				failed: { CONTEXT_NOTE_SCOPE: 3 },
+				dropped: {},
+				outOfRange: { instructions: 3, state: 3 },
+			},
 		});
 	});
 
@@ -3536,7 +3544,7 @@ describe("preview segments at settled turns (0.8.0 WP2)", () => {
 				state: "idle",
 				effort: "session",
 				ready: 0,
-				results: { linked: 0, cancelled: 1, stale: 0, failed: {}, dropped: {} },
+				results: { linked: 0, cancelled: 1, stale: 0, failed: {}, dropped: {}, outOfRange: {} },
 			});
 		},
 	);
@@ -3670,7 +3678,7 @@ describe("preview segments at settled turns (0.8.0 WP2)", () => {
 			state: "idle",
 			effort: "session",
 			ready: 1,
-			results: { linked: 1, cancelled: 0, stale: 0, failed: {}, dropped: {} },
+			results: { linked: 1, cancelled: 0, stale: 0, failed: {}, dropped: {}, outOfRange: {} },
 			coveredThrough: "reply-1",
 			coverage: 1,
 		});
@@ -3771,7 +3779,14 @@ describe("preview segments at settled turns (0.8.0 WP2)", () => {
 		segments.committed();
 		held?.release();
 		await segments.waitForIdle();
-		expect(segments.status().results).toEqual({ linked: 0, cancelled: 1, stale: 0, failed: {}, dropped: {} });
+		expect(segments.status().results).toEqual({
+			linked: 0,
+			cancelled: 1,
+			stale: 0,
+			failed: {},
+			dropped: {},
+			outOfRange: {},
+		});
 	});
 
 	it("counts links a settled turn drops from the chain, by the reason the chain stopped", async () => {
