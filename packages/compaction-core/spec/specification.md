@@ -251,8 +251,9 @@ The checkpoint record also carries, outside `details`:
 An extended checkpoint (`contracts.ts` `PreviewCheckpoint`) may add
 observational **preparation metadata** — `preparation: {version: 1, path:
 "complete" | "prefix" | "notes" | "sync", candidateId?, callIds?, noteIds?,
-notesFallback?}` — linking the checkpoint to the prepared candidate and the
-journaled calls that produced it, and `userMessages`, the IDs of the user
+notesFallback?, preparationFallback?}` — linking the checkpoint to the
+prepared candidate and the journaled calls that produced it, and recording
+why work notes or preparation did not serve it; and `userMessages`, the IDs of the user
 messages a notes-path checkpoint renders verbatim. Neither field extends the
 checkpoint's source scope; checkpoints without them remain valid. An adapter
 for a host other than the reference host additionally identifies the host and
@@ -291,7 +292,39 @@ same commit checks without a format change (rule K11):
    prefix, oldest first (`notes.ts` `validateMemoryCheckpoints`).
 5. A future boundary that merges validated segments must produce a checkpoint
    satisfying rules 1–4 under the full commit checks; nothing in this format
-   changes for it.
+   changes for it. [Segments](#segments) states the chain such a boundary
+   merges.
+
+### Segments
+
+A segment (`segments.ts`) is a preparation candidate over a closed range of
+the branch. Beyond the candidate's snapshot it names the first record of its
+range, `coveredThrough` being the last, and the hash of the validated segments
+before it. Its note cites only records inside the range; `supersedes` may name
+earlier ones. A note that cites outside the range is refused with
+`CONTEXT_NOTE_SCOPE`.
+
+A chain starts at the record after the base checkpoint's `coveredThrough`, or
+at the branch's first record when there is no checkpoint. Each link starts at
+the record after the previous link's last and names the chain before it. The
+boundary merges the longest prefix of valid links. A link ends the chain when
+it is not contiguous, names another chain, no longer classifies as a valid
+candidate, or was written by a writer that missed a user message in its range;
+no link after it is merged out of order. A base checkpoint without a
+`coveredThrough` starts no chain.
+
+The merge (`work-notes.ts` `mergeNotes`) adds each note's instructions and facts
+in order, drops earlier facts whose sources a later fact supersedes, and keeps
+the newest nonempty plan and the newest listed gaps; a segment lists gaps only
+when it names some. It refuses, and
+the synchronous writer compacts instead, when a note supersedes the source of a
+carried instruction, when a superseded source supports more earlier facts than
+the note gives in their place, or when the result exceeds the note schema. A
+merged note is committed under the full commit checks, as rule 5 requires.
+
+**Coverage invariant.** After every boundary, each original after the base
+checkpoint's coverage is covered by a committed checkpoint, by a merged
+segment, or is still in context verbatim, and never by none of them.
 
 ## The source hash, by its properties
 

@@ -84,7 +84,8 @@ backend field (T2), new checkpoints move there and the codec reads both.
 1. Flush, and refuse if `ctx.sessions.flush` returns false. Read the log
    through a read handle and build records with the codec. Refuse, before
    anything is written, when the session is seeded, the log holds an open
-   compaction or one by another engine, an earlier Slice checkpoint fails
+   compaction (a start with no end and no later seed boundary) or one by
+   another engine, an earlier Slice checkpoint fails
    `validateMemoryCheckpoints(records, undefined, "jcs")`, or no range
    qualifies under D4.
 2. In one synchronous run, confirm the in-memory log has not grown since the
@@ -105,10 +106,15 @@ backend field (T2), new checkpoints move there and the codec reads both.
    `compaction/end` closes the attempt.
 6. Flush, then read back as D6 describes.
 
-Any failure after step 2 appends `compaction/end` with `error` set to the core's
-code and message, flushes, and leaves the session blocked. `compactNow` then
-throws `ManualCompactionError` with the matching code (`summary`, `changed`,
-`commit`, `persistence` or `cancelled`), so `/compact` prints DSH's own text.
+A failure while the attempt is open, from step 2 until the clean end, appends
+`compaction/end` with `error` set to the core's code and message, flushes, and
+leaves the session blocked. `compactNow` then throws `ManualCompactionError`
+with the matching code (`summary`, `changed`, `commit`, `persistence` or
+`cancelled`), so `/compact` prints DSH's own text. Once the clean end is
+appended, nothing more is written for that attempt: DSH accepts a second end
+live but then refuses to reopen the session, as
+[#115](https://github.com/youxi-huang/slice/pull/115) reproduced on rc.5. A
+failure in step 6 is D6's to handle.
 
 **D4, the range.** It starts at the first surface node after the system head and
 ends where the core's cut leaves the retained tail, chosen with `chooseCut` as
@@ -132,31 +138,37 @@ mirroring the session. The Pi preview's `preview/writer.ts` is the reference.
 then decides, so its place among listeners does not matter. Its state is kept
 per session in memory and derived from the log, never stored anywhere else.
 
-- **Clear:** no Slice compaction yet, or the latest one ended without error and
-  read back.
-- **Blocked:** the latest Slice compaction is open, ended with an error or
-  failed readback, or an earlier checkpoint no longer validates
+- **Clear:** no Slice compaction yet, or the latest one ended cleanly and was
+  read back, by this process after its commit or by the derivation after a
+  process start.
+- **Blocked:** the latest Slice compaction has no end, ended with an error or
+  failed this process's readback, or an earlier checkpoint no longer validates
   (`CONTEXT_SOURCE_CHANGED` and the core's other codes).
 
 After a process start, the first pre-step of a session reads its log once and
 derives the state; later steps use the cached value, which only a Slice
-compaction changes. Readback after a commit requires a flush that returned true,
-then a read handle showing the summary, the replacement directly after it with
-the same `compactionId`, a clean end, and `validateMemoryCheckpoints` returning
-this checkpoint. Anything else is blocked with `CONTEXT_STORAGE_UNCERTAIN`. Only
-a later Slice compaction that reads back clears a block. Because DSH discards a
+compaction changes. That derivation validates every Slice checkpoint in the log,
+so it is itself a readback. Readback after a commit requires a flush that
+returned true, then a read handle showing the summary, the replacement directly
+after it with the same `compactionId`, a clean end, and
+`validateMemoryCheckpoints` returning this checkpoint. Anything else blocks with
+`CONTEXT_STORAGE_UNCERTAIN`, in memory only, and a manual `/compact` throws
+`ManualCompactionError` with `persistence`. The failure is not written down,
+because the log is what decides: a later process confirms the checkpoint if all
+four events reached disk and validate, finds an attempt without an end if they
+did not all arrive, and blocks if they do not validate. Within the process, only
+a later Slice compaction that reads back clears the block. A Slice summary
+counts as a checkpoint (D8) only when its clean end follows it. Because DSH discards a
 rejected step's claimed input, the block notice tells the user that the message
 was not sent and to run `/compact` before sending it again. T2 asks DSH for a
 rejection that keeps that input queued.
 
-**D7, an interrupted compaction.** A `compaction/start` without an end, found on
-the first read after a process start, keeps the session blocked until `/compact`
-commits. Stage 1 must find out what rc.5 itself does with such a start on resume
-(a later seed boundary may close it) and whether the session still opens once a
-turn has been appended after it. The adapter closes it with
-`error: "interrupted"` only where DSH's validators admit that append. If the
-session cannot reopen at all, that is a stage 1 finding to report, not a reason
-to patch DSH.
+**D7, an interrupted compaction.** DSH appends `session/end-seed` whenever it
+resumes a session, and a start with no end before that boundary is orphaned
+natively: DSH admits new compactions after it and refuses an end for it, both
+probed on rc.5 in [#115](https://github.com/youxi-huang/slice/pull/115). The adapter therefore never closes an interrupted
+attempt. A Slice start with no end keeps the session blocked until `/compact`
+commits, whether it is still open in this process or was orphaned by a resume.
 
 **D8, the codec.** A `compaction/summary` whose `rawOutput` holds a Slice
 checkpoint becomes a core `compaction` record: `summary` from the event's text,
@@ -213,6 +225,9 @@ Review sends back a pull request that contains any of these.
   core, re-check seq contiguity outside the codec, or re-implement DSH's format
   rules. Use the core's `CONTEXT_*` codes and DSH's `ManualCompactionError`
   codes, not a new error hierarchy.
+- **Failure markers.** No extra events, second ends or empty attempts to record
+  a failed readback or an interruption. D6 and D7 explain why the log needs
+  none.
 - **Recovery the contract forbids.** No retry loops or backoff around the
   writer beyond the core's single repair, no fallback writer, no fallback to
   `compaction-basic`, and no automatic clearing of a block.
@@ -228,8 +243,10 @@ Review sends back a pull request that contains any of these.
 - **Content in logs.** Status and log lines carry codes, seqs, counts and
   timings only, never note text, source text or provider payloads.
 - **Weight.** No new runtime dependencies beyond the DSH peers the package
-  already declares and `@deepseek-ai/dsh-compaction`. No snapshot tests and no
-  tests that only check a mock was called.
+  already declares and `@deepseek-ai/dsh-compaction`. No second installer or
+  runner for official hosts: a test that needs an installed DSH release runs
+  where `context-memory-adapters-acceptance.mjs` already installs and checks
+  it. No snapshot tests and no tests that only check a mock was called.
 
 ## Files
 
@@ -261,10 +278,12 @@ and JSONL components:
    the block.
 3. A source changed during the writer call fails with `changed` and replaces
    nothing.
-4. A flush that returns false refuses before `compaction/start`; a flush that
-   fails after the commit leaves the session blocked.
-5. A process that stops after `compaction/start` reopens blocked, and `/compact`
-   recovers it (D7).
+4. A flush that returns false refuses before `compaction/start`. A flush or
+   readback that fails after the clean end blocks the session in that process
+   and appends nothing, and a cold reopen confirms the checkpoint from the log.
+5. A process that stops after `compaction/start`, and one that stops after the
+   replacement but before the end, reopen blocked, and `/compact` recovers both
+   (D7).
 6. Two chained checkpoints: the second's `previous` is the first note, both
    validate after a cold reopen, and the surface holds one Slice replacement,
    not a chain of them.
@@ -284,9 +303,10 @@ stage 1.
 Codex cloud starts a branch from `claude/determined-carson-h13gug` at the commit
 that added this document, or from `main` once
 [youxi-huang/slice#114](https://github.com/youxi-huang/slice/pull/114) has
-merged, and opens its own draft pull request for stage 1. Its first step is
-D7's question, since a session that cannot reopen after an interrupted
-compaction changes the design. A finding that contradicts this document goes
+merged, and opens its own draft pull request for stage 1. The probes in
+[#115](https://github.com/youxi-huang/slice/pull/115) answered D7's question,
+and the post-commit question they raised is settled in D3 and D6, both revised
+on 2026-11-03. A finding that contradicts this document goes
 into the pull request as a question rather than into the code as a
 workaround.
 

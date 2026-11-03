@@ -16,6 +16,8 @@ export interface PreviewCheckpoint extends MemoryCheckpoint {
 		noteIds?: string[];
 		/** Why arm B left this compaction to the writer. */
 		notesFallback?: NotesFallback;
+		/** Why arm A's preparation did not serve this compaction. */
+		preparationFallback?: PreparationFallback;
 	};
 	/** User messages rendered verbatim after the note by the notes path; re-rendered at every full validation. */
 	userMessages?: string[];
@@ -26,7 +28,28 @@ export interface PreviewCheckpoint extends MemoryCheckpoint {
  * the note schema or budget rejects, no cut that releases only covered entries, user messages that do not fit in
  * full, or a result that would not compact enough.
  */
-export type NotesFallback = "no-notes" | "unfinished-turn" | "custom-focus" | "merge" | "cut" | "user-messages" | "fit";
+export type NotesFallback = "no-notes" | "unfinished-turn" | "custom-focus" | "merge" | PrefixRefusal;
+
+/**
+ * Why a note was not committed for a prefix: no cut that releases only covered entries, user messages that do not fit
+ * in full, or a result that would not compact enough.
+ */
+export type PrefixRefusal = "cut" | "user-messages" | "fit";
+
+/**
+ * Why arm A did not serve a compaction: nothing was prepared in the interval, a run was still in flight, the run failed
+ * or was cancelled, the candidate's sources no longer matched, a stale candidate left no reusable prefix, the turn was
+ * unfinished, or the prefix was refused. Arm A carries no user messages, so `user-messages` does not occur.
+ */
+export type PreparationFallback =
+	| "none"
+	| "in-flight"
+	| "failed"
+	| "cancelled"
+	| "invalid"
+	| "stale"
+	| "unfinished-turn"
+	| PrefixRefusal;
 
 export interface PreviewAttempt {
 	attemptId: string;
