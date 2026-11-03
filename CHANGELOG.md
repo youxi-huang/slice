@@ -8,7 +8,7 @@ Changes under **Unreleased** are not included in an existing release tag or its 
 
 ### Security
 
-- GHSA-g3hv-75wg-m249: override workspace shx to 0.4.0, removing the vulnerable build-only minimatch chain through shelljs and glob. The resident runtime and its generated install-lock still use minimatch 10.2.6; upgrading them needs a separate change to the upstream install-lock generator's exact-version validation. The independent Pi preview, DSH and OpenCode packages do not bundle these dependencies.
+- GHSA-g3hv-75wg-m249: override build-only shelljs to 0.9.2, replacing workspace shx's vulnerable glob/minimatch chain with fast-glob. The resident runtime and its generated install-lock still use minimatch 10.2.6; upgrading them needs a separate change to the upstream install-lock generator's exact-version validation. The independent Pi preview, DSH and OpenCode packages do not bundle these dependencies.
 
 ### Maintenance
 
