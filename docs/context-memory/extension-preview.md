@@ -715,6 +715,11 @@ stop after three failures of one kind in a row, until the next checkpoint.
 `/compaction-status` shows `segments` with how many are ready, how far they
 reach and the share of history since the last checkpoint they cover, and
 `calls.segmentCalls`; `/compaction-doctor` says when they are paused and why.
+`segments.results` counts how this session's segments ended, without content:
+linked into the chain, cancelled in flight, no longer extending the chain,
+refused or failed by error code (`CONTEXT_SEGMENT_DEADLINE` for a run past its
+deadline), and links dropped when a later turn classified the chain again, by
+the reason it stopped.
 
 ## Verification
 

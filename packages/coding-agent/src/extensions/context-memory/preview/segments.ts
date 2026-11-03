@@ -37,6 +37,28 @@ export function segmentFailure(error: unknown): SegmentFailure {
 	return "error";
 }
 
+/**
+ * How this session's segments ended, content-free: calls linked into the chain; calls cancelled in flight, by a
+ * checkpoint, a branch or writer change or the session's end; calls whose result no longer extended the chain; calls
+ * refused or failed, by error code, with `CONTEXT_SEGMENT_DEADLINE` for a run past its deadline; and links the chain
+ * dropped when a settled turn classified it again, by the reason the chain stopped.
+ */
+export interface SegmentResults {
+	linked: number;
+	cancelled: number;
+	stale: number;
+	failed: Record<string, number>;
+	dropped: Record<string, number>;
+}
+
+const noResults = (): SegmentResults => ({ linked: 0, cancelled: 0, stale: 0, failed: {}, dropped: {} });
+
+/** The error code a failed run carries, such as `CONTEXT_NOTE_SCOPE`; `error` when it carries none. */
+function failureCode(error: unknown): string {
+	const message = error instanceof Error ? error.message : "";
+	return /^([A-Z][A-Z_]+):/.exec(message)?.[1] ?? "error";
+}
+
 /** The level a segment is written at: the configured one, or the session's when `session` or unset. */
 export function segmentLevel(
 	effort: SegmentEffort | undefined,
@@ -64,6 +86,7 @@ export class PreviewSegments {
 	private links: PreparedSegment[] = [];
 	private running?: { abort: AbortController; settled: Promise<void>; input: SegmentSnapshot };
 	private streak?: { kind: SegmentFailure; count: number };
+	private results = noResults();
 	private broken?: SegmentFailure;
 	private disposed = false;
 
@@ -98,13 +121,19 @@ export class PreviewSegments {
 		this.invalidate();
 		this.streak = undefined;
 		this.broken = undefined;
+		this.results = noResults();
 		this.sessionId = sessionId;
 	}
 
 	/** Keeps the chain's longest valid prefix and cancels a run whose input no longer matches the session. */
 	reconcile(submission: PreparationSubmission): void {
 		if (this.running && invalidPreparation(this.running.input.preparation, submission)) this.running.abort.abort();
-		this.links = [...classifyChain(this.links, submission).links];
+		const chain = classifyChain(this.links, submission);
+		if (chain.stop && chain.links.length < this.links.length) {
+			const reason = chain.stop.reason;
+			this.results.dropped[reason] = (this.results.dropped[reason] ?? 0) + this.links.length - chain.links.length;
+		}
+		this.links = [...chain.links];
 	}
 
 	/** Cheap check before choosing a range: one run at a time, an intact breaker, and budget left in the interval. */
@@ -152,7 +181,10 @@ export class PreviewSegments {
 				return job.run(abort.signal, hooks);
 			})
 			.then((written) => {
-				if (abort.signal.aborted || !current()) return;
+				if (abort.signal.aborted || !current()) {
+					if (!late && this.sessionId === input.preparation.sessionId) this.results.cancelled++;
+					return;
+				}
 				const link = finalizeSegment(input, {
 					note: written.note,
 					provenance: {
@@ -163,13 +195,22 @@ export class PreviewSegments {
 					},
 				});
 				// A reconcile may have shortened the chain while this link was written; it then no longer extends it.
-				if (input.chainHash !== chainHash(this.links)) return;
+				if (input.chainHash !== chainHash(this.links)) {
+					this.results.stale++;
+					return;
+				}
 				this.links.push(link);
+				this.results.linked++;
 				this.streak = undefined;
 			})
 			.catch((error) => {
-				if ((abort.signal.aborted && !late) || !current()) return;
+				if ((abort.signal.aborted && !late) || !current()) {
+					if (!late && this.sessionId === input.preparation.sessionId) this.results.cancelled++;
+					return;
+				}
 				const kind = late ? "error" : segmentFailure(error);
+				const code = late ? "CONTEXT_SEGMENT_DEADLINE" : failureCode(error);
+				this.results.failed[code] = (this.results.failed[code] ?? 0) + 1;
 				this.streak = { kind, count: this.streak?.kind === kind ? this.streak.count + 1 : 1 };
 				if (this.streak.count >= BREAKER_FAILURES) this.broken = kind;
 			})
@@ -232,6 +273,7 @@ export class PreviewSegments {
 		state: "disabled" | "paused" | "preparing" | "idle";
 		effort?: SegmentEffort;
 		ready: number;
+		results?: SegmentResults;
 		coveredThrough?: string;
 		reason?: string;
 	} {
@@ -247,6 +289,7 @@ export class PreviewSegments {
 			state: this.running ? "preparing" : this.broken ? "paused" : "idle",
 			effort: this.effort,
 			ready: this.links.length,
+			results: { ...this.results, failed: { ...this.results.failed }, dropped: { ...this.results.dropped } },
 			...(this.links.length ? { coveredThrough: this.links[this.links.length - 1].snapshot.lastId } : {}),
 			...(this.broken ? { reason: this.broken } : {}),
 		};

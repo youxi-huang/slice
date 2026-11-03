@@ -3480,6 +3480,8 @@ describe("preview segments at settled turns (0.8.0 WP2)", () => {
 		}
 		expect(requests).toHaveLength(4);
 		expect(segments.status()).toMatchObject({ state: "paused", reason: "refusal", ready: 1 });
+		// Each refusal is counted by its code, so a run can say how often segments cite outside their range.
+		expect(segments.status().results).toEqual({ linked: 1, cancelled: 0, stale: 0, failed: { CONTEXT_NOTE_SCOPE: 3 }, dropped: {} });
 		turn(5, long("Synthetic step 5."));
 		await settle();
 		expect(requests).toHaveLength(4);
@@ -3499,7 +3501,13 @@ describe("preview segments at settled turns (0.8.0 WP2)", () => {
 			{ type: "session_compact", compactionEntry: entry, fromExtension: true, reason: "manual", willRetry: false },
 			ctx,
 		);
-		expect(segments.status()).toEqual({ enabled: true, state: "idle", effort: "session", ready: 0 });
+		expect(segments.status()).toEqual({
+			enabled: true,
+			state: "idle",
+			effort: "session",
+			ready: 0,
+			results: { linked: 1, cancelled: 0, stale: 0, failed: { CONTEXT_NOTE_SCOPE: 3 }, dropped: {} },
+		});
 	});
 
 	it.each(["branch-switch", "writer-change"])(
@@ -3517,7 +3525,13 @@ describe("preview segments at settled turns (0.8.0 WP2)", () => {
 			expect(held?.signal?.aborted).toBe(true);
 			held?.release();
 			await segments.waitForIdle();
-			expect(segments.status()).toEqual({ enabled: true, state: "idle", effort: "session", ready: 0 });
+			expect(segments.status()).toEqual({
+				enabled: true,
+				state: "idle",
+				effort: "session",
+				ready: 0,
+				results: { linked: 0, cancelled: 1, stale: 0, failed: {}, dropped: {} },
+			});
 		},
 	);
 
@@ -3650,6 +3664,7 @@ describe("preview segments at settled turns (0.8.0 WP2)", () => {
 			state: "idle",
 			effort: "session",
 			ready: 1,
+			results: { linked: 1, cancelled: 0, stale: 0, failed: {}, dropped: {} },
 			coveredThrough: "reply-1",
 			coverage: 1,
 		});
@@ -3739,6 +3754,29 @@ describe("preview segments at settled turns (0.8.0 WP2)", () => {
 		const value = await controller.compact(event(), ctx);
 		expect(levels).toEqual(["high", "medium"]);
 		expect(value.details?.preparation).toMatchObject({ path: "sync", segmentsFallback: "invalid" });
+	});
+
+	it("counts a segment cancelled in flight by a checkpoint apart from failures", async () => {
+		turn(2, long("The synthetic build is green."));
+		hold = true;
+		controller.segment(ctx);
+		await vi.waitFor(() => expect(held).toBeDefined());
+		hold = false;
+		segments.committed();
+		held?.release();
+		await segments.waitForIdle();
+		expect(segments.status().results).toEqual({ linked: 0, cancelled: 1, stale: 0, failed: {}, dropped: {} });
+	});
+
+	it("counts links a settled turn drops from the chain, by the reason the chain stopped", async () => {
+		await settle();
+		expect(segments.status().results?.linked).toBe(1);
+		// The session writer's context identity covers the system prompt: the link is now another writer's.
+		(ctx as { getSystemPrompt: () => string }).getSystemPrompt = () => "Changed synthetic system prompt.";
+		turn(2, long("The synthetic build is green."));
+		controller.segment(ctx);
+		await segments.waitForIdle();
+		expect(segments.status().results?.dropped).toEqual({ "writer-changed": 1 });
 	});
 
 	it("does no work for a settled turn with no range due (0.8.0 release gate: 135 ms a turn at 20 checkpoints)", async () => {
