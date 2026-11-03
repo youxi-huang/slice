@@ -72,6 +72,8 @@ import { PRIMARY_PI_VERSION, SUPPORTED_PI_LABEL, SUPPORTED_PI_VERSIONS, supports
 import type {
 	InactiveReason,
 	NotesFallback,
+	PrefixRefusal,
+	PreparationFallback,
 	PreviewCompaction,
 	PreviewDiagnosis,
 	PreviewFailureStoreContract,
@@ -1240,6 +1242,8 @@ export class PreviewMemoryController {
 		const started = performance.now();
 		this.forgetVerified();
 		this.compactionStartedAt.set(ctx.sessionManager.getSessionId(), started);
+		// Read before the cancel below, which ends a run still in flight.
+		const preparing = this.preparation?.status().state === "preparing";
 		this.preparation?.cancel("compaction");
 		this.activeCompactions.add(ctx.sessionManager.getSessionId());
 		this.stagedCompactions.delete(ctx.sessionManager.getSessionId());
@@ -1369,7 +1373,7 @@ export class PreviewMemoryController {
 				end: number,
 				share: number,
 				users: readonly SessionRecord[] = [],
-			): NotesFallback | undefined => {
+			): PrefixRefusal | undefined => {
 				const start = prefixCut(branch, projection, end, cut);
 				if (start === undefined) return "cut";
 				const retained = retainedFrom(start);
@@ -1386,10 +1390,15 @@ export class PreviewMemoryController {
 				userMessages = users;
 				return undefined;
 			};
+			// Why A did not serve, recorded for evaluation as B's fallback is.
+			let preparationFallback: PreparationFallback | undefined;
 			if (path === "sync" && available && interrupted === undefined) {
 				const end = reusablePrefix(available.candidate, available.classification, asRecords(branch));
-				if (end !== undefined && !commitPrefix(available.written.note, end, 0.8)) path = "prefix";
+				preparationFallback = end === undefined ? "stale" : commitPrefix(available.written.note, end, 0.8);
+				if (!preparationFallback) path = "prefix";
 			}
+			if (submission && path === "sync" && !preparationFallback)
+				preparationFallback = available ? "unfinished-turn" : preparing ? "in-flight" : this.preparation?.missed();
 			// D18: merge the session model's work notes without a writer call; the user's own messages follow verbatim.
 			// When B leaves a compaction to the writer, the reason is recorded for evaluation.
 			let notesNote: MemoryNote | undefined;
@@ -1513,6 +1522,7 @@ export class PreviewMemoryController {
 										: {}),
 									...(path === "notes" ? { noteIds: notes.map((item) => item.id) } : {}),
 									...(notesFallback ? { notesFallback } : {}),
+									...(preparationFallback ? { preparationFallback } : {}),
 								},
 							}
 						: {}),

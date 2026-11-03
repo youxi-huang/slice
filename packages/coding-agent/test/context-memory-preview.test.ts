@@ -556,6 +556,7 @@ describe("preview prepared compaction keeps the formal commit gate", () => {
 		expect(controller.status(ctx).preparation?.state).toBe("stale");
 		const value = await controller.compact(event(), ctx);
 		expect(value.details?.preparation?.path).toBe("sync");
+		expect(value.details?.preparation?.preparationFallback).toBe("fit");
 		expect(value.details?.preparation?.candidateId).toBeUndefined();
 		expect(value.details?.coveredThrough).toBe("reply-2");
 		expect(requests).toHaveLength(2);
@@ -568,6 +569,20 @@ describe("preview prepared compaction keeps the formal commit gate", () => {
 		]);
 		expect(value.details?.note.state[0]).toMatchObject({ sources: ["source-2"], supersedes: ["source-1"] });
 		expect(controller.status(ctx).calls).toMatchObject({ preparationCalls: 1, compactionCalls: 1 });
+	});
+	it("records that nothing was prepared when a compaction finds no candidate", async () => {
+		expect((await controller.compact(event(), ctx)).details?.preparation).toMatchObject({
+			path: "sync",
+			preparationFallback: "none",
+		});
+	});
+	it("records a preparation still in flight when the compaction starts", async () => {
+		controller.prepare(ctx);
+		expect(controller.status(ctx).preparation?.state).toBe("preparing");
+		expect((await controller.compact(event(), ctx)).details?.preparation).toMatchObject({
+			path: "sync",
+			preparationFallback: "in-flight",
+		});
 	});
 	it("commits a prepared prefix without a writer call and keeps later originals verbatim", async () => {
 		session.append({
@@ -593,6 +608,7 @@ describe("preview prepared compaction keeps the formal commit gate", () => {
 		const value = await controller.compact(event(), ctx);
 		expect(requests).toHaveLength(1);
 		expect(value.details?.preparation?.path).toBe("prefix");
+		expect(value.details?.preparation?.preparationFallback).toBeUndefined();
 		expect(value.details?.coveredThrough).toBe("trace-reply-1");
 		expect(value.details?.sourceHash).toBe(hashEntries(session.getBranch().slice(0, 4)));
 		expect(value.firstKeptEntryId).toBe("source-2");

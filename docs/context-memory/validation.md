@@ -1,5 +1,41 @@
 # Validation record
 
+## 0.8.0 WP0: the loopback A/B baseline over chains, 2026-11-03 UTC
+
+The first measurement for the [v0.8.0 plan](v0.8.0-plan.md#wp0-measurement-first), taken before any segment
+code exists so that segments have a control to beat. Scripted runs on official Pi 1.4.0 with the preview package
+built from the commit that adds this entry; no provider was called. Each run used
+`node scripts/context-memory-preview-ab.mjs --package-dir .artifacts/context-memory-preview-package --stock-root .artifacts/context-memory-preview-stock --output-dir <dir> --latency-ms 1000 --arms sync,a`
+with the cycles and pace below; every arm exited 0. A cycle is a ruling, a pasted log of about 97k tokens and a
+follow-up, then `/compact`; cycles after the first move the port, so the probes check a value overturned up to
+five times. `settled` waits for A's preparation before the next input, A's best case; `immediate` sends it at once.
+
+| Cycles, pace | Arm | Paths | Pause P50 / P95, ms | P95 without a foreground writer, ms | Fallbacks | Turn time per request beyond the latency, ms | Probes |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 2, settled | sync | sync ×2 | 1,080 / 1,120 | | | 48 | 8/8 |
+| 2, settled | A | prefix ×2 | 42 / 79 | 79 | none | 51 | 8/8 |
+| 6, settled | sync | sync ×6 | 1,151 / 1,257 | | | 23 | 12/12 |
+| 6, settled | A | prefix ×6 | 101 / 182 | 182 | none | 49 | 12/12 |
+| 6, immediate | sync | sync ×6 | 1,169 / 1,288 | | | 28 | 12/12 |
+| 6, immediate | A | prefix, sync, prefix ×4 | 143 / 1,140 | 208 | `in-flight` once | 70 | 12/12 |
+
+- Two settled cycles reproduce the October result: about 1.1 s synchronously, under 0.1 s from a prepared prefix.
+- Along six boundaries A's prepared pause grows from 58 to 183 ms, and the synchronous pause from 1,097 to
+  1,258 ms. The prefix path validates and reads back more history at each checkpoint; WP3's merge should be
+  measured for the same growth.
+- At the immediate pace, preparation was still running at the second boundary. The compaction cancelled it and
+  wrote synchronously in 1,141 ms, and the cancelled call is the run's one discarded call and its one call with
+  unknown usage. With six boundaries the P95 is the slowest one, so a single fallback sets the all-boundary
+  P95 at the synchronous pause. The gate on all boundaries is therefore a gate on how often segments fall short,
+  which is what U8's bounded wait for a segment in flight addresses.
+- Turn time per request includes Pi's own processing and the scripted model, so it is not the package's request
+  overhead, which the stock overhead report measures.
+
+Not covered: segments, which get an arm when WP3 adds their switch; a provider's cache; latencies other than
+one second. Two script defects found on the way were fixed before these runs: the scripted writer kept every
+overturned port ruling, which failed the stale-port probe on six cycles in both arms, and a preparation request
+still in flight at a boundary was counted as a foreground call.
+
 ## Codex 0.166.0 native compaction on GPT-6 Luna, a small probe, 2026-11-03 UTC
 
 A real-provider run on another host, recorded for the [v0.8.0 plan](v0.8.0-plan.md) as an external pause

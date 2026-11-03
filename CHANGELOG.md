@@ -6,7 +6,13 @@ Changes under **Unreleased** are not included in an existing release tag or its 
 
 ## [Unreleased]
 
+### Added
+
+- With preparation on, a checkpoint that preparation did not serve records why in `details.preparation.preparationFallback`: nothing was prepared, a run was still in flight or had failed or been cancelled, the candidate no longer matched its sources, a stale candidate left no reusable prefix, the turn was unfinished, or the prefix did not fit. Work notes already record their own reason in `notesFallback`. Older readers ignore the field; no checkpoint format changes.
+
 ### Maintenance
+
+- The loopback A/B runner runs chains of up to eight compactions (`--cycles`), can send each input without waiting for preparation (`--pace immediate`), and reports each arm's pause at the median and the 95th percentile, the 95th percentile over boundaries that needed no foreground writer call, the count of each fallback cause, and turn time per request beyond the simulated latency. It is the measurement 0.8.0's segments will be compared against.
 
 - npm publication takes `slice-pi`, `slice-opencode` and `slice-dsh` in a fixed order whatever order the adapter build reports them in. The first v0.7.5 run stopped on that order before publishing anything to npm.
 - A publication retry can complete the draft release a failed run left behind. It keeps the draft's archives, which must match the rebuild, and replaces only the failed run's own evidence: its provenance, scenario profile and checksums. Assets on a public release are still never replaced.

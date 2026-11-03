@@ -95,6 +95,7 @@ export class PreviewPreparation {
 	private disposed = false;
 	private state: "idle" | "failed" | "cancelled" = "idle";
 	private reason?: string;
+	private dropped = false;
 
 	constructor(options: { enabled: boolean; settingsError?: string; journal: CallJournal }) {
 		this.enabled = options.enabled && !options.settingsError;
@@ -190,13 +191,21 @@ export class PreviewPreparation {
 	take(
 		submission: PreparationSubmission,
 	): (Armed & { classification: Exclude<CandidateClassification, { status: "invalid" }> }) | undefined {
+		this.dropped = false;
 		if (!this.armed || this.disposed || !this.enabled) return undefined;
 		const classification = classifyPreparation(this.armed.candidate, submission);
 		if (classification.status === "invalid") {
 			this.armed = undefined;
+			this.dropped = true;
 			return undefined;
 		}
 		return { ...this.armed, classification };
+	}
+
+	/** Why the last `take` had nothing to give, for the checkpoint's record. */
+	missed(): "invalid" | "failed" | "cancelled" | "none" {
+		if (this.dropped) return "invalid";
+		return this.state === "idle" ? "none" : this.state;
 	}
 
 	/** A staged checkpoint owns its candidate until commit or explicit recovery. */
