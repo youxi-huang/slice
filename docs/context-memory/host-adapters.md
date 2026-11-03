@@ -194,5 +194,7 @@ on a field DSH owns, and runs a reopen test on every listed DSH version. A
 declared backend field on `compaction/summary` is requested from DSH at the
 same time, and the adapter moves to it once DSH ships one. Do not mutate
 `KNOWN_SESSION_EVENT_TYPES`, copy the private compaction engine, or put
-checkpoint JSON in the replacement message the model reads. Until that preview
-passes its own acceptance, `slice-dsh` stays retrieval-only.
+checkpoint JSON in the replacement message the model reads. The preview's
+design, which puts the checkpoint in `rawOutput`, is in
+[DSH writing preview](dsh-writing.md). Until that preview passes its own
+acceptance, `slice-dsh` stays retrieval-only.
