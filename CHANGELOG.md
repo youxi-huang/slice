@@ -12,6 +12,7 @@ Changes under **Unreleased** are not included in an existing release tag or its 
 
 ### Maintenance
 
+- The host-neutral core gains 0.8.0's segment contract (`segments.ts`): a segment freezes and validates like a preparation candidate over a closed range and cites only inside it, a chain merges its longest contiguous valid prefix, and the merge, generalized from the work-note merge as `mergeNotes`, says why it leaves a boundary to the writer. The specification states the chain and the coverage invariant. Nothing calls it yet; work notes merge as before.
 - The loopback A/B runner runs chains of up to eight compactions (`--cycles`), can send each input without waiting for preparation (`--pace immediate`), and reports each arm's pause at the median and the 95th percentile, the 95th percentile over boundaries that needed no foreground writer call, the count of each fallback cause, and turn time per request beyond the simulated latency. It is the measurement 0.8.0's segments will be compared against.
 
 - npm publication takes `slice-pi`, `slice-opencode` and `slice-dsh` in a fixed order whatever order the adapter build reports them in. The first v0.7.5 run stopped on that order before publishing anything to npm.
