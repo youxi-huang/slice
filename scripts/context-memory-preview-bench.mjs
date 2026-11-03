@@ -654,6 +654,8 @@ async function worker() {
 				tokensBefore: entry?.tokensBefore ?? null,
 				coveredThrough: entry?.details?.coveredThrough ?? null,
 				noteBytes: entry?.details?.note ? Buffer.byteLength(JSON.stringify(entry.details.note)) : null,
+				// A refused attempt's diagnosis, content-free: which schema, scope or quotation check refused it.
+				...(committed ? {} : { schema: writer.schema ?? null, scope: writer.scope ?? null, quotations: writer.quotations ?? null }),
 				writerCalls: foreground ? (writer.writerCalls ?? 0) : 0,
 				calls: foreground
 					? (writer.writerCallDetails ?? []).map((call) => ({ phase: call.phase, ms: call.ms ?? null, effort: call.effort ?? null, stopReason: call.stopReason ?? null, input: call.usage?.input ?? null, cacheRead: call.usage?.cacheRead ?? null, cacheWrite: call.usage?.cacheWrite ?? null, output: call.usage?.output ?? null, reasoning: call.usage?.reasoning ?? null }))
