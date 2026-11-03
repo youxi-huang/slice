@@ -8,8 +8,8 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { inspectOfficialPi } from "./context-memory-preview-stock-install.mjs";
 
-// Bounded A/B comparison of the preview's compaction paths on official Pi: sync (both switches off), A
-// (previewPreparation) and B (previewWorkNotes). Every arm runs the same scripted conversation and settings
+// Bounded A/B comparison of the preview's compaction paths on official Pi: sync (every switch off), A
+// (previewPreparation), B (previewWorkNotes) and 0.8.0's segments (previewSegments). Every arm runs the same scripted conversation and settings
 // against a loopback provider, which never contacts a model service. By default a faithful script writes the
 // notes. With --bridge, the writer's requests and B's note decisions are written to files and the run waits for
 // an answer from outside, such as a model run by hand; nothing else changes. Prices and latency are synthetic.
@@ -20,7 +20,7 @@ function argument(name, fallback) {
 	const index = args.indexOf(name);
 	if (index >= 0 && args[index + 1] !== undefined) return args[index + 1];
 	if (fallback !== undefined) return fallback;
-	throw new Error(`Missing ${name}. Usage: node ${script} --package-dir <package> --stock-root <official Pi> --output-dir <dir> [--window 128000] [--latency-ms 0] [--arms sync,a,b] [--cycles 2] [--pace settled|immediate] [--logs user|model] [--bridge <dir>]`);
+	throw new Error(`Missing ${name}. Usage: node ${script} --package-dir <package> --stock-root <official Pi> --output-dir <dir> [--window 128000] [--latency-ms 0] [--arms sync,a,b,segments] [--cycles 2] [--pace settled|immediate] [--logs user|model] [--bridge <dir>]`);
 }
 const packageDir = resolve(argument("--package-dir"));
 const stockRoot = resolve(argument("--stock-root"));
@@ -41,7 +41,8 @@ const MAX_REQUESTS = 80;
 const BRIDGE_WAIT_MS = 900_000;
 if (!Number.isInteger(latencyMs) || latencyMs < 0 || latencyMs > 5000) throw new Error("--latency-ms must be an integer from 0 to 5000");
 if (!Number.isInteger(WINDOW) || WINDOW < 32_000 || WINDOW > 1_000_000) throw new Error("--window must be an integer from 32000 to 1000000");
-if (!ARMS.length || ARMS.some((arm) => !["sync", "a", "b"].includes(arm))) throw new Error("--arms takes sync, a and b");
+if (!ARMS.length || ARMS.some((arm) => !["sync", "a", "b", "segments"].includes(arm)))
+	throw new Error("--arms takes sync, a, b and segments");
 if (!Number.isInteger(CYCLES) || CYCLES < 1 || CYCLES > 8) throw new Error("--cycles must be an integer from 1 to 8");
 if (!["settled", "immediate"].includes(PACE)) throw new Error("--pace takes settled or immediate");
 
@@ -170,8 +171,24 @@ async function worker() {
 	let lastMainPayload = "";
 	let asked = 0;
 	const branchText = (marker) => manager.getBranch().filter((entry) => entry.type === "message" && JSON.stringify(entry.message.content ?? "").includes(marker));
-	/** A faithful writer: every fact whose marker it can see, cited to the original that contains it. */
+	/**
+	 * A faithful writer: every fact whose marker it can see, cited to the original that contains it. For a segment it
+	 * keeps only facts whose sources lie in the named range; `supersedes` may still name earlier entries.
+	 */
 	function writerNote(serialized) {
+		const segment = serialized.match(/Write a segment note for entries (\S+) through (\S+) only/);
+		if (segment) {
+			const branch = manager.getBranch();
+			const range = branch.slice(branch.findIndex((entry) => entry.id === segment[1]), branch.findIndex((entry) => entry.id === segment[2]) + 1);
+			const ids = new Set(range.map((entry) => entry.id));
+			const whole = fullNote(serialized);
+			const note = Object.fromEntries(Object.entries(whole).map(([section, items]) => [section, section === "gaps" ? [] : items.filter((item) => item.sources.every((id) => ids.has(id)))]));
+			if (!note.state.length) note.state.push({ text: "The local service check continues.", sources: [range.find((entry) => entry.type === "message" && entry.message.role === "user").id] });
+			return note;
+		}
+		return fullNote(serialized);
+	}
+	function fullNote(serialized) {
 		const note = { instructions: [], failedPaths: [], reasons: [], state: [], nextSteps: [], files: [], gaps: [] };
 		for (const fact of FACTS) {
 			if (!serialized.includes(fact.marker)) continue;
@@ -299,7 +316,7 @@ async function worker() {
 		compat: { supportsDeveloperRole: false, supportsUsageInStreaming: true },
 	};
 	writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ packages: [packageDir], cacheWarming: "off", defaultTools: [], compaction: { enabled: false, keepRecentTokens: 0 } }));
-	writeFileSync(join(agentDir, "pi-context-memory.json"), JSON.stringify({ previewPreparation: { enabled: arm === "a" }, previewWorkNotes: { enabled: arm === "b" } }));
+	writeFileSync(join(agentDir, "pi-context-memory.json"), JSON.stringify({ previewPreparation: { enabled: arm === "a" }, previewWorkNotes: { enabled: arm === "b" }, previewSegments: { enabled: arm === "segments" } }));
 	let session;
 	async function open(sessionManager) {
 		session?.dispose();
@@ -322,15 +339,17 @@ async function worker() {
 			commandOutput = undefined;
 		}
 	}
-	// Optional preparation runs after the turn. The script lets it finish so every arm submits the same next turn.
-	// Pi starts it from agent_settled, just after the prompt returns, so A first waits a moment for it to begin.
+	// Optional preparation and segments run after the turn. The script lets them finish so every arm submits the same
+	// next turn. Pi starts them from agent_settled, just after the prompt returns, so A and segments first wait a moment
+	// for a run to begin; a segment starts only when its range closes, so most turns start none.
+	const busy = (current) => current.preparation?.state === "preparing" || current.segments?.state === "preparing";
 	const settle = async () => {
 		if (PACE === "immediate") return;
-		if (arm === "a") {
-			for (const until = Date.now() + (bridge ? 3_000 : 1_000); Date.now() < until && (await status()).preparation?.state !== "preparing"; )
+		if (arm === "a" || arm === "segments") {
+			for (const until = Date.now() + (bridge ? 3_000 : 1_000); Date.now() < until && !busy(await status()); )
 				await new Promise((done) => setTimeout(done, 50));
 		}
-		for (const deadline = Date.now() + (bridge ? BRIDGE_WAIT_MS : 5_000); Date.now() < deadline && (await status()).preparation?.state === "preparing"; )
+		for (const deadline = Date.now() + (bridge ? BRIDGE_WAIT_MS : 5_000); Date.now() < deadline && busy(await status()); )
 			await new Promise((done) => setTimeout(done, bridge ? 500 : 25));
 	};
 	const result = { arm, turnMs: 0, turnRequests: 0, compactions: [], errors: [] };
@@ -373,6 +392,8 @@ async function worker() {
 				noteFacts: checkpoint ? Object.values(checkpoint.details.note).reduce((sum, items) => sum + items.length, 0) : 0,
 				...(checkpoint?.details?.preparation?.notesFallback ? { notesFallback: checkpoint.details.preparation.notesFallback } : {}),
 				...(checkpoint?.details?.preparation?.preparationFallback ? { preparationFallback: checkpoint.details.preparation.preparationFallback } : {}),
+				...(checkpoint?.details?.preparation?.segmentsFallback ? { segmentsFallback: checkpoint.details.preparation.segmentsFallback } : {}),
+				...(checkpoint?.details?.preparation?.segmentIds ? { segmentsMerged: checkpoint.details.preparation.segmentIds.length } : {}),
 				state: after.state,
 				...(after.code ? { code: after.code } : {}),
 			});
@@ -398,7 +419,8 @@ async function worker() {
 		result.writer = { ...final.calls, usage: { ...final.calls.usage, cost: Number(final.calls.usage.cost.toFixed(6)) } };
 		result.workNotes = { saved: notes.length, refused: refused.length };
 		result.requests = requests.map((r) => `${r.kind}:${r.inputTokens}`);
-		result.discardedPreparationCalls = Math.max(0, (final.calls?.preparationCalls ?? 0) - usedCalls.size);
+		// Calls whose result no checkpoint used: A's and segments' calls are counted apart, and only one runs per arm.
+		result.discardedPreparationCalls = Math.max(0, (final.calls?.preparationCalls ?? 0) + (final.calls?.segmentCalls ?? 0) - usedCalls.size);
 		result.total = {
 			tokens: result.main.inputTokens + result.main.outputTokens + (final.calls?.usage?.totalTokens ?? 0),
 			cost: Number((result.main.cost + (final.calls?.usage?.cost ?? 0)).toFixed(6)),
@@ -412,7 +434,7 @@ async function worker() {
 		// Every boundary counts, covered and fallback alike; a covered one is any that spent no foreground writer call.
 		const pauses = result.compactions.map((c) => c.pauseMs ?? c.wallMs);
 		const covered = result.compactions.filter((c) => c.path !== "sync").map((c) => c.pauseMs ?? c.wallMs);
-		const causes = result.compactions.flatMap((c) => [c.preparationFallback, c.notesFallback].filter(Boolean));
+		const causes = result.compactions.flatMap((c) => [c.preparationFallback, c.notesFallback, c.segmentsFallback].filter(Boolean));
 		result.pause = {
 			p50: percentile(pauses, 0.5),
 			p95: percentile(pauses, 0.95),
@@ -516,7 +538,7 @@ async function parent() {
 			r.errors?.length ? "error" : "ok",
 		].join(" | ");
 	});
-	process.stdout.write(`arm | turn ms | paths | pause ms | pause p50/p95 | covered p95 | fallback causes | fg writer calls | context after | main requests | writer calls | total tokens | synthetic cost | B fallbacks | discarded prep | unknown usage | overhead ms/request | probes | run\n${rows.join("\n")}\n`);
+	process.stdout.write(`arm | turn ms | paths | pause ms | pause p50/p95 | covered p95 | fallback causes | fg writer calls | context after | main requests | writer calls | total tokens | synthetic cost | B fallbacks | discarded optional calls | unknown usage | overhead ms/request | probes | run\n${rows.join("\n")}\n`);
 	if (report.arms.some((r) => r.errors?.length)) process.exitCode = 1;
 }
 

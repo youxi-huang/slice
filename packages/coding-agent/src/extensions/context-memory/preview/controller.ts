@@ -54,10 +54,13 @@ import {
 	reduceRecords,
 } from "../../../../../compaction-core/src/reduction.ts";
 import {
+	chainCoverage,
 	chainHash,
+	classifyChain,
 	freezeSegmentInput,
 	mergeChain,
 	nextSegmentRange,
+	type PreparedSegment,
 } from "../../../../../compaction-core/src/segments.ts";
 import {
 	assertUserMessages,
@@ -85,6 +88,7 @@ import type {
 	PreviewFailureStoreContract,
 	PreviewReadback,
 	PreviewSession,
+	SegmentsFallback,
 } from "./contracts.ts";
 import { type AppendedExcerpt, selectExcerpts, unusedExcerpts } from "./excerpts.ts";
 import { blockedNotice, inactiveNotice, NoticeGate, notify, readyNotice } from "./notices.ts";
@@ -431,7 +435,7 @@ export class PreviewMemoryController {
 	private readonly lastCompaction = new Map<
 		string,
 		{
-			path: "complete" | "prefix" | "notes" | "sync";
+			path: "complete" | "prefix" | "notes" | "segments" | "sync";
 			candidateId?: string;
 			foregroundCalls: number;
 			stageMs: number;
@@ -917,6 +921,18 @@ export class PreviewMemoryController {
 		} else if (this.reduction.error) {
 			reduction = { enabled: false, reason: this.reduction.error };
 		}
+		// 0.8.0 WP3: ready segments, how far they reach and the share of uncovered history they cover; counts only.
+		let segments: (ReturnType<PreviewSegments["status"]> & { coverage?: number }) | undefined;
+		if (this.segments?.enabled || this.segments?.status().state === "paused") {
+			const current = this.segments.status();
+			let coverage: number | undefined;
+			try {
+				coverage = chainCoverage(asRecords(ctx.sessionManager.getBranch()), current.coveredThrough);
+			} catch {
+				// Status is advisory; an unreadable branch leaves the share out.
+			}
+			segments = { ...current, ...(coverage === undefined ? {} : { coverage }) };
+		}
 		// Content-free rendering state (WP3): the switch and its candidate names, never summary text.
 		let rendering: { enabled: boolean; candidates?: string[]; reason?: string } | undefined;
 		if (this.rendering.enabled) {
@@ -945,6 +961,7 @@ export class PreviewMemoryController {
 			...(diagnosis.reason ? { reason: diagnosis.reason } : {}),
 			manualCompaction: diagnosis.manualCompaction,
 			...(prepared ? { preparation: prepared } : {}),
+			...(segments ? { segments } : {}),
 			...(reduction ? { reduction } : {}),
 			...(rendering ? { rendering } : {}),
 			...(calls ? { calls } : {}),
@@ -1473,7 +1490,7 @@ export class PreviewMemoryController {
 				? { ...this.preparationSubmission(ctx, event.customInstructions), noteBudget: policy }
 				: undefined;
 			const available = submission ? this.preparation?.take(submission) : undefined;
-			let path: "complete" | "prefix" | "notes" | "sync" =
+			let path: "complete" | "prefix" | "notes" | "segments" | "sync" =
 				available?.classification.status === "current-full" ? "complete" : "sync";
 			const systemTokens = textTokens(ctx.getSystemPrompt());
 			const beforeTokens =
@@ -1515,6 +1532,58 @@ export class PreviewMemoryController {
 			}
 			if (submission && path === "sync" && !preparationFallback)
 				preparationFallback = available ? "unfinished-turn" : preparing ? "in-flight" : this.preparation?.missed();
+			// 0.8.0 WP3: merge the segment chain without a writer call (U6) and commit it for its prefix, keeping later
+			// originals verbatim, under the notes path's half-threshold bound (U7). When only more coverage would help,
+			// the boundary waits at most U8's 15 s for a segment in flight that extends the chain.
+			let segmentsNote: MemoryNote | undefined;
+			let segmentsFallback: SegmentsFallback | undefined;
+			let merged: readonly PreparedSegment[] = [];
+			const segments = this.segments;
+			if (path === "sync" && segments?.enabled) {
+				if (interrupted !== undefined) segmentsFallback = "unfinished-turn";
+				else if (event.customInstructions?.trim()) segmentsFallback = "custom-focus";
+				else {
+					const assemble = (): SegmentsFallback | undefined => {
+						let boundary: PreparationSubmission;
+						try {
+							boundary = {
+								...this.preparationSubmission(ctx, undefined, segments.currentEpoch),
+								noteBudget: policy,
+							};
+						} catch {
+							// Optional work never fails the compaction; the writer runs as it would without segments.
+							return "invalid";
+						}
+						const chain = classifyChain(segments.chain, boundary);
+						if (!chain.links.length)
+							return segments.chain.length
+								? "invalid"
+								: segments.status().state === "preparing"
+									? "in-flight"
+									: "no-segments";
+						const note = mergeChain(previous?.memory.note, chain.links);
+						if ("refusal" in note) return note.refusal;
+						const end = branch.findIndex((entry) => entry.id === chain.coveredThrough);
+						try {
+							segmentsNote = validateNote(note.note, asRecords(branch.slice(0, end + 1)), policy.hardTokens);
+						} catch {
+							return "merge";
+						}
+						merged = chain.links;
+						// A chain through the last entry covers everything, as a complete candidate does: the ordinary
+						// cut decides what stays. The prefix path would keep the covered last turn verbatim.
+						if (end === branch.length - 1) return undefined;
+						return commitPrefix(segmentsNote, end, 0.5);
+					};
+					segmentsFallback = assemble();
+					if (
+						(segmentsFallback === "in-flight" || segmentsFallback === "fit" || segmentsFallback === "cut") &&
+						(await segments.settle(15_000, event.signal))
+					)
+						segmentsFallback = assemble();
+					if (!segmentsFallback) path = "segments";
+				}
+			}
 			// D18: merge the session model's work notes without a writer call; the user's own messages follow verbatim.
 			// When B leaves a compaction to the writer, the reason is recorded for evaluation.
 			let notesNote: MemoryNote | undefined;
@@ -1556,7 +1625,13 @@ export class PreviewMemoryController {
 					}
 				: path === "notes" && notesNote
 					? { note: notesNote, writerModel: modelName(ctx.model), writerEffort: "off" as const }
-					: undefined;
+					: path === "segments" && segmentsNote
+						? {
+								note: segmentsNote,
+								writerModel: merged[merged.length - 1].candidate.provenance.writerModel,
+								writerEffort: merged[merged.length - 1].candidate.provenance.writerEffort,
+							}
+						: undefined;
 			let written: WriteMemoryResult;
 			if (ready) {
 				written = { ...ready, usage: sumMemoryUsage([]), chunkCount: 0 };
@@ -1625,7 +1700,7 @@ export class PreviewMemoryController {
 					build: PREVIEW_BUILD_ID,
 					noteBudget: policy,
 					...(userMessages.length ? { userMessages: userMessages.map((entry) => entry.id) } : {}),
-					...(this.preparation?.enabled || this.workNotes.enabled
+					...(this.preparation?.enabled || this.workNotes.enabled || this.segments?.enabled
 						? {
 								preparation: {
 									version: 1 as const,
@@ -1637,8 +1712,15 @@ export class PreviewMemoryController {
 											}
 										: {}),
 									...(path === "notes" ? { noteIds: notes.map((item) => item.id) } : {}),
+									...(path === "segments"
+										? {
+												segmentIds: merged.map((link) => link.snapshot.segmentId),
+												callIds: merged.flatMap((link) => [...link.candidate.provenance.callIds]),
+											}
+										: {}),
 									...(notesFallback ? { notesFallback } : {}),
 									...(preparationFallback ? { preparationFallback } : {}),
+									...(segmentsFallback ? { segmentsFallback } : {}),
 								},
 							}
 						: {}),

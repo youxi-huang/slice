@@ -36,6 +36,7 @@ test("a unit's pi-context-memory.json carries each named switch in the shape the
 		notes: { enabled: false },
 		reduction: { enabled: true },
 		rendering: { enabled: false, candidates: [] },
+		segments: { enabled: false },
 	});
 	assert.deepEqual(readExcerptSettings(agentDir), { enabled: false });
 	assert.equal(readMemoryConfig(agentDir).enabled, true);
@@ -56,6 +57,7 @@ test("a unit's pi-context-memory.json carries each named switch in the shape the
 		notes: { enabled: true },
 		reduction: { enabled: true },
 		rendering: { enabled: false, candidates: [] },
+		segments: { enabled: false },
 	});
 	assert.deepEqual(readExcerptSettings(everyDir), { enabled: true });
 
@@ -125,6 +127,7 @@ test("without --session-settings no unit gets a settings file, so units run on t
 		notes: { enabled: false },
 		reduction: { enabled: false },
 		rendering: { enabled: false, candidates: [] },
+		segments: { enabled: false },
 	});
 	assert.deepEqual(readExcerptSettings(agentDir), { enabled: false });
 });

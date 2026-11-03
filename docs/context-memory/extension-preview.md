@@ -647,6 +647,50 @@ until a note supersedes them or the writer rewrites the note, so a long task
 reaches the schema's bounds (40 facts per section, 20 gaps) and falls back to
 the writer more often. Both wait for a note schema with stable fact identities.
 
+### Segments (0.8.0)
+
+Segments have their own switch, off by default:
+
+```json
+{
+  "previewSegments": {
+    "enabled": true
+  }
+}
+```
+
+With it, the session model writes a segment note in the background after a
+completed turn, through the session's own request so the provider's cache
+serves it. The first segment of a checkpoint interval waits until the context
+reaches half the compaction threshold and covers everything since the previous
+checkpoint; each later one waits for 15% of the threshold, between 8,192 and
+32,000 tokens, of new history. A segment cites only the turns it covers. One
+runs at a time; the segments are kept in memory and lost on restart. A fixed
+`writerModel` writes none.
+
+At compaction the extension merges the previous checkpoint's note with the
+segments, in order, without a model call, the way B merges work notes, except
+that a segment may add instructions found in its own turns. The merged note is
+committed through the prefix path, so the turns after the last segment stay
+verbatim, unless that would leave half the compaction threshold or more in
+context. A segment still being written is waited for at most 15 seconds when
+only it would let the merge commit. `details.preparation.path` is then
+`segments`, with `segmentIds` and the `callIds` that wrote them.
+
+The writer compacts synchronously instead, as before, when no segment is ready
+or valid, after an unfinished turn, with custom focus, when a segment
+supersedes the source of a carried instruction, when the merge is ambiguous or
+exceeds the note schema or budget, or when the prefix conditions fail.
+`details.preparation.segmentsFallback` records why.
+
+Segments never block work. They stop for the rest of a checkpoint interval
+after eight calls, or once their calls have spent as many uncached tokens as
+the threshold holds, a call with unknown usage spending all of it. They also
+stop after three failures of one kind in a row, until the next checkpoint.
+`/compaction-status` shows `segments` with how many are ready, how far they
+reach and the share of history since the last checkpoint they cover, and
+`calls.segmentCalls`; `/compaction-doctor` says when they are paused and why.
+
 ## Verification
 
 Focused tests run through `scripts/context-memory-check.mjs`. The independent

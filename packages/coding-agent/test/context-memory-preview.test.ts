@@ -36,6 +36,7 @@ import {
 import { DEFAULT_MEMORY_CONFIG, SESSION_WRITER } from "../src/extensions/context-memory/config.ts";
 import { freezeHistory, queryHistory } from "../src/extensions/context-memory/history.ts";
 import {
+	CONTEXT_KEEP_NONE,
 	CONTEXT_MEMORY_KIND,
 	CONTEXT_MEMORY_VERSION,
 	CONTEXT_NOTE_TYPE,
@@ -70,7 +71,7 @@ import {
 	readyNotice,
 	recoverRefusedNotice,
 } from "../src/extensions/context-memory/preview/notices.ts";
-import { PreviewPreparation } from "../src/extensions/context-memory/preview/preparation.ts";
+import { PreviewPreparation, readPreparationSettings } from "../src/extensions/context-memory/preview/preparation.ts";
 import { PreviewSegments } from "../src/extensions/context-memory/preview/segments.ts";
 
 /** Pi's entries satisfy the core's structural record shapes; the union is widened here, never converted (records.ts). */
@@ -3424,7 +3425,7 @@ describe("preview segments at settled turns (0.8.0 WP2)", () => {
 		expect(requests).toHaveLength(1);
 		expect(requests[0].messages.slice(0, -1)).toHaveLength(2);
 		expect(instruction(requests[0])).toContain("Write a segment note for entries source-1 through reply-1 only");
-		expect(segments.status()).toMatchObject({ state: "idle", links: 1, coveredThrough: "reply-1" });
+		expect(segments.status()).toMatchObject({ state: "idle", ready: 1, coveredThrough: "reply-1" });
 		expect(controller.status(ctx).calls).toMatchObject({ segmentCalls: 1, preparationCalls: 0, compactionCalls: 0 });
 	});
 
@@ -3440,7 +3441,7 @@ describe("preview segments at settled turns (0.8.0 WP2)", () => {
 		const text = instruction(requests[1]);
 		expect(text).toContain("Write a segment note for entries source-2 through reply-3 only");
 		expect(JSON.parse(text.slice(text.indexOf("Attachments:\n") + 13)).previousNote).toEqual(note());
-		expect(segments.status()).toMatchObject({ links: 2, coveredThrough: "reply-3" });
+		expect(segments.status()).toMatchObject({ ready: 2, coveredThrough: "reply-3" });
 	});
 
 	it("stops after three refusals of one class in a row, until the next checkpoint commits", async () => {
@@ -3452,7 +3453,7 @@ describe("preview segments at settled turns (0.8.0 WP2)", () => {
 			await settle();
 		}
 		expect(requests).toHaveLength(4);
-		expect(segments.status()).toMatchObject({ state: "paused", reason: "refusal", links: 1 });
+		expect(segments.status()).toMatchObject({ state: "paused", reason: "refusal", ready: 1 });
 		turn(5, long("Synthetic step 5."));
 		await settle();
 		expect(requests).toHaveLength(4);
@@ -3472,7 +3473,7 @@ describe("preview segments at settled turns (0.8.0 WP2)", () => {
 			{ type: "session_compact", compactionEntry: entry, fromExtension: true, reason: "manual", willRetry: false },
 			ctx,
 		);
-		expect(segments.status()).toEqual({ enabled: true, state: "idle", links: 0 });
+		expect(segments.status()).toEqual({ enabled: true, state: "idle", ready: 0 });
 	});
 
 	it.each(["branch-switch", "writer-change"])(
@@ -3490,7 +3491,7 @@ describe("preview segments at settled turns (0.8.0 WP2)", () => {
 			expect(held?.signal?.aborted).toBe(true);
 			held?.release();
 			await segments.waitForIdle();
-			expect(segments.status()).toEqual({ enabled: true, state: "idle", links: 0 });
+			expect(segments.status()).toEqual({ enabled: true, state: "idle", ready: 0 });
 		},
 	);
 
@@ -3501,6 +3502,137 @@ describe("preview segments at settled turns (0.8.0 WP2)", () => {
 		await settle();
 		expect(requests).toHaveLength(1);
 		expect(journal.segmentSpend("synthetic-session", "none")).toEqual({ calls: 1, uncachedTokens: 0, unknown: true });
+	});
+
+	function event(customInstructions?: string): SessionBeforeCompactEvent {
+		return {
+			type: "session_before_compact",
+			reason: "manual",
+			willRetry: false,
+			signal: new AbortController().signal,
+			customInstructions,
+			preparation: { tokensBefore: 2000 },
+		} as SessionBeforeCompactEvent;
+	}
+	function commit(value: PreviewCompaction): void {
+		const entry = saved(session, value);
+		session.append(entry);
+		controller.committed(
+			{ type: "session_compact", compactionEntry: entry, fromExtension: true, reason: "manual", willRetry: false },
+			ctx,
+		);
+	}
+
+	it("commits the merged chain for its prefix with no writer call and keeps later turns verbatim (WP3)", async () => {
+		await settle();
+		turn(2, long("The synthetic build is green."));
+		outputs.push(fact(2, "The synthetic build is green."));
+		await settle();
+		turn(3, "Keep going.");
+		const value = await controller.compact(event(), ctx);
+		expect(requests).toHaveLength(2);
+		expect(value.details?.preparation).toMatchObject({
+			path: "segments",
+			callIds: [expect.any(String), expect.any(String)],
+		});
+		expect(value.details?.preparation?.segmentIds).toHaveLength(2);
+		expect(value.details?.coveredThrough).toBe("reply-2");
+		expect(value.firstKeptEntryId).toBe("source-3");
+		expect(value.details?.note.state).toEqual([...note().state, ...fact(2, "The synthetic build is green.").state]);
+		expect(value.details?.note.instructions).toEqual(note().instructions);
+		expect(controller.status(ctx).lastCompaction).toMatchObject({ path: "segments", foregroundCalls: 0 });
+		commit(value);
+		expect(segments.status()).toMatchObject({ ready: 0 });
+	});
+
+	it.each([
+		["no-segments", undefined],
+		["custom-focus", "Focus on the build."],
+	])("leaves the boundary to the writer and records %s", async (cause, focus) => {
+		if (cause === "custom-focus") await settle();
+		const before = requests.length;
+		const value = await controller.compact(event(focus), ctx);
+		expect(requests).toHaveLength(before + 1);
+		expect(value.details?.preparation).toMatchObject({ path: "sync", segmentsFallback: cause });
+	});
+
+	it("leaves the boundary to the writer when a segment supersedes a carried instruction's source", async () => {
+		await settle();
+		turn(2, long("Change the deployment permission."));
+		outputs.push({
+			...fact(2, "The deployment permission may change."),
+			instructions: [
+				{ text: "The deployment permission may change.", sources: ["source-2"], supersedes: ["source-1"] },
+			],
+		});
+		await settle();
+		expect(segments.status()).toMatchObject({ ready: 2 });
+		const value = await controller.compact(event(), ctx);
+		expect(value.details?.preparation).toMatchObject({ path: "sync", segmentsFallback: "instruction-superseded" });
+	});
+
+	it("waits for the segment in flight that the boundary needs, and never past U8's bound", async () => {
+		turn(2, long("The synthetic build is green."));
+		hold = true;
+		controller.segment(ctx);
+		await vi.waitFor(() => expect(held).toBeDefined());
+		expect(await segments.settle(10, new AbortController().signal)).toBe(false);
+		hold = false;
+		const pending = controller.compact(event(), ctx);
+		held?.release();
+		const value = await pending;
+		expect(requests).toHaveLength(1);
+		expect(value.details?.preparation).toMatchObject({ path: "segments" });
+		// The chain reaches the last entry, so it covers everything and the ordinary cut keeps nothing.
+		expect(value.details?.coveredThrough).toBe("reply-2");
+		expect(value.firstKeptEntryId).toBe(CONTEXT_KEEP_NONE);
+	});
+
+	it("shows ready segments, how far they reach and the share of uncovered history they cover", async () => {
+		await settle();
+		expect(controller.status(ctx).segments).toEqual({
+			enabled: true,
+			state: "idle",
+			ready: 1,
+			coveredThrough: "reply-1",
+			coverage: 1,
+		});
+		turn(2, long("The synthetic build is green."));
+		expect(controller.status(ctx).segments?.coverage).toBeLessThan(0.01);
+	});
+
+	it("parses previewSegments like the other switches: off by default, paused when invalid (U13)", () => {
+		const cases: [string | undefined, { enabled: boolean; error?: string }][] = [
+			[undefined, { enabled: false }],
+			[JSON.stringify({ previewSegments: {} }), { enabled: false }],
+			[JSON.stringify({ previewSegments: { enabled: true } }), { enabled: true }],
+			[JSON.stringify({ previewSegments: { enabled: 1 } }), { enabled: false, error: "invalid-config" }],
+		];
+		for (const [content, expected] of cases) {
+			const agentDir = fs.mkdtempSync(join(tmpdir(), "pi-segment-settings-"));
+			if (content !== undefined) fs.writeFileSync(join(agentDir, "pi-context-memory.json"), content);
+			expect(readPreparationSettings(agentDir).segments).toEqual(expected);
+			fs.rmSync(agentDir, { recursive: true, force: true });
+		}
+		const invalid = new PreviewSegments({ enabled: true, settingsError: "invalid-config", journal });
+		expect(invalid.status()).toEqual({ enabled: false, state: "paused", ready: 0, reason: "invalid-config" });
+	});
+
+	it("tells the doctor when segments are off, inactive, paused or on", () => {
+		const diagnosis = controller.diagnose(ctx);
+		const report = (segmentState: { enabled: boolean; state: string; reason?: string }, writerModel = "session") =>
+			doctorReport(diagnosis, { disabled: false, writerModel, segments: segmentState });
+		expect(report({ enabled: false, state: "paused", reason: "invalid-config" })).toContain(
+			"segments: off - previewSegments in pi-context-memory.json is not valid, so segments stay off",
+		);
+		expect(report({ enabled: true, state: "idle" }, "preview-test/preview-test")).toContain(
+			"segments: inactive - they need the session writer",
+		);
+		expect(report({ enabled: true, state: "paused", reason: "exhausted-output" })).toContain(
+			"segments: paused - three notes cut off at the output limit in a row. The writer compacts until the next checkpoint",
+		);
+		expect(report({ enabled: true, state: "idle" })).toContain("segments: ok - written at settled turns");
+		expect(report({ enabled: false, state: "disabled" })).not.toContain("segments:");
 	});
 
 	it("writes no segment through a fixed writer (U4)", async () => {

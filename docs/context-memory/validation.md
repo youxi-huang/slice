@@ -1,5 +1,45 @@
 # Validation record
 
+## 0.8.0 WP3: segments on the loopback A/B, 2026-11-03 UTC
+
+The first measurement of segments, with the arm WP3 adds to the runner, on the same script and settings as the
+[WP0 baseline](#080-wp0-the-loopback-ab-baseline-over-chains-2026-11-03-utc): official Pi 1.4.0, the preview
+package built from the commit that adds this entry, `--latency-ms 1000 --arms sync,a,segments`, scripted writer,
+no provider called. Every arm exited 0. The scripted writer answers a segment request with the facts whose
+sources lie in the named range, and retires an overturned port ruling with `supersedes` as it does for a whole
+note.
+
+| Cycles, pace | Arm | Paths | Pause P50 / P95, ms | P95 without a foreground writer, ms | Fallbacks | Writer calls (segment) | Probes |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 2, settled | sync | sync ×2 | 1,084 / 1,114 | | | 2 | 8/8 |
+| 2, settled | A | prefix ×2 | 38 / 69 | 69 | none | 2 | 8/8 |
+| 2, settled | segments | segments ×2 | 37 / 74 | 74 | none | 2 (2) | 8/8 |
+| 6, settled | sync | sync ×6 | 1,144 / 1,247 | | | 6 | 12/12 |
+| 6, settled | A | prefix ×6 | 89 / 196 | 196 | none | 6 | 12/12 |
+| 6, settled | segments | segments ×2, sync ×4 | 1,150 / 1,283 | 71 | `instruction-superseded` ×4 | 10 (6) | 12/12 |
+| 6, immediate | sync | sync ×6 | 1,142 / 1,340 | | | 6 | 12/12 |
+| 6, immediate | A | prefix, sync, prefix ×4 | 119 / 1,153 | 199 | `in-flight` once | 7 | 12/12 |
+| 6, immediate | segments | segments ×2, sync ×4 | 1,191 / 1,304 | 115 | `instruction-superseded` ×4 | 10 (6) | 12/12 |
+
+- Where segments serve, they pause like A: 37 and 74 ms over two cycles against A's 38 and 69, and the second
+  boundary grows by about the same 35 ms.
+- From the third cycle on, every boundary fell back on `instruction-superseded`. The script moves the port each
+  cycle, the previous checkpoint carries the old port as an instruction, and the segment that records the new
+  ruling names the old one's source in `supersedes`. U6 sends any such segment to the writer, even though here
+  the source supports that one instruction and the segment gives exactly one in its place. The four segment
+  calls behind those links were discarded, so this arm made 10 writer calls against sync's 6 and cost about 22%
+  more in synthetic dollars. The first port ruling is not one of the script's facts, which is why the second
+  cycle still merged.
+- At the immediate pace, A's preparation was still running at the second boundary and A fell back (1,153 ms).
+  The segment covering that cycle was also still running; U8's bounded wait let it finish, and the boundary
+  merged in 115 ms. This is the one place the run exercises U8.
+- Turn time per request beyond the latency was 60 to 91 ms with segments against 23 to 68 for the others; it
+  includes the runner polling `/compaction-status` while a segment runs and is not the package's request overhead.
+
+Not covered: a provider's cache, whose hit on the segment's prefix is U4's premise; a script whose rulings do not
+change; latencies other than one second. The U6 result is a decision for the maintainer, recorded in the
+[plan](v0.8.0-plan.md#wp3-assembly-at-the-boundary).
+
 ## 0.8.0 WP0: the loopback A/B baseline over chains, 2026-11-03 UTC
 
 The first measurement for the [v0.8.0 plan](v0.8.0-plan.md#wp0-measurement-first), taken before any segment

@@ -118,6 +118,19 @@ function chainStart(branch: readonly SessionRecord[]): number | undefined {
 	return 0;
 }
 
+/**
+ * The share of the history after the base checkpoint's coverage that a chain through `coveredThrough` covers, by the
+ * compacted-source estimate; 0 when nothing is uncovered or the base supports no chain. For status only.
+ */
+export function chainCoverage(branch: readonly SessionRecord[], coveredThrough: string | undefined): number {
+	const start = chainStart(branch);
+	if (start === undefined) return 0;
+	const total = compactedSourceTokens(branch.slice(start));
+	const end = coveredThrough === undefined ? -1 : branch.findIndex((record) => record.id === coveredThrough);
+	if (!total || end < start) return 0;
+	return Math.round((compactedSourceTokens(branch.slice(start, end + 1)) / total) * 100) / 100;
+}
+
 /** U3's starting value for a later link's range: 15 % of the trigger, between 8,192 and 32,000 tokens. */
 export function segmentRangeTokens(triggerTokens: number): number {
 	return Math.min(32_000, Math.max(8_192, Math.floor(triggerTokens * 0.15)));

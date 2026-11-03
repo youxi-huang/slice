@@ -40,6 +40,7 @@ export interface SegmentJob {
 
 export class PreviewSegments {
 	readonly enabled: boolean;
+	private readonly settingsError?: string;
 	private readonly journal: CallJournal;
 	private sessionId?: string;
 	private epoch = 0;
@@ -49,8 +50,9 @@ export class PreviewSegments {
 	private broken?: SegmentFailure;
 	private disposed = false;
 
-	constructor(options: { enabled: boolean; journal: CallJournal }) {
-		this.enabled = options.enabled;
+	constructor(options: { enabled: boolean; settingsError?: string; journal: CallJournal }) {
+		this.enabled = options.enabled && !options.settingsError;
+		this.settingsError = options.settingsError;
 		this.journal = options.journal;
 	}
 
@@ -155,6 +157,28 @@ export class PreviewSegments {
 		await this.running?.settled;
 	}
 
+	/**
+	 * U8: the boundary may wait at most `ms` for the segment in flight when it extends the chain. It is never aborted
+	 * here: a result that is still valid serves the next boundary. Whether it settled in time.
+	 */
+	async settle(ms: number, signal: AbortSignal): Promise<boolean> {
+		const running = this.running;
+		if (!running || running.input.chainHash !== chainHash(this.links) || signal.aborted) return false;
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		let stop: (() => void) | undefined;
+		const late = new Promise<false>((resolve) => {
+			timer = setTimeout(() => resolve(false), ms);
+			stop = () => resolve(false);
+			signal.addEventListener("abort", stop, { once: true });
+		});
+		try {
+			return await Promise.race([running.settled.then(() => true), late]);
+		} finally {
+			clearTimeout(timer);
+			if (stop) signal.removeEventListener("abort", stop);
+		}
+	}
+
 	/** A confirmed checkpoint starts a new interval: a new chain, and the breaker closes again. */
 	committed(): void {
 		this.invalidate();
@@ -174,11 +198,25 @@ export class PreviewSegments {
 		this.invalidate();
 	}
 
-	status() {
+	/** Content-free: counts, a record ID and the breaker's failure class, never note text. */
+	status(): {
+		enabled: boolean;
+		state: "disabled" | "paused" | "preparing" | "idle";
+		ready: number;
+		coveredThrough?: string;
+		reason?: string;
+	} {
+		if (!this.enabled)
+			return {
+				enabled: false,
+				state: this.settingsError ? "paused" : "disabled",
+				ready: 0,
+				...(this.settingsError ? { reason: this.settingsError } : {}),
+			};
 		return {
-			enabled: this.enabled,
+			enabled: true,
 			state: this.running ? "preparing" : this.broken ? "paused" : "idle",
-			links: this.links.length,
+			ready: this.links.length,
 			...(this.links.length ? { coveredThrough: this.links[this.links.length - 1].snapshot.lastId } : {}),
 			...(this.broken ? { reason: this.broken } : {}),
 		};

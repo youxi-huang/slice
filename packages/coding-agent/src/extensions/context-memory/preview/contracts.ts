@@ -10,6 +10,7 @@ export type {
 	PreviewAttempt,
 	PreviewCheckpoint,
 	PreviewStatus,
+	SegmentsFallback,
 } from "../../../../../compaction-core/src/contracts.ts";
 
 export type PreviewSession = ExtensionContext["sessionManager"];

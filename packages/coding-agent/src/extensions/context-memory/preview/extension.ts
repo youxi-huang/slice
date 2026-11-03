@@ -33,6 +33,7 @@ import {
 	recoverRefusedNotice,
 } from "./notices.ts";
 import { PreviewPreparation, readPreparationSettings } from "./preparation.ts";
+import { PreviewSegments } from "./segments.ts";
 import { resolveWriterModel } from "./writer.ts";
 
 /** Pi's entries satisfy the core's structural record shapes; the snapshot is widened here, never converted (records.ts). */
@@ -78,6 +79,11 @@ export default function contextMemoryPreview(pi: ExtensionAPI): void {
 	}
 	const journal = new CallJournal(agentDir);
 	const preparation = readPreparationSettings(agentDir);
+	const segments = new PreviewSegments({
+		enabled: preparation.segments.enabled,
+		settingsError: preparation.segments.error,
+		journal,
+	});
 	const controller = new PreviewMemoryController({
 		config,
 		configError,
@@ -85,6 +91,7 @@ export default function contextMemoryPreview(pi: ExtensionAPI): void {
 		journal,
 		preparation: new PreviewPreparation({ enabled: preparation.enabled, settingsError: preparation.error, journal }),
 		workNotes: preparation.notes,
+		segments,
 		excerpts: readExcerptSettings(agentDir),
 		reduction: preparation.reduction,
 		rendering: preparation.rendering,
@@ -112,6 +119,7 @@ export default function contextMemoryPreview(pi: ExtensionAPI): void {
 						configError,
 						writerModel: config?.writerModel,
 						copies: loaded(),
+						segments: segments.status(),
 					}),
 				);
 			} catch (error) {
