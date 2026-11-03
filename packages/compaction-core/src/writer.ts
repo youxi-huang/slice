@@ -48,7 +48,7 @@ import {
 	schemaCounts,
 	schemaFailureMessage,
 } from "./schema-diagnostics.ts";
-import { diagnoseScope, type ScopeCounts, withoutOutOfScope } from "./scope-diagnostics.ts";
+import { diagnoseScope, type ScopeCounts, withinSegmentRange, withoutOutOfScope } from "./scope-diagnostics.ts";
 import {
 	applySourcesRepair,
 	type CitableEvidence,
@@ -674,9 +674,30 @@ export async function writeMemory<TRequest, TResponse extends WriterResponse>(
 	 * The validator decides; a schema, scope or quotation failure is classified for status and the message, never
 	 * accepted.
 	 */
+	// 0.8.0: a segment's range, from its first entry through its last. Found on WP5's provider runs: after a
+	// checkpoint, writers re-cite the entries its note cites, and every such segment was refused at the range check.
+	const segmentRange = (() => {
+		if (!options.segment) return undefined;
+		const ids = options.branch.map((entry) => entry.id);
+		const first = ids.indexOf(options.segment.firstId);
+		const last = ids.indexOf(options.segment.lastId);
+		return first >= 0 && last >= first ? new Set(ids.slice(first, last + 1)) : undefined;
+	})();
+	/** A segment note limited to its range by `withinSegmentRange`; when that leaves no valid note, the refusal stands. */
+	const withinRange = (note: MemoryNote): MemoryNote => {
+		const pruned = segmentRange ? withinSegmentRange(note, segmentRange) : undefined;
+		if (!pruned) return note;
+		scopeDropped += pruned.dropped;
+		report();
+		try {
+			return validateNoteContent(pruned.note, options.branch);
+		} catch {
+			throw new Error("CONTEXT_NOTE_SCOPE: a segment cites a record outside its range");
+		}
+	};
 	const validateCandidate = (value: unknown, repaired: boolean): MemoryNote => {
 		try {
-			return validateNoteContent(value, options.branch);
+			return withinRange(validateNoteContent(value, options.branch));
 		} catch (error) {
 			if (error instanceof Error && error.message.startsWith("CONTEXT_NOTE_INVALID")) {
 				const diagnosis = diagnoseSchema(value);

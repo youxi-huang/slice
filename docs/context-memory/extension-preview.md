@@ -719,7 +719,10 @@ reach and the share of history since the last checkpoint they cover, and
 linked into the chain, cancelled in flight, no longer extending the chain,
 refused or failed by error code (`CONTEXT_SEGMENT_DEADLINE` for a run past its
 deadline), and links dropped when a later turn classified the chain again, by
-the reason it stopped.
+the reason it stopped. `limited` counts segments the writer kept to their own
+turns: writers often restate the previous checkpoint in a segment, and a fact
+that cites only earlier turns is dropped there, since the merge carries the
+previous note anyway.
 
 ## Verification
 

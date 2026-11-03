@@ -3487,7 +3487,8 @@ describe("preview segments at settled turns (0.8.0 WP2)", () => {
 			stale: 0,
 			failed: { CONTEXT_NOTE_SCOPE: 3 },
 			dropped: {},
-			outOfRange: { instructions: 3, state: 3 },
+			limited: 0,
+			outOfRange: {},
 		});
 		turn(5, long("Synthetic step 5."));
 		await settle();
@@ -3519,7 +3520,8 @@ describe("preview segments at settled turns (0.8.0 WP2)", () => {
 				stale: 0,
 				failed: { CONTEXT_NOTE_SCOPE: 3 },
 				dropped: {},
-				outOfRange: { instructions: 3, state: 3 },
+				limited: 0,
+				outOfRange: {},
 			},
 		});
 	});
@@ -3544,7 +3546,7 @@ describe("preview segments at settled turns (0.8.0 WP2)", () => {
 				state: "idle",
 				effort: "session",
 				ready: 0,
-				results: { linked: 0, cancelled: 1, stale: 0, failed: {}, dropped: {}, outOfRange: {} },
+				results: { linked: 0, cancelled: 1, stale: 0, failed: {}, dropped: {}, limited: 0, outOfRange: {} },
 			});
 		},
 	);
@@ -3678,7 +3680,7 @@ describe("preview segments at settled turns (0.8.0 WP2)", () => {
 			state: "idle",
 			effort: "session",
 			ready: 1,
-			results: { linked: 1, cancelled: 0, stale: 0, failed: {}, dropped: {}, outOfRange: {} },
+			results: { linked: 1, cancelled: 0, stale: 0, failed: {}, dropped: {}, limited: 0, outOfRange: {} },
 			coveredThrough: "reply-1",
 			coverage: 1,
 		});
@@ -3770,6 +3772,25 @@ describe("preview segments at settled turns (0.8.0 WP2)", () => {
 		expect(value.details?.preparation).toMatchObject({ path: "sync", segmentsFallback: "invalid" });
 	});
 
+	it("links a segment that restated the previous note once the writer keeps it to its range", async () => {
+		await settle();
+		turn(2, long("The synthetic build is green."));
+		// The writer rewrote what the first segment holds beside what turn 2 adds.
+		outputs.push({
+			...fact(2, "The synthetic build is green."),
+			state: [
+				{ text: "Synthetic step 1 is done.", sources: ["source-1"] },
+				{ text: "The synthetic build is green.", sources: ["source-2"] },
+			],
+		});
+		await settle();
+		expect(segments.status()).toMatchObject({ ready: 2 });
+		expect(segments.status().results).toMatchObject({ linked: 2, limited: 1, failed: {}, outOfRange: {} });
+		expect(segments.chain[1].candidate.note.state).toEqual([
+			{ text: "The synthetic build is green.", sources: ["source-2"] },
+		]);
+	});
+
 	it("counts a segment cancelled in flight by a checkpoint apart from failures", async () => {
 		turn(2, long("The synthetic build is green."));
 		hold = true;
@@ -3785,6 +3806,7 @@ describe("preview segments at settled turns (0.8.0 WP2)", () => {
 			stale: 0,
 			failed: {},
 			dropped: {},
+			limited: 0,
 			outOfRange: {},
 		});
 	});

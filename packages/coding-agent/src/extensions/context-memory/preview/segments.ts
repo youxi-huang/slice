@@ -50,7 +50,9 @@ export interface SegmentResults {
 	stale: number;
 	failed: Record<string, number>;
 	dropped: Record<string, number>;
-	/** Notes that cited outside their range, by the section that did: what the scope refusals consist of. */
+	/** Notes the writer kept to their range, dropping facts that rest only on earlier entries. */
+	limited: number;
+	/** Notes that still cited outside their range, by the section that did; the range check refuses them. */
 	outOfRange: Record<string, number>;
 }
 
@@ -60,6 +62,7 @@ const noResults = (): SegmentResults => ({
 	stale: 0,
 	failed: {},
 	dropped: {},
+	limited: 0,
 	outOfRange: {},
 });
 
@@ -79,7 +82,8 @@ export function segmentLevel(
 
 export interface SegmentJob {
 	input: SegmentSnapshot;
-	run(signal: AbortSignal, hooks: WriterCallHooks): Promise<WriteMemoryResult>;
+	/** The written note, and how many citations the writer dropped to keep it inside its range. */
+	run(signal: AbortSignal, hooks: WriterCallHooks): Promise<WriteMemoryResult & { scopeDropped?: number }>;
 }
 
 export class PreviewSegments {
@@ -195,6 +199,7 @@ export class PreviewSegments {
 					if (!late && this.sessionId === input.preparation.sessionId) this.results.cancelled++;
 					return;
 				}
+				if (written.scopeDropped) this.results.limited++;
 				// Content-free: which sections cite outside the range, counted before the range check refuses the note.
 				const range = new Set(input.rangeIds);
 				for (const section of noteSections)

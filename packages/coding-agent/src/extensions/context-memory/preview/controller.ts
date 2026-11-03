@@ -759,8 +759,9 @@ export class PreviewMemoryController {
 			this.segments.start(
 				{
 					input,
-					run: (signal, callHooks) =>
-						writeMemory({
+					run: async (signal, callHooks) => {
+						let scopeDropped = 0;
+						const written = await writeMemory({
 							config,
 							registry: capturedRegistry,
 							sessionModel,
@@ -775,7 +776,12 @@ export class PreviewMemoryController {
 							signal,
 							callHooks,
 							segment: { firstId, lastId },
-						}),
+							onProgress: (progress) => {
+								scopeDropped = progress.scopeDropped ?? scopeDropped;
+							},
+						});
+						return { ...written, scopeDropped };
+					},
 				},
 				interval,
 				trigger,

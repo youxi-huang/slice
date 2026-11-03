@@ -329,7 +329,14 @@ The segment writer is the session writer (`writer.ts` `WriteMemoryOptions`
 `segment`): the session's request through the range's last record, closed by
 one instruction that names the range, attaches the current merged note as
 `previousNote` and asks for what the range adds or changes, citing only the
-range. A fixed writer writes no segment.
+range. A fixed writer writes no segment. Writers often restate the previous
+note, so before the range check the writer keeps a segment note to its range
+(`scope-diagnostics.ts` `withinSegmentRange`): a fact that cites only earlier
+records is dropped, since the merge carries the previous note; a fact that also
+cites the range keeps those sources alone; a plan with a step that rests only
+on earlier records is dropped whole, so the previous plan stands; `supersedes`
+stays as written. Nothing is added, and the note is validated again, so a
+segment left without a state fact of its own is still refused.
 
 The merge (`work-notes.ts` `mergeNotes`) adds each note's instructions and facts
 in order, drops earlier items whose sources a later item supersedes, and keeps

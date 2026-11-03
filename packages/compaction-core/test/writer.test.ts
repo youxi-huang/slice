@@ -4,7 +4,7 @@
 import { describe, expect, it } from "vitest";
 import type { MemoryNote } from "../src/notes.ts";
 import type { SessionRecord } from "../src/records.ts";
-import { withoutOutOfScope } from "../src/scope-diagnostics.ts";
+import { withinSegmentRange, withoutOutOfScope } from "../src/scope-diagnostics.ts";
 import {
 	quotableOriginals,
 	sumMemoryUsage,
@@ -280,6 +280,63 @@ describe("compaction core: segment requests (0.8.0 WP2, U4)", () => {
 		const attachments = JSON.parse(request.instruction.slice(request.instruction.indexOf("Attachments:\n") + 13));
 		expect(attachments).toMatchObject({ previousNote: previous });
 		expect(attachments.referencedEvidence).toBeUndefined();
+	});
+
+	it("keeps a segment to its range when the writer restates the previous note (found on WP5's provider runs)", async () => {
+		// The writer rewrote the whole note: facts the previous note holds, cited to u1, beside what u2 adds.
+		const restated = note({
+			instructions: [{ text: "Never touch prod.", sources: ["u1"] }],
+			reasons: [{ text: "Blue-green keeps the old version serving.", sources: ["u1", "u2"] }],
+			state: [
+				{ text: "Service on port 4317.", sources: ["u1"] },
+				{ text: "Deploying with blue-green.", sources: ["u2"] },
+			],
+		});
+		const transport = scripted([answer(restated)], { role: "session", prefixTokens: () => 1000 });
+		const progress: WriterProgress[] = [];
+		const result = await writeMemory(
+			options({
+				previous: note(),
+				uncovered: [branch[1]],
+				segment: { firstId: "u2", lastId: "u2" },
+				onProgress: (value) => progress.push(value),
+			}),
+			transport.open,
+		);
+		// What only u1 supports is left to the previous note; a fact that also rests on u2 keeps u2 alone.
+		expect(result.note.instructions).toEqual([]);
+		expect(result.note.reasons).toEqual([{ text: "Blue-green keeps the old version serving.", sources: ["u2"] }]);
+		expect(result.note.state).toEqual([{ text: "Deploying with blue-green.", sources: ["u2"] }]);
+		expect(progress.at(-1)?.scopeDropped).toBe(3);
+		expect(transport.sent).toHaveLength(1);
+	});
+
+	it("still refuses a segment that keeps no state of its own once limited to its range", async () => {
+		const transport = scripted([answer(note())], { role: "session", prefixTokens: () => 1000 });
+		await expect(
+			writeMemory(
+				options({ previous: note(), uncovered: [branch[1]], segment: { firstId: "u2", lastId: "u2" } }),
+				transport.open,
+			),
+		).rejects.toThrow(/^CONTEXT_NOTE_SCOPE: a segment cites a record outside its range/);
+	});
+
+	it("drops a plan with a step that rests only on earlier entries, so the previous plan stands", () => {
+		const range = new Set(["u2"]);
+		const plan = note({
+			state: [{ text: "Deploying with blue-green.", sources: ["u2"] }],
+			nextSteps: [
+				{ text: "Switch traffic.", sources: ["u2"] },
+				{ text: "Keep prod untouched.", sources: ["u1"] },
+			],
+		});
+		expect(withinSegmentRange(plan, range)?.note.nextSteps).toEqual([]);
+		// supersedes may name earlier entries, and a note already inside its range is left as it is.
+		const inside = note({
+			state: [{ text: "Port 4318 now.", sources: ["u2"], supersedes: ["u1"] }],
+			nextSteps: [{ text: "Switch traffic.", sources: ["u2"] }],
+		});
+		expect(withinSegmentRange(inside, range)).toBeUndefined();
 	});
 
 	it("refuses a segment for a fixed writer before any request", async () => {
