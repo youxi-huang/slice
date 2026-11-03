@@ -710,10 +710,12 @@ async function worker() {
 			}
 			if (action.pace === "settled") await idle();
 		}
-		// The gold checkpoint: covered already when the last step's turn ended in a compaction.
-		const lastEntry = sessionManager.getEntries().at(-1);
+		// The gold checkpoint. P5's last step before each one is a short closing turn, so a compaction Pi made at that
+		// step or the one before already covers the round, and a user would not compact again at once; it stands as
+		// the round's checkpoint. Otherwise /compact closes the round.
+		const recent = boundaries.filter((row) => row.ok && row.step >= steps.length - 1);
 		if (!broken) {
-			if (lastEntry?.type === "compaction" && boundaries.at(-1)?.ok) boundaries.at(-1).gold = true;
+			if (recent.length) recent.at(-1).gold = true;
 			else {
 				const coverage = (await status()).segments?.coverage ?? null;
 				broken = !(await compactNow("gold", steps.length, { gold: true, coverage }));
@@ -721,6 +723,8 @@ async function worker() {
 		}
 		await quiet();
 		if (action.pace === "settled") await idle();
+		// How this round's segments ended: linked, cancelled, superseded, failed by code, dropped by reason.
+		const segmentsStatus = (await status()).segments ?? null;
 		// Every call the preview journaled in this unit, with its catalog cost: segments, writers and repairs.
 		const prices = model.cost ?? { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
 		const journalDir = join(agentDir, "context-memory-preview", "calls");
@@ -752,6 +756,7 @@ async function worker() {
 			ok: !broken && boundaries.some((row) => row.gold && row.ok),
 			steps: steps.length,
 			boundaries,
+			segmentsStatus,
 			errors,
 			rounds,
 			usage,
@@ -1139,7 +1144,7 @@ async function parent() {
 			boundaryRows.push(line);
 			record("boundaries.jsonl", line);
 		}
-		const round = { fixture: fixture.gold.id, cut: k + 1, steps: result.steps, rounds: result.rounds, usage: result.usage, requests: result.requests, costUsd: result.costUsd, errors: result.errors, journalCalls: result.journalCalls };
+		const round = { fixture: fixture.gold.id, cut: k + 1, steps: result.steps, rounds: result.rounds, usage: result.usage, requests: result.requests, costUsd: result.costUsd, errors: result.errors, segments: result.segmentsStatus?.results ?? null, segmentsState: result.segmentsStatus ? { state: result.segmentsStatus.state, reason: result.segmentsStatus.reason ?? null } : null, journalCalls: result.journalCalls };
 		roundRows.push(round);
 		record("rounds.jsonl", { ...round, journalCalls: undefined });
 		const gold = result.boundaries.filter((row) => row.gold);
@@ -1502,6 +1507,17 @@ async function parent() {
 			pauseMs: { all: spread(committed.map((row) => row.pauseMs)), covered: spread(committed.filter((row) => row.path === "segments").map((row) => row.pauseMs)), writer: spread(committed.filter((row) => row.path !== "segments").map((row) => row.pauseMs)) },
 			coverageAtGold: boundaryRows.filter((row) => row.gold && row.attempt === 1).map((row) => row.coverage ?? null),
 			segmentCalls: { ...figures(segmentCalls), merged: segmentCalls.filter((call) => merged.has(call.id)).length, outcomes: tally(segmentCalls.map((call) => call.outcome ?? "unsettled")), discarded: figures(segmentCalls.filter((call) => !merged.has(call.id))) },
+			// The preview's own account of each round's segments, summed: /compaction-status's segments.results.
+			segmentResults: roundRows.reduce(
+				(sum, round) => {
+					const results = round.segments;
+					if (!results) return sum;
+					const add = (into, from) => Object.entries(from ?? {}).reduce((acc, [key, value]) => ({ ...acc, [key]: (acc[key] ?? 0) + value }), into);
+					return { linked: sum.linked + results.linked, cancelled: sum.cancelled + results.cancelled, stale: sum.stale + results.stale, failed: add(sum.failed, results.failed), dropped: add(sum.dropped, results.dropped) };
+				},
+				{ linked: 0, cancelled: 0, stale: 0, failed: {}, dropped: {} },
+			),
+			pausedRounds: roundRows.filter((round) => round.segmentsState?.state === "paused").map((round) => ({ cut: round.cut, reason: round.segmentsState.reason })),
 			writerCalls: figures(calls.filter((call) => call.purpose === "compaction")),
 			warmups: { ...warm, costUsd: Number(warm.costUsd.toFixed(4)), cacheReadShare: warm.cacheRead + warm.input ? Number((warm.cacheRead / (warm.cacheRead + warm.input)).toFixed(4)) : null },
 		};

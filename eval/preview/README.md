@@ -171,8 +171,10 @@ same terms. Each round of a chain runs in one unit: the round's entries join the
 IDs, and every step ends where the agent settles, with an assistant reply that calls no tool and a user message after
 it. One real turn, `Reply with the single word OK.`, then runs on the session itself, as the main model's last turn
 before the user speaks again: it keeps the provider's cache warm and fires the settled event at which the preview
-writes a segment. Pi compacts wherever its trigger falls, and the round ends with `/compact` at the gold checkpoint
-unless a compaction has just covered it; a failed compaction is retried up to `--chain-attempts` times. Both arms of a
+writes a segment. Pi compacts wherever its trigger falls. P5's last step before each gold checkpoint is a short closing
+turn, so a compaction Pi made at that step or the one before stands as the round's checkpoint, since a user would not
+compact again at once; otherwise the round ends with `/compact` at the gold checkpoint. A failed compaction is retried
+up to `--chain-attempts` times. Both arms of a
 comparison replay alike and differ only in `--session-settings previewSegments=on|off`; `--segment-effort` sets the
 segments' own thinking level, and probe units always run with segments off, since they answer from the committed
 checkpoint. `--pace settled` lets the segment in flight settle before the next step, the best case; `--pace immediate`
@@ -188,10 +190,12 @@ than the default unit limit; give `--unit-minutes 30`.
 
 A replay run writes `boundaries.jsonl`, one content-free row per compaction attempt with its trigger (`auto`, `gold` or
 `retry`), path, segments fallback, U8 wait, pause, coverage at the gold checkpoint and foreground writer calls, and
-`rounds.jsonl` with each round's steps, turns, requests and cost. `summary.json` adds `replay`: the pause's P50, P95
+`rounds.jsonl` with each round's steps, turns, requests, cost and the preview's own count of how its segments ended
+(`segments.results` in `/compaction-status`). `summary.json` adds `replay`: the pause's P50, P95
 and maximum over every committed boundary, over those the segments served and over the writer's, fallbacks by cause,
 waits, coverage at each gold checkpoint, and the calls of segments (merged and discarded apart), writers and the
-session's own turns, with cache reads and catalog costs. A round's requests are its turns and every journaled call it
+session's own turns, with cache reads and catalog costs, and those segment results summed with the rounds in which the
+breaker paused segments. A round's requests are its turns and every journaled call it
 dispatched, so the run's limits count segments too.
 
 ### Token-overhead report
