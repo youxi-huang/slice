@@ -164,7 +164,10 @@ async function runtimeAcceptance() {
 		// A normal request can contain every note-schema field in a checkpoint and tool loadout.
 		// The session writer ends its request with an explicit handover instruction.
 		const writer = JSON.stringify(payload.messages?.at(-1) ?? "").includes("Internal context-compaction request, not a new user task or ruling.");
-		requests.push({ writer, model: payload.model });
+		// A segment's request closes with an instruction that names its range; only --segments on can send one.
+		const segment = writer && JSON.stringify(payload.messages?.at(-1) ?? "").includes("Write a segment note for entries");
+		assert(segmentsOn || !segment, "A segment was written with previewSegments off");
+		requests.push({ writer, segment, model: payload.model });
 		assert(requests.length <= 40, "Synthetic provider call budget exceeded");
 		if (writer) {
 			await onWriter?.();
@@ -257,20 +260,22 @@ async function runtimeAcceptance() {
 				}
 				assert.equal(status.preparation?.state, workerCase === "pressure-failed" ? "failed" : "ready", "Preparation did not finish in the lowered band");
 				assert.equal(checkpoints().length, cycle, "Host compacted before the configured line");
-				const paid = requests.filter((value) => value.writer).length;
+				// Arm A's own calls: with --segments on a segment may also be written in the band, under its own limits.
+				const prepared = () => requests.filter((value) => value.writer && !value.segment).length;
+				const paid = prepared();
 				assert.equal(paid, cycle + 1, "More than one prepared writer call per interval");
 				pressureUsage = pressure.targetTokens + 1;
 				await session.prompt(`Finish synthetic recent-cycle-${cycle}.`);
 				if (workerCase === "pressure-failed") {
 					assert(existsSync(marker), "Failed synchronous writer did not block after failed preparation");
 					assert.equal(checkpoints().length, 0);
-					assert.equal(requests.filter((value) => value.writer).length, paid + 1);
+					assert.equal(prepared(), paid + 1);
 					await assertBlocked();
 					await session.reload();
 					await assertBlocked();
 				} else {
 					assert.equal(checkpoints().length, cycle + 1, "Native threshold did not commit a Slice checkpoint");
-					assert.equal(requests.filter((value) => value.writer).length, paid, "Prepared boundary made a synchronous writer request");
+					assert.equal(prepared(), paid, "Prepared boundary made a synchronous writer request");
 					assert(!existsSync(marker));
 					assert(JSON.stringify(manager.buildSessionProjection().messages).includes(`recent-cycle-${cycle}`), "Recent text was lost");
 					pressureUsage = 100;

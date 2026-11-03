@@ -382,7 +382,7 @@ async function worker() {
 	mkdirSync(cwd, { recursive: true });
 	// The native arm loads no package, so Pi's own compaction summarizes each cut with the same model and settings.
 	const native = action.arm === "native";
-	writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ packages: native ? [] : [packageDir], cacheWarming: "off", defaultTools: [], compaction: { keepRecentTokens: 0 } }));
+	writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ packages: native ? [] : [packageDir], cacheWarming: "off", defaultTools: [], compaction: { keepRecentTokens: 0, ...(action.reserve ? { reserveTokens: action.reserve } : {}) } }));
 	let commandOutput;
 	const diagnostics = [];
 	for (const level of ["log", "warn", "error"]) {
@@ -519,7 +519,9 @@ async function worker() {
 	const sessionManager = stock.SessionManager.open(action.sessionFile);
 	const thinkingLevel = action.provider === "loopback" ? "off" : action.thinking;
 	// --window: the route's window, so Pi's trigger and the preview's segment ranges follow the route, not the catalog.
-	if (action.window) model = { ...model, contextWindow: action.window };
+	// The output maximum is capped as a model of that class would have it: the preview reserves the larger of 16,384
+	// and the model's maximum below its window, so a catalog maximum of 128,000 or 384,000 would leave no budget.
+	if (action.window) model = { ...model, contextWindow: action.window, maxTokens: Math.min(model.maxTokens, 32_000) };
 	const { session } = await stock.createAgentSession({ cwd, agentDir, modelRuntime: runtime, model, thinkingLevel, sessionManager, settingsManager, resourceLoader: loader, noTools: "builtin" });
 	await session.bindExtensions({ onError: (error) => diagnostics.push(String(error?.message ?? error).slice(0, 200)) });
 	const status = async () => {
@@ -873,12 +875,15 @@ async function parent() {
 	const replay = args.includes("--replay");
 	const pace = argument("--pace", "settled");
 	const window = args.includes("--window") ? Number(argument("--window")) : null;
+	// --reserve: Pi's compaction.reserveTokens for every unit, so its trigger sits where the route compacts.
+	const reserve = args.includes("--reserve") ? Number(argument("--reserve")) : null;
 	const segmentEffort = argument("--segment-effort", "");
 	if (replay && mode !== "probes") throw new Error("--replay applies to probes mode");
 	if (replay && cache !== "session") throw new Error("--replay runs every turn on the session itself: give --cache session");
 	if (replay && arm !== "slice") throw new Error("--replay needs the package");
 	if (!["settled", "immediate"].includes(pace)) throw new Error("--pace takes settled or immediate");
 	if (window !== null && !(Number.isSafeInteger(window) && window >= 32_000 && window <= 1_000_000)) throw new Error("--window takes a token count from 32000 to 1000000");
+	if (reserve !== null && !(Number.isSafeInteger(reserve) && reserve >= 1_000 && reserve <= 200_000)) throw new Error("--reserve takes a token count from 1000 to 200000");
 	if (segmentEffort && !SEGMENT_EFFORTS.includes(segmentEffort)) throw new Error(`--segment-effort takes ${SEGMENT_EFFORTS.join(", ")}`);
 	const unitMinutes = Number(argument("--unit-minutes", "10"));
 	if (!(unitMinutes > 0)) throw new Error("--unit-minutes must be positive");
@@ -972,7 +977,7 @@ async function parent() {
 		// prefix after a few hundred tokens; a warm run shares one directory, as one user's session does.
 		const cwd = join(runDir, "cwd", cache === "cold" ? id : "shared");
 		writeUnitSettings(agentDir, action.type === "probe" && action.condition !== "session" ? probeSettings : unitSettings);
-		const encoded = Buffer.from(JSON.stringify({ ...action, arm, cwd, ...(window ? { window } : {}), ...(action.provider === "relay" ? { baseUrl, relay } : {}), ...(equivalenceOut ? { equivalence: true } : {}) })).toString("base64url");
+		const encoded = Buffer.from(JSON.stringify({ ...action, arm, cwd, ...(window ? { window } : {}), ...(reserve ? { reserve } : {}), ...(action.provider === "relay" ? { baseUrl, relay } : {}), ...(equivalenceOut ? { equivalence: true } : {}) })).toString("base64url");
 		const child = spawn(process.execPath, [script, "--worker", "--action", encoded, "--package-dir", packageDir, "--stock-root", stockRoot], { cwd: runDir, env: environment(agentDir), stdio: ["ignore", "pipe", "pipe"] });
 		let stdout = "";
 		let stderr = "";
@@ -1481,6 +1486,7 @@ async function parent() {
 		const warm = roundRows.reduce((sum, round) => ({ rounds: sum.rounds + (round.rounds ?? 0), input: sum.input + (round.usage?.input ?? 0), cacheRead: sum.cacheRead + (round.usage?.cacheRead ?? 0), cacheWrite: sum.cacheWrite + (round.usage?.cacheWrite ?? 0), output: sum.output + (round.usage?.output ?? 0), costUsd: sum.costUsd + (round.usage?.cost ?? 0) }), { rounds: 0, input: 0, cacheRead: 0, cacheWrite: 0, output: 0, costUsd: 0 });
 		return {
 			window,
+			reserve,
 			pace,
 			segments: unitSettings.previewSegments?.enabled === true ? (segmentEffort || "session") : "off",
 			steps: roundRows.reduce((sum, round) => sum + (round.steps ?? 0), 0),

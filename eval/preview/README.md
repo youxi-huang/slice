@@ -176,11 +176,15 @@ unless a compaction has just covered it; a failed compaction is retried up to `-
 comparison replay alike and differ only in `--session-settings previewSegments=on|off`; `--segment-effort` sets the
 segments' own thinking level, and probe units always run with segments off, since they answer from the committed
 checkpoint. `--pace settled` lets the segment in flight settle before the next step, the best case; `--pace immediate`
-goes on at once, as a user who never pauses. `--window` sets the route's context window, so Pi's trigger and the
-segment ranges follow the route rather than the catalog: P5's cuts sit under the trigger at 170,000 for cuts 1, 3 and 5
-and at 222,000 for cuts 2 and 4. A window whose trigger falls below a gold cut fails in both arms, because one of P5's
-steps adds a 70,000-token run at once and the writer's request then no longer fits. A round can take longer than the
-default unit limit; give `--unit-minutes 30`.
+goes on at once, as a user who never pauses. `--window` sets the route's context window and caps the model's output
+maximum at 32,000, as a model of that class has it, since the preview reserves the larger of 16,384 and that maximum
+below the window. `--reserve` sets Pi's `compaction.reserveTokens`, so Pi's trigger and the segment ranges follow the
+route rather than the catalog. The session writer needs room above the context for its output and its instruction, which
+Pi's default reserve does not leave at the trigger; in use the preview's room check compacts first. P5's routes
+therefore run with `--window 180000 --reserve 30000` for cuts 1, 3 and 5 and `--window 240000 --reserve 30000` for cuts
+2 and 4: each gold checkpoint lies just under the trigger with about 30,000 tokens of room. A window whose trigger falls
+below a gold cut fails in both arms, because one of P5's steps adds a 70,000-token run at once. A round can take longer
+than the default unit limit; give `--unit-minutes 30`.
 
 A replay run writes `boundaries.jsonl`, one content-free row per compaction attempt with its trigger (`auto`, `gold` or
 `retry`), path, segments fallback, U8 wait, pause, coverage at the gold checkpoint and foreground writer calls, and

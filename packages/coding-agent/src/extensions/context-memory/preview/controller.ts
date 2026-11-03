@@ -677,11 +677,28 @@ export class PreviewMemoryController {
 			// U4: a segment rides the session's own request, so only the session writer writes one.
 			if (this.config.writerModel !== SESSION_WRITER) return;
 			if (this.safeInactive(ctx) || this.configError || ctx.hasPendingMessages()) return;
-			assertPreviewSession(ctx.sessionManager, this.hostVersion);
-			if (this.store.inspect(ctx.sessionManager).state !== "ready" || this.stickyFailures.has(sessionId)) return;
 			const usage = ctx.getContextUsage();
 			if (!usage?.tokens) return;
 			const trigger = usage.contextWindow - piReserveTokens(this.hostSettings(), ctx.model);
+			// Most settled turns have no range due. Found by the 0.8.0 release gate: deciding that only after the
+			// session and failure-state checks, the submission's projection, cut and hashes and a copy of the branch
+			// cost a 20-checkpoint session 135 ms a turn. The branch as it stands answers it, so a turn pays for that
+			// work only when a range is due. A segment in flight still reconciles below; the events that end a
+			// chain's validity drop it themselves.
+			if (
+				this.segments.status().state !== "preparing" &&
+				!(
+					"range" in
+					nextSegmentRange(asRecords(ctx.sessionManager.getBranch()), {
+						chainEnd: this.segments.chain.at(-1)?.snapshot.lastId,
+						triggerTokens: trigger,
+						contextTokens: usage.tokens,
+					})
+				)
+			)
+				return;
+			assertPreviewSession(ctx.sessionManager, this.hostVersion);
+			if (this.store.inspect(ctx.sessionManager).state !== "ready" || this.stickyFailures.has(sessionId)) return;
 			const submission = this.preparationSubmission(
 				ctx,
 				undefined,

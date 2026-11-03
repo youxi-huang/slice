@@ -3741,6 +3741,16 @@ describe("preview segments at settled turns (0.8.0 WP2)", () => {
 		expect(value.details?.preparation).toMatchObject({ path: "sync", segmentsFallback: "invalid" });
 	});
 
+	it("does no work for a settled turn with no range due (0.8.0 release gate: 135 ms a turn at 20 checkpoints)", async () => {
+		contextTokens = 10_000;
+		const projection = vi.spyOn(session, "buildSessionProjection");
+		controller.segment(ctx);
+		await segments.waitForIdle();
+		expect(requests).toHaveLength(0);
+		// The branch as it stands decides it: no projection, and so no cut, hash or copy, is made.
+		expect(projection).not.toHaveBeenCalled();
+	});
+
 	it("writes no segment through a fixed writer (U4)", async () => {
 		const fixed = new PreviewMemoryController({
 			config: { ...DEFAULT_MEMORY_CONFIG, writerModel: "preview-test/preview-test", noteRepair: false },

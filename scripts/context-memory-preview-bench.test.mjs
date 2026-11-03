@@ -169,6 +169,7 @@ test("--provider openai is a provider run on the official API, and the long-rout
 		[["--mode", "probes", "--replay", "--cache", "session", "--arm", "native", "--probe-conditions", "none"], /--replay needs the package/],
 		[["--mode", "probes", "--pace", "eventually"], /--pace takes settled or immediate/],
 		[["--mode", "probes", "--window", "1000"], /--window takes a token count from 32000 to 1000000/],
+		[["--mode", "probes", "--reserve", "10"], /--reserve takes a token count from 1000 to 200000/],
 		[["--mode", "probes", "--segment-effort", "fast"], /--segment-effort takes session, off/],
 		[["--mode", "probes", "--segment-effort", "low"], /--segment-effort needs --session-settings previewSegments=on/],
 	]) {
