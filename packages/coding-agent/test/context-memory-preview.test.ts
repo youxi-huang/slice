@@ -3236,6 +3236,20 @@ describe("preview leaves the session writer room and compacts after a stopped tu
 		expect(preview.makeRoom(ctx)).toBe(false);
 		expect(ctx.compact).toHaveBeenCalledOnce();
 	});
+	it("starts again after /tree returns to an interval it served on another branch (0.8.0 lifecycle fuzz)", () => {
+		const preview = controller();
+		contextTokens = piTrigger - 2_000;
+		expect(preview.makeRoom(ctx)).toBe(true);
+		expect(preview.makeRoom(ctx)).toBe(false);
+		// Navigating back before a checkpoint leaves the same interval with the context it had there; the new branch
+		// is checked at once, since its next turn may already be too large for the handover.
+		preview.branchChanged(ctx);
+		expect(ctx.compact).toHaveBeenCalledTimes(2);
+		expect(preview.makeRoom(ctx)).toBe(false);
+		contextTokens = 40_000;
+		preview.branchChanged(ctx);
+		expect(ctx.compact).toHaveBeenCalledTimes(2);
+	});
 	it("allows for a next turn as large as the one just settled", () => {
 		const preview = controller();
 		// Two settled turns 30,000 tokens apart: the next may add as much, more than Pi's 16,384-token reserve.

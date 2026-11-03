@@ -405,7 +405,10 @@ export class PreviewMemoryController {
 	private readonly activeCompactions = new Set<string>();
 	private readonly stagedCompactions = new Set<string>();
 	private readonly compactionStartedAt = new Map<string, number>();
-	/** Per session: the checkpoint interval in which makeRoom last started a compaction. */
+	/**
+	 * Per session: the checkpoint interval in which makeRoom last started a compaction on the current branch. /tree
+	 * clears it: a branch that returns to before a checkpoint is back in an interval it already served elsewhere.
+	 */
 	private readonly roomRequested = new Map<string, string>();
 	/** Per session: Pi's measured context at the last settled turn, so makeRoom can allow for a turn of that size. */
 	private readonly settledTokens = new Map<string, number>();
@@ -1035,6 +1038,11 @@ export class PreviewMemoryController {
 	/** Tree navigation is a trust boundary, even when the selected branch extends the previous one. */
 	branchChanged(ctx: ExtensionContext): void {
 		this.forgetVerified();
+		// Found by the 0.8.0 lifecycle fuzz: a branch moved back before a checkpoint, or to a point already near the
+		// limit, grew past where the session writer's handover fits, and every /compact then failed for lack of room.
+		// The latch is per branch, and the new branch is checked at once rather than after its next turn.
+		this.roomRequested.delete(ctx.sessionManager.getSessionId());
+		this.makeRoom(ctx);
 		if (this.stickyFailures.has(ctx.sessionManager.getSessionId())) {
 			setStatusLine(ctx, "paused");
 		} else if (unsupportedReason(ctx.sessionManager, this.hostVersion)) {
@@ -1578,7 +1586,7 @@ export class PreviewMemoryController {
 					segmentsFallback = assemble();
 					if (
 						(segmentsFallback === "in-flight" || segmentsFallback === "fit" || segmentsFallback === "cut") &&
-						(await segments.settle(15_000, event.signal))
+						(await segments.settle(segments.waitMs, event.signal))
 					)
 						segmentsFallback = assemble();
 					if (!segmentsFallback) path = "segments";

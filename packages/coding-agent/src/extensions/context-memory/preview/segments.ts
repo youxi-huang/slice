@@ -19,6 +19,8 @@ import type { WriteMemoryResult, WriterCallHooks } from "./writer.ts";
 
 /** A run still going after this long is cancelled and counted as an error; its calls stay in the journal. */
 const DEADLINE_MS = 120_000;
+/** U8's starting bound on the boundary's wait for the segment in flight. */
+const WAIT_MS = 15_000;
 /** U9: consecutive failures of one class that stop segments until the next commit. */
 const BREAKER_FAILURES = 3;
 
@@ -40,6 +42,9 @@ export interface SegmentJob {
 
 export class PreviewSegments {
 	readonly enabled: boolean;
+	/** How long the boundary may wait for the segment in flight (U8). */
+	readonly waitMs: number;
+	private readonly deadlineMs: number;
 	private readonly settingsError?: string;
 	private readonly journal: CallJournal;
 	private sessionId?: string;
@@ -50,10 +55,19 @@ export class PreviewSegments {
 	private broken?: SegmentFailure;
 	private disposed = false;
 
-	constructor(options: { enabled: boolean; settingsError?: string; journal: CallJournal }) {
+	/** `waitMs` and `deadlineMs` keep their starting values outside tests, which shorten them to reach timeouts. */
+	constructor(options: {
+		enabled: boolean;
+		settingsError?: string;
+		journal: CallJournal;
+		waitMs?: number;
+		deadlineMs?: number;
+	}) {
 		this.enabled = options.enabled && !options.settingsError;
 		this.settingsError = options.settingsError;
 		this.journal = options.journal;
+		this.waitMs = options.waitMs ?? WAIT_MS;
+		this.deadlineMs = options.deadlineMs ?? DEADLINE_MS;
 	}
 
 	get currentEpoch(): number {
@@ -103,7 +117,7 @@ export class PreviewSegments {
 		const timer = setTimeout(() => {
 			late = true;
 			abort.abort();
-		}, DEADLINE_MS);
+		}, this.deadlineMs);
 		timer.unref();
 		const journal = this.journal.hooks(input.preparation.sessionId, "segment", interval);
 		const callIds: string[] = [];

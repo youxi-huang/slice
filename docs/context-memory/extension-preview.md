@@ -373,9 +373,11 @@ This preview compacts at completed turns: on `/compact`, and when Pi's
 threshold compaction runs after a turn completes. With the session writer it
 also starts that compaction itself at a settled turn whose context, with one
 more turn as large as Pi's default reserve or as the turn just settled, would
-leave the writer's handover no room. On a 272,000-token route Pi's own trigger
-leaves 16,384 tokens, less than a handover takes. One-shot `print` and `json`
-runs, which exit when the turn settles, are left to Pi's trigger. Both lines
+leave the writer's handover no room. It checks again at once after `/tree`,
+whose new branch may already sit that close to the limit. On a 272,000-token
+route Pi's own trigger leaves 16,384 tokens, less than a handover takes.
+One-shot `print` and `json` runs, which exit when the turn settles, are left to
+Pi's trigger. Both lines
 read Pi's own count of the context, from the provider's reported usage, as do
 the request guards. While input is queued or a
 session is blocked, threshold compaction is left for a later turn and nothing is

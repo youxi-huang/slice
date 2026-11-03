@@ -1,5 +1,58 @@
 # Validation record
 
+## 0.8.0 WP4: the lifecycle fuzz, 2026-11-03 UTC
+
+`packages/coding-agent/test/context-memory-preview-fuzz.test.ts` at the commit that adds this entry, run from
+`packages/coding-agent` with `CONTEXT_MEMORY_FUZZ_SEEDS=1000 npx vitest run test/context-memory-preview-fuzz.test.ts`.
+Seeds 1 to 1,000, 48 operations each, passed every invariant in 397 s; the release gate asks for 200. CI runs seeds 1
+to 40. The harness stands in for Pi, with a scripted writer and no provider.
+
+What the 1,000 seeds reached, from `CONTEXT_MEMORY_FUZZ_REPORT`:
+
+| Event | Count |
+| --- | --- |
+| Committed boundaries: segments / synchronous writer | 427 / 2,659 |
+| Failed compactions, each followed by a blocked request check | 657 |
+| Segment fallbacks: `no-segments` / `custom-focus` / `unfinished-turn` / `in-flight` / `instruction-superseded` | 2,277 / 258 / 98 / 16 / 10 |
+| Merges that replaced a ruling (amended U6) | 218 |
+| Merges after U8's wait for the segment in flight | 79 |
+| Writer faults on segments: refusal / tool call / exhausted output / error / hang | 559 / 573 / 555 / 529 / 258 |
+| Writer faults on compactions: refusal / tool call / exhausted output / error / hang | 128 / 124 / 145 / 135 / 125 |
+| Breaker opened | 706 |
+| `/tree` to before a checkpoint | 687 |
+| Restarts that dropped ready segments | 267 |
+
+Most `no-segments` fallbacks are `/compact` below half the trigger, where U3 has not started a segment.
+
+Two faults found and fixed, both in `makeRoom` and both present before 0.8.0. In each, every `/compact` failed with
+`CONTEXT_WRITER_CAPACITY` until the writer was changed, which the final-recovery invariant reported:
+
+- Seeds 12 and 34: `makeRoom` starts a compaction at most once per checkpoint interval. `/tree` back before a
+  checkpoint returned to an interval it had already served on the other branch, so it stayed silent while the
+  context grew from 86k to 120k tokens.
+- Seeds 49 and 128: `/tree` to a point at 103k tokens. `makeRoom` checked only after a turn, and the next 17k-token
+  turn took the context past the room the session writer's handover needs.
+
+`/tree` now clears the latch and checks the room at once; `context-memory-preview.test.ts` has the regression.
+
+Each invariant fires on a deliberate fault, seeds 1 to 40:
+
+| Fault | Seeds failing | Invariant that fired |
+| --- | --- | --- |
+| The prefix path keeps one entry too few | 2 | Final recovery: the product's own readback refuses the gap first, and the session stays blocked |
+| A commit keeps the old chain | 13 | The kept chain is contiguous on the branch |
+| Segment calls bypass the journal | 36 | Every writer request has a journal record |
+| The request guard skips the sticky failure and the failure store | 7 | A failed compaction blocks the next request |
+| `/tree` neither clears `makeRoom`'s latch nor checks the room | 2 | Final recovery |
+| The checkpoint names only the first merged link | 6 | A merged chain ends at the checkpoint's coverage |
+
+Three faults survived, each because a second check already holds the line: removing `compactionFailed`'s own
+failure record (the durable pending marker written at the start of `compact` still blocks), and removing only the
+sticky failure or only the failure store from the request guard.
+
+Not covered: a real provider or Pi itself (the stock-Pi acceptance covers the host), an unwritable journal, a crash
+between Pi saving a checkpoint and the extension seeing it, session switches and concurrent processes.
+
 ## 0.8.0 U6 amended: the loopback A/B rerun, 2026-11-03 UTC
 
 The [WP3 run](#080-wp3-segments-on-the-loopback-ab-2026-11-03-utc) repeated after the maintainer amended U6, so
