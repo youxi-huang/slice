@@ -17,6 +17,7 @@ Changes under **Unreleased** are not included in an existing release tag or its 
 
 ### Fixed
 
+- The note writer now states the note schema's limit of 20 source IDs per item in its rules, where only the attached schema gave it. On large sessions GPT-6 Luna at Pi's default thinking level cited 21 to 33 entries in one fact, the schema refused the note, and compaction failed six times in seven attempts on the 272k route of the evaluation set; with the rule, once in five.
 - After `/tree`, the preview checks at once whether the session writer still has room for its handover, and starts the compaction `/compact` would when it does not. Before, it checked only after the next turn and at most once per checkpoint interval on any branch, so a branch moved back before a checkpoint, or to a point near the limit, could grow past the room the session writer needs, and every `/compact` then failed with `CONTEXT_WRITER_CAPACITY` until the writer was changed. Found by 0.8.0's lifecycle fuzz.
 
 ### Maintenance

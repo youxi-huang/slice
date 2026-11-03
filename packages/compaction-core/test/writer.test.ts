@@ -110,7 +110,7 @@ describe("compaction core: writer contract", () => {
 	it("binds candidates to the rules and schema bytes", () => {
 		// The values the preview computed before the split; a change to the rules or the schema moves them.
 		expect(writerContractHashes("artifact-x")).toEqual({
-			promptHash: "a54a20d4262cd5ae8e5a0fe5b0b5cf17d54d539ddb9abb2de9dd25cc10603a4a",
+			promptHash: "dc749658e611df1d2e9a8008c4496787474c03ca228c15ce225dd9baae125a25",
 			schemaHash: "bd4e0782cc1cd6281075b47c93b4eb995b90c4aeaf931a903f60571d4fa2663b",
 		});
 	});

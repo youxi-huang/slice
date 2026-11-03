@@ -53,6 +53,8 @@ and `off` both linked their first segments and lost round 2 to the overflow belo
 | Luna, `max` | 200k | segments | sync 3, each after a 15 s wait for a segment past its deadline | 0 | complete | 124.6 s / 152.1 s | 26 of 30 (0, 0) |
 | Luna, `medium` | 200k | control | sync 3 | 0 | complete | 19.8 s / 22.3 s | 30 of 30 (0, 0) |
 | Luna, `medium` | 200k | segments | segments 1 after a 9.2 s wait; sync 2, one after a 15 s wait | 3 | complete on the third retry | 19.3 s / 43.5 s | 26 of 30 (0, 1) |
+| Luna, `medium` | 272k | control | sync 1 | 6 | stopped at cut 4 | 19.5 s / 19.5 s | 9 of 19 (0, 10) |
+| Luna, `medium` | 272k | segments | segments 2, after waits of 11.6 and 0.3 s | 1 | complete | 0.4 s / 11.7 s | 10 of 19 (0, 0), 9 invalid answers |
 
 Segments ran at the session's level, as U5's rule leaves it. A refused attempt is a compaction the user retries; the
 bench retries up to `--chain-attempts`, two for DeepSeek and four for Luna, and a chain that stays refused blocks
@@ -61,7 +63,9 @@ past the window, then the writer, failed. Luna's `medium` segments chain hit the
 third retry, after two writer answers the note schema refused for its structure rather than missing sources; its
 control at the same level had also needed retries in an earlier run, two refusals of the same kind, then committed
 every round on the first attempt in the run above. One Luna `medium` probe hung on its request for 15 minutes and
-was ended, as the unit limit would have ended it; it is counted as blocked.
+was ended, as the unit limit would have ended it; it is counted as blocked. On the 272k route the control's own writer
+was refused six times in seven attempts, for the reason in the next section, and its chain stopped at cut 4; the
+segments arm completed there, but its answers broke the probe contract nine times.
 
 ### Why, by weight
 
@@ -81,9 +85,22 @@ was ended, as the unit limit would have ended it; it is counted as blocked.
 U12's condition is not met: no merge was refused for the note schema or the budget, so WP6 does not start. Segments
 stay off by default (U13).
 
+### The writer's source limit, found on the controls
+
+Luna at `medium`, Pi's default level, refused its own synchronous notes on P5: twice on the 200k route in a first run,
+and six times in seven attempts on the 272k route, where the session blocked. The bench recorded a schema fault other
+than missing sources, and a local dump of three refused answers, kept out of the repository, showed the same one each
+time: a `state` fact citing 21, 28 or 33 entries, where the note schema allows 20. The limit was stated only in the
+JSON schema attached to the request. The writer's rules now say it: cite at most 20 IDs in one item, choosing the
+most direct ones or splitting the fact. Two reruns of the 272k control with that rule were refused once in five
+attempts, and every round committed. This writer is the one v0.7.5 ships, so the fix matters with segments off; one
+model and one fixture are the evidence.
+
 ### Not covered
 
-P5 only. One chain per arm for most cells, so P95 over three to five boundaries is the slowest one. Luna's 272k route was still being measured when this entry was written. The cause of Luna's schema refusals at `off`, `low` and `medium` was not captured before `5fabca1`.
+P5 only. One chain per arm for most cells, so P95 over three to five boundaries is the slowest one. Luna at `max` on the
+272k route was not run: its minutes went to the source limit above. Which schema check refused Luna's segment notes at
+`off` and `low` was not captured; the source limit is the likely cause, not a verified one.
 
 ## 0.8.0 offline release gates, with segments off and on, 2026-11-03 UTC
 
