@@ -51,7 +51,7 @@ describe("0.8-conformance.1", () => {
 			).toBe(digest);
 		}
 		expect(vectors).toHaveLength(34);
-		expect(segments).toHaveLength(24);
+		expect(segments).toHaveLength(26);
 		const all = [...vectors, ...segments];
 		expect(new Set(all.map((vector) => vector.id)).size).toBe(all.length);
 		for (const vector of all) {

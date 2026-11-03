@@ -2556,6 +2556,281 @@
 		}
 	},
 	{
+		"id": "segment-merge-instruction-replaced",
+		"stage": "segment-merge",
+		"records": [
+			{
+				"type": "message",
+				"id": "u1",
+				"parentId": null,
+				"timestamp": "2026-01-01T00:00:00.000Z",
+				"message": {
+					"role": "user",
+					"content": "Use amber for the sample flag."
+				}
+			},
+			{
+				"type": "message",
+				"id": "a1",
+				"parentId": "u1",
+				"timestamp": "2026-01-01T00:00:01.000Z",
+				"message": {
+					"role": "assistant",
+					"content": [
+						{
+							"type": "text",
+							"text": "Synthetic progress."
+						}
+					],
+					"stopReason": "stop"
+				}
+			},
+			{
+				"type": "message",
+				"id": "u2",
+				"parentId": "a1",
+				"timestamp": "2026-01-01T00:00:02.000Z",
+				"message": {
+					"role": "user",
+					"content": "Use teal now."
+				}
+			},
+			{
+				"type": "message",
+				"id": "a2",
+				"parentId": "u2",
+				"timestamp": "2026-01-01T00:00:03.000Z",
+				"message": {
+					"role": "assistant",
+					"content": [
+						{
+							"type": "text",
+							"text": "Synthetic progress."
+						}
+					],
+					"stopReason": "stop"
+				}
+			}
+		],
+		"links": [
+			{
+				"firstId": "u1",
+				"lastId": "a1",
+				"note": {
+					"instructions": [
+						{
+							"text": "Use amber for the sample flag.",
+							"sources": [
+								"u1"
+							],
+							"quote": "Use amber for the sample flag."
+						}
+					],
+					"failedPaths": [],
+					"reasons": [],
+					"state": [
+						{
+							"text": "The sample flag is set up.",
+							"sources": [
+								"a1"
+							]
+						}
+					],
+					"nextSteps": [],
+					"files": [],
+					"gaps": []
+				}
+			},
+			{
+				"firstId": "u2",
+				"lastId": "a2",
+				"note": {
+					"instructions": [
+						{
+							"text": "Use teal now.",
+							"sources": [
+								"u2"
+							],
+							"quote": "Use teal now.",
+							"supersedes": [
+								"u1"
+							]
+						}
+					],
+					"failedPaths": [],
+					"reasons": [],
+					"state": [
+						{
+							"text": "The sample flag is being switched.",
+							"sources": [
+								"a2"
+							]
+						}
+					],
+					"nextSteps": [],
+					"files": [],
+					"gaps": []
+				}
+			}
+		],
+		"expected": {
+			"note": {
+				"instructions": [
+					{
+						"text": "Use teal now.",
+						"sources": [
+							"u2"
+						],
+						"quote": "Use teal now.",
+						"supersedes": [
+							"u1"
+						]
+					}
+				],
+				"failedPaths": [],
+				"reasons": [],
+				"state": [
+					{
+						"text": "The sample flag is set up.",
+						"sources": [
+							"a1"
+						]
+					},
+					{
+						"text": "The sample flag is being switched.",
+						"sources": [
+							"a2"
+						]
+					}
+				],
+				"nextSteps": [],
+				"files": [],
+				"gaps": []
+			}
+		}
+	},
+	{
+		"id": "segment-merge-instruction-retired-by-assistant",
+		"stage": "segment-merge",
+		"records": [
+			{
+				"type": "message",
+				"id": "u1",
+				"parentId": null,
+				"timestamp": "2026-01-01T00:00:00.000Z",
+				"message": {
+					"role": "user",
+					"content": "Use amber for the sample flag."
+				}
+			},
+			{
+				"type": "message",
+				"id": "a1",
+				"parentId": "u1",
+				"timestamp": "2026-01-01T00:00:01.000Z",
+				"message": {
+					"role": "assistant",
+					"content": [
+						{
+							"type": "text",
+							"text": "Synthetic progress."
+						}
+					],
+					"stopReason": "stop"
+				}
+			},
+			{
+				"type": "message",
+				"id": "u2",
+				"parentId": "a1",
+				"timestamp": "2026-01-01T00:00:02.000Z",
+				"message": {
+					"role": "user",
+					"content": "Use teal now."
+				}
+			},
+			{
+				"type": "message",
+				"id": "a2",
+				"parentId": "u2",
+				"timestamp": "2026-01-01T00:00:03.000Z",
+				"message": {
+					"role": "assistant",
+					"content": [
+						{
+							"type": "text",
+							"text": "Synthetic progress."
+						}
+					],
+					"stopReason": "stop"
+				}
+			}
+		],
+		"links": [
+			{
+				"firstId": "u1",
+				"lastId": "a1",
+				"note": {
+					"instructions": [
+						{
+							"text": "Use amber for the sample flag.",
+							"sources": [
+								"u1"
+							],
+							"quote": "Use amber for the sample flag."
+						}
+					],
+					"failedPaths": [],
+					"reasons": [],
+					"state": [
+						{
+							"text": "The sample flag is set up.",
+							"sources": [
+								"a1"
+							]
+						}
+					],
+					"nextSteps": [],
+					"files": [],
+					"gaps": []
+				}
+			},
+			{
+				"firstId": "u2",
+				"lastId": "a2",
+				"note": {
+					"instructions": [
+						{
+							"text": "Use teal for the sample flag.",
+							"sources": [
+								"a2"
+							],
+							"supersedes": [
+								"u1"
+							]
+						}
+					],
+					"failedPaths": [],
+					"reasons": [],
+					"state": [
+						{
+							"text": "The sample flag is being switched.",
+							"sources": [
+								"a2"
+							]
+						}
+					],
+					"nextSteps": [],
+					"files": [],
+					"gaps": []
+				}
+			}
+		],
+		"expected": {
+			"refusal": "instruction-superseded"
+		}
+	},
+	{
 		"id": "segment-merge-ambiguous-supersede",
 		"stage": "segment-merge",
 		"records": [

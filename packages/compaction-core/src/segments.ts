@@ -224,7 +224,8 @@ export function classifyChain(
 
 /**
  * The previous checkpoint's note with the chain's notes merged in order, without a model call. A segment's empty
- * gaps do not close earlier ones: its writer may simply have listed none for its range.
+ * gaps do not close earlier ones: its writer may simply have listed none for its range. A ruling that retires a
+ * carried instruction must cite a user message in its own range, the only records a segment cites.
  */
 export function mergeChain(
 	previous: MemoryNote | undefined,
@@ -235,7 +236,13 @@ export function mergeChain(
 		links.map((link) => {
 			// A mutable copy for the merge; the candidate itself stays frozen.
 			const note = structuredClone(link.candidate.note) as MemoryNote;
-			return { note, gapsListed: note.gaps.length > 0 };
+			const range = new Set(link.snapshot.rangeIds);
+			const userMessages = new Set(
+				link.candidate.input.sources.flatMap((record) =>
+					range.has(record.id) && record.type === "message" && record.message.role === "user" ? [record.id] : [],
+				),
+			);
+			return { note, gapsListed: note.gaps.length > 0, userMessages };
 		}),
 	);
 }

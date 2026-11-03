@@ -52,7 +52,7 @@ unpaired tool batch, a present/missing continuation rendering, and changed cited
 content under both source serializations. No vector combines independent faults.
 
 Each object in `segments.json` also has a unique `id`, `stage` and ordered
-`records`. Its 24 vectors pin the settled 0.8.0 contract with three stages:
+`records`. Its 26 vectors pin the settled 0.8.0 contract with three stages:
 
 - `segment`: `link` names `firstId`, `lastId` and its `note`.
   `freezeSegmentInput` freezes its input and `finalizeSegment` checks its note.
@@ -70,9 +70,11 @@ Each object in `segments.json` also has a unique `id`, `stage` and ordered
   finalize and the whole chain must classify before `mergeChain` merges it.
   `expected` is `{"note": ...}` or `{"refusal": ...}` with a `MergeRefusal`.
   The vectors cover all three refusals, carried and added instructions, an
-  unambiguous correction, the newest nonempty plan and the newest nonempty
-  gaps; empty segment gaps keep earlier ones. The schema refusal adds one fact
-  to a valid previous note with 40 state facts. Neither input is invalid alone.
+  unambiguous correction, a ruling that a later user message replaces and one
+  that only an assistant record would retire, the newest nonempty plan and the
+  newest nonempty gaps; empty segment gaps keep earlier ones. The schema
+  refusal adds one fact to a valid previous note with 40 state facts. Neither
+  input is invalid alone.
 
 Each link is dispatched on the vector's `records` through its own `lastId`.
 Its writer has seen every user record through that ID, and its chain hash is

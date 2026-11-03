@@ -3556,19 +3556,47 @@ describe("preview segments at settled turns (0.8.0 WP2)", () => {
 		expect(value.details?.preparation).toMatchObject({ path: "sync", segmentsFallback: cause });
 	});
 
-	it("leaves the boundary to the writer when a segment supersedes a carried instruction's source", async () => {
-		await settle();
-		turn(2, long("Change the deployment permission."));
-		outputs.push({
-			...fact(2, "The deployment permission may change."),
-			instructions: [
-				{ text: "The deployment permission may change.", sources: ["source-2"], supersedes: ["source-1"] },
-			],
+	describe("a ruling the user changes (U6, amended)", () => {
+		const ruling = {
+			text: "Change the deployment permission.",
+			sources: ["source-2"],
+			quote: "Change the deployment permission.",
+			supersedes: ["source-1"],
+		};
+		const moved = { text: "The service moves off port 4317.", sources: ["source-2"], supersedes: ["source-1"] };
+		async function changed(output: MemoryNote): Promise<PreviewCompaction> {
+			await settle();
+			turn(2, long("Change the deployment permission. The service moves off port 4317."));
+			outputs.push(output);
+			await settle();
+			expect(segments.status()).toMatchObject({ ready: 2 });
+			return controller.compact(event(), ctx);
+		}
+
+		it("merges the new ruling in place of the old one, with no writer call", async () => {
+			const value = await changed({ ...fact(2, "unused"), instructions: [ruling], state: [moved] });
+			expect(requests).toHaveLength(2);
+			expect(value.details?.preparation).toMatchObject({ path: "segments" });
+			expect(value.details?.note.instructions).toEqual([ruling]);
+			expect(value.details?.note.state).toEqual([moved]);
 		});
-		await settle();
-		expect(segments.status()).toMatchObject({ ready: 2 });
-		const value = await controller.compact(event(), ctx);
-		expect(value.details?.preparation).toMatchObject({ path: "sync", segmentsFallback: "instruction-superseded" });
+
+		it("leaves the boundary to the writer when the old source backs more than the segment replaces", async () => {
+			// source-1 also backs the port fact, which the segment neither restates nor replaces.
+			const value = await changed({ ...fact(2, "The deployment permission is changing."), instructions: [ruling] });
+			expect(requests).toHaveLength(3);
+			expect(value.details?.preparation).toMatchObject({ path: "sync", segmentsFallback: "ambiguous-supersede" });
+		});
+
+		it("keeps the ruling when only the assistant's reply would change it", async () => {
+			const claimed = {
+				text: "The deployment permission may change.",
+				sources: ["reply-2"],
+				supersedes: ["source-1"],
+			};
+			const value = await changed({ ...fact(2, "unused"), instructions: [claimed], state: [moved] });
+			expect(value.details?.preparation).toMatchObject({ path: "sync", segmentsFallback: "instruction-superseded" });
+		});
 	});
 
 	it("waits for the segment in flight that the boundary needs, and never past U8's bound", async () => {

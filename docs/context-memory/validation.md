@@ -1,5 +1,40 @@
 # Validation record
 
+## 0.8.0 U6 amended: the loopback A/B rerun, 2026-11-03 UTC
+
+The [WP3 run](#080-wp3-segments-on-the-loopback-ab-2026-11-03-utc) repeated after the maintainer amended U6, so
+that a ruling from the user retires the instruction it replaces. Same script, settings and command; the preview
+package built from this change; no provider called. Every arm exited 0.
+
+| Cycles, pace | Arm | Paths | Pause P50 / P95, ms | P95 without a foreground writer, ms | Fallbacks | Writer calls (segment) | Probes |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 2, settled | sync | sync ×2 | 1,085 / 1,101 | | | 2 | 8/8 |
+| 2, settled | A | prefix ×2 | 47 / 69 | 69 | none | 2 | 8/8 |
+| 2, settled | segments | segments ×2 | 39 / 72 | 72 | none | 2 (2) | 8/8 |
+| 6, settled | sync | sync ×6 | 1,129 / 1,270 | | | 6 | 12/12 |
+| 6, settled | A | prefix ×6 | 113 / 247 | 247 | none | 6 | 12/12 |
+| 6, settled | segments | segments ×6 | 109 / 177 | 177 | none | 6 (6) | 12/12 |
+| 6, immediate | sync | sync ×6 | 1,152 / 1,265 | | | 6 | 12/12 |
+| 6, immediate | A | prefix, sync, prefix ×4 | 132 / 1,139 | 182 | `in-flight` once | 7 | 12/12 |
+| 6, immediate | segments | segments ×6 | 150 / 296 | 296 | none | 6 (6) | 12/12 |
+
+- Every boundary merged at both paces, and the four `instruction-superseded` fallbacks are gone. Each segment
+  after the second retired the previous port with an instruction cited to the user's message. The last note holds
+  the same three instructions as the synchronous writer's: no deployment, the retry and timeout values, and port
+  4326.
+- Writer calls fell from 10 to 6, all of them segments and none discarded. Writer spend is now 1.4% below sync's
+  in synthetic dollars (1.942 against 1.971), where it was 22% above. The scripted segment answers carry only
+  what their range changes, 554 output tokens against sync's 1,327; a provider's answers may differ.
+- Pauses grow with each cycle in both arms that skip the writer: 37 to 177 ms for segments, 42 to 247 ms for A,
+  settled. At the immediate pace A fell back once while its preparation was still running (1,139 ms); segments
+  served all six boundaries. The report does not record which boundaries waited under U8.
+
+Not covered: a message that states several rulings, of which a later one changes only some. `supersedes` names
+entries, so that change still goes to the writer as `instruction-superseded` or `ambiguous-supersede`, until
+U12's fact identities. The script's first message is such a message, but its port is not one of the scripted
+facts, so this run never exercises it. Also not covered, as before: a provider's cache and latencies other than
+one second.
+
 ## 0.8.0 WP3: segments on the loopback A/B, 2026-11-03 UTC
 
 The first measurement of segments, with the arm WP3 adds to the runner, on the same script and settings as the
@@ -37,8 +72,9 @@ note.
   includes the runner polling `/compaction-status` while a segment runs and is not the package's request overhead.
 
 Not covered: a provider's cache, whose hit on the segment's prefix is U4's premise; a script whose rulings do not
-change; latencies other than one second. The U6 result is a decision for the maintainer, recorded in the
-[plan](v0.8.0-plan.md#wp3-assembly-at-the-boundary).
+change; latencies other than one second. The U6 result went to the maintainer, who amended the rule in the
+[plan](v0.8.0-plan.md#wp3-assembly-at-the-boundary); the [rerun](#080-u6-amended-the-loopback-ab-rerun-2026-11-03-utc)
+is above.
 
 ## 0.8.0 WP0: the loopback A/B baseline over chains, 2026-11-03 UTC
 

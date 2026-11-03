@@ -670,7 +670,10 @@ runs at a time; the segments are kept in memory and lost on restart. A fixed
 
 At compaction the extension merges the previous checkpoint's note with the
 segments, in order, without a model call, the way B merges work notes, except
-that a segment may add instructions found in its own turns. The merged note is
+that a segment may add instructions found in its own turns. When the user
+changes an earlier ruling, the segment's new instruction replaces the old one,
+provided it cites the user's own message and names the old instruction's
+sources in `supersedes`. The merged note is
 committed through the prefix path, so the turns after the last segment stay
 verbatim, unless that would leave half the compaction threshold or more in
 context. A segment still being written is waited for at most 15 seconds when
@@ -678,9 +681,10 @@ only it would let the merge commit. `details.preparation.path` is then
 `segments`, with `segmentIds` and the `callIds` that wrote them.
 
 The writer compacts synchronously instead, as before, when no segment is ready
-or valid, after an unfinished turn, with custom focus, when a segment
-supersedes the source of a carried instruction, when the merge is ambiguous or
-exceeds the note schema or budget, or when the prefix conditions fail.
+or valid, after an unfinished turn, with custom focus, when a segment would
+retire a carried instruction without a ruling from the user in its place, when
+the merge is ambiguous or exceeds the note schema or budget, or when the
+prefix conditions fail.
 `details.preparation.segmentsFallback` records why.
 
 Segments never block work. They stop for the rest of a checkpoint interval

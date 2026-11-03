@@ -331,13 +331,17 @@ one instruction that names the range, attaches the current merged note as
 range. A fixed writer writes no segment.
 
 The merge (`work-notes.ts` `mergeNotes`) adds each note's instructions and facts
-in order, drops earlier facts whose sources a later fact supersedes, and keeps
+in order, drops earlier items whose sources a later item supersedes, and keeps
 the newest nonempty plan and the newest listed gaps; a segment lists gaps only
-when it names some. It refuses, and
-the synchronous writer compacts instead, when a note supersedes the source of a
-carried instruction, when a superseded source supports more earlier facts than
-the note gives in their place, or when the result exceeds the note schema. A
-merged note is committed under the full commit checks, as rule 5 requires.
+when it names some. A carried instruction is retired only by a ruling: a later
+instruction that supersedes its source and cites a user message in the note's
+own range, since only the user changes a ruling. A work note has no
+instructions and so retires none. The merge refuses, and the synchronous
+writer compacts instead, when a superseded source supports more carried
+instructions than rulings replace (`instruction-superseded`), when it supports
+more earlier items in all than the note gives in their place
+(`ambiguous-supersede`), or when the result exceeds the note schema (`schema`).
+A merged note is committed under the full commit checks, as rule 5 requires.
 
 **Coverage invariant.** After every boundary, each original after the base
 checkpoint's coverage is covered by a committed checkpoint, by a merged

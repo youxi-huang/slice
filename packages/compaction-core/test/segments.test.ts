@@ -220,8 +220,83 @@ describe("merging a chain without a model call (0.8.0 WP1, U6)", () => {
 		expect(merged).toEqual({ note: note({ instructions: [fact("u1")], state: [fact("u1"), fact("u2")] }) });
 	});
 
-	it("leaves the boundary to the writer when a segment supersedes a carried instruction", () => {
+	it("leaves the boundary to the writer when a fact supersedes a carried instruction", () => {
 		expect(mergeChain(undefined, chain())).toEqual({ refusal: "instruction-superseded" });
+	});
+
+	describe("a changed ruling (U6, amended in WP3)", () => {
+		const progress = (id: string): NoteFact => ({ text: "Synthetic progress.", sources: [id] });
+		const ruled = (records: SessionRecord[]) =>
+			segment(records, "u1", "a1", [], note({ instructions: [fact("u1")], state: [progress("a1")] }));
+
+		it("retires a carried instruction when the user's later ruling replaces it", () => {
+			const records = branch();
+			const s1 = ruled(records);
+			const s2 = segment(records, "u2", "a2", [s1], note({ state: [progress("a2")] }));
+			const ruling = fact("u3", { supersedes: ["u1"] });
+			const s3 = segment(records, "u3", "a3", [s1, s2], note({ instructions: [ruling], state: [progress("a3")] }));
+			expect(mergeChain(undefined, [s1, s2, s3])).toEqual({
+				note: note({ instructions: [ruling], state: [progress("a1"), progress("a2"), progress("a3")] }),
+			});
+		});
+
+		it("retires an instruction the previous checkpoint carried", () => {
+			const records = branch();
+			const previous = note({ instructions: [fact("u1")], state: [progress("a1")] });
+			const ruling = fact("u3", { supersedes: ["u1"] });
+			const s3 = segment(records, "u3", "a3", [], note({ instructions: [ruling], state: [progress("a3")] }));
+			expect(mergeChain(previous, [s3])).toMatchObject({ note: { instructions: [ruling] } });
+		});
+
+		it("keeps the carried instruction when only an assistant record backs the new one", () => {
+			const records = branch();
+			const s1 = ruled(records);
+			const claimed = { text: "Use port 4318 now.", sources: ["a2"], supersedes: ["u1"] };
+			const s2 = segment(records, "u2", "a2", [s1], note({ instructions: [claimed], state: [progress("a2")] }));
+			expect(mergeChain(undefined, [s1, s2])).toEqual({ refusal: "instruction-superseded" });
+		});
+
+		it("leaves the boundary to the writer when one ruling would retire two carried instructions", () => {
+			const records = branch();
+			const previous = note({
+				instructions: [fact("u1"), { text: "Keep the synthetic service local.", sources: ["u1"] }],
+				state: [progress("a1")],
+			});
+			const s3 = segment(
+				records,
+				"u3",
+				"a3",
+				[],
+				note({ instructions: [fact("u3", { supersedes: ["u1"] })], state: [progress("a3")] }),
+			);
+			expect(mergeChain(previous, [s3])).toEqual({ refusal: "instruction-superseded" });
+		});
+
+		it("counts the instruction with the facts its source supports", () => {
+			const records = branch();
+			const previous = note({ instructions: [fact("u1")], state: [fact("u1")] });
+			const s3 = segment(
+				records,
+				"u3",
+				"a3",
+				[],
+				note({ instructions: [fact("u3", { supersedes: ["u1"] })], state: [progress("a3")] }),
+			);
+			expect(mergeChain(previous, [s3])).toEqual({ refusal: "ambiguous-supersede" });
+			const both = segment(
+				records,
+				"u3",
+				"a3",
+				[],
+				note({
+					instructions: [fact("u3", { supersedes: ["u1"] })],
+					state: [fact("u3", { supersedes: ["u1"], quote: undefined })],
+				}),
+			);
+			expect(mergeChain(previous, [both])).toMatchObject({
+				note: { instructions: [fact("u3", { supersedes: ["u1"] })] },
+			});
+		});
 	});
 
 	it("leaves the boundary to the writer when a superseded source supports more facts than replace them", () => {

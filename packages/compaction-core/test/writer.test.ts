@@ -271,6 +271,8 @@ describe("compaction core: segment requests (0.8.0 WP2, U4)", () => {
 		const [{ request }] = transport.sent;
 		if (request.kind !== "handover") throw new Error("expected the session handover");
 		expect(request.instruction).toContain("Write a segment note for entries u2 through u2 only");
+		// The merge retires a carried instruction only for an instruction in its place (U6).
+		expect(request.instruction).toContain("give the replacement in the same section");
 		expect(request.instruction).not.toContain("Write the memory note that lets the next model continue");
 		const manifest = request.instruction.slice(request.instruction.indexOf("Entry IDs for citations"));
 		expect(manifest).toContain("u2 user");
