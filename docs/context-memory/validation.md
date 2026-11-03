@@ -1,5 +1,47 @@
 # Validation record
 
+## Codex 0.166.0 native compaction on GPT-6 Luna, a small probe, 2026-11-03 UTC
+
+A real-provider run on another host, recorded for the [v0.8.0 plan](v0.8.0-plan.md) as an external pause
+reference and as evidence for 0.9.0's host review. No Slice code ran. Official Codex CLI 0.166.0 from npm, an
+isolated `CODEX_HOME`, `openai/gpt-6-luna` on OpenAI's API through the proxy secret
+([openai-api.md](openai-api.md)), read-only sandbox. An invented fixture of exporter logs, about 9,000 tokens a
+message, was pasted turn by turn with `codex exec` and `codex exec resume`; it stated a port, a config path and a
+standing rule in the first message, corrected the port in the third, and hid three exact values in the logs. Seven
+questions followed. `model_auto_compact_token_limit` was lowered so that compaction ran at 31,000 to 82,000 tokens.
+The pause is the time from the turn's start to the `compacted` record in the rollout; Codex compacted before the
+turn's request each time.
+
+| Run | Path | Compactions at | Pause | Summary request read from cache | Kept after compaction | Questions |
+| --- | --- | ---: | ---: | ---: | --- | ---: |
+| 1, `medium` | Local summary (custom provider) | 37,161, 46,289, 52,585 | 9.1, 5.6, 4.4 s | 99.7 to 99.8% | An 0.8 to 0.9 KB summary and recent user messages up to Codex's 20,000-token allowance | 6 of 7 |
+| 2, `medium` | Remote (built-in provider) | 30,558, 39,754, 48,688, 57,620 | 8.6, 8.3, 5.1, 5.4 s | Not reported | A 3.0 to 4.4 KB encrypted `compaction` item and every user message | 7 of 7 |
+| 3, `high` | Local summary | 81,927 | 7.3 s | 99.9% | A 1.3 KB summary and the user messages that fit the allowance, the oldest one cut short | 6 of 7 |
+
+No answer was wrong. Both misses were `unknown` for a request ID that appeared only in the first message's log,
+which the local path's allowance no longer held; the remote path kept that message and answered it. The corrected
+port and the withdrawn one were answered right in every run.
+
+**The remote path cannot be checked or costed.** Its summary is an encrypted item, the persisted text is empty, and
+Codex reported no usage for the four compaction requests. Its pauses include one to three seconds of WebSocket
+retries that the session's proxy forced before Codex fell back to HTTPS; the local runs used an HTTPS-only provider
+and had none.
+
+**What the pauses mean.** Codex's local summarizer read nearly all of its input from the cache and wrote 275 to
+624 output tokens, 62 to 400 of them reasoning. Slice's writer on Pi also reads 95 to 97% from the cache but writes
+7 to 11 KB notes with a citation on every fact, at `max` in the maintainer's runs. The rows are therefore not a
+target for Slice's synchronous pause; they show what a boundary costs when the summary is short and unchecked.
+
+**Spend.** 39 model requests in about 13 minutes, against a limit of 40 requests, 20 minutes and $1 set for this
+review. About 1.0 million Luna input tokens, 475,000 of them cached, beside the unreported remote compactions. One
+run went out without its settings: an isolated home, the model and the compaction limit were lost when the previous
+command was refused, so 11 requests ran on Codex's default `gpt-6.1-sol` with 730,000 input tokens, 627,000 cached,
+and never compacted. Its results are not used above.
+
+One run each, on invented fixtures, at small contexts; the facts sat in user messages, which Codex keeps verbatim,
+rather than in tool output, which it drops. Codex's hooks were not exercised; their semantics come from the source
+at `rust-v0.166.0` and are summarized in the plan.
+
 ## v0.7.5 on npm: publication, then installation by name from npm on official hosts, 2026-11-02 UTC
 
 The published 0.7.5 packages, fetched from npm itself. No model was called: the host sessions below used the
