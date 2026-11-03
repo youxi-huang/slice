@@ -6,6 +6,10 @@ Changes under **Unreleased** are not included in an existing release tag or its 
 
 ## [Unreleased]
 
+### Security
+
+- GHSA-g3hv-75wg-m249: override workspace shx to 0.4.0, removing the vulnerable build-only minimatch chain through shelljs and glob. The resident runtime and its generated install-lock still use minimatch 10.2.6; upgrading them needs a separate change to the upstream install-lock generator's exact-version validation. The independent Pi preview, DSH and OpenCode packages do not bundle these dependencies.
+
 ### Maintenance
 
 - npm publication takes `slice-pi`, `slice-opencode` and `slice-dsh` in a fixed order whatever order the adapter build reports them in. The first v0.7.5 run stopped on that order before publishing anything to npm.
