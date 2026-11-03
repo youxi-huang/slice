@@ -1,7 +1,8 @@
 # Handoff: v0.8.0 after WP5, the release decision
 
 - Branch `claude/determined-carson-h13gug`, restarted from `main` after
-  [#114](https://github.com/youxi-huang/slice/pull/114) merged; this handoff's draft PR is the only open work on it.
+  [#114](https://github.com/youxi-huang/slice/pull/114) merged; this handoff's draft PR,
+  [#118](https://github.com/youxi-huang/slice/pull/118), is the only open work on it.
 - `head`: `b99714c`, the merge of #114 into `main`.
 - Written 2026-11-03 UTC, by the session that ran WP0 to WP5.
 
