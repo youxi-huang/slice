@@ -1,5 +1,44 @@
 # Validation record
 
+## 0.8.0 offline release gates, with segments off and on, 2026-11-03 UTC
+
+The offline gates of the [0.8.0 plan](v0.8.0-plan.md#release-gates), run before WP5's first provider request. No
+model service was called.
+
+| Gate | Segments off | Segments on |
+| --- | --- | --- |
+| Stock-Pi acceptance, official Pi 1.4.0 with 1.3.0, 1.2.0 and 1.1.0 as compatible hosts | 42 of 42 | 42 of 42 |
+| Stock-Pi acceptance on Pi 1.3.0, 1.2.0 and 1.1.0 | 36 of 36 each | 36 of 36 each |
+| Scenarios under the strict profile, Pi 1.4.0 with 1.0.4 as the other host | 157 passed | 157 passed |
+| Overhead per model request at 10 and 20 checkpoints (2.9 and 5.9 MB) | 1 and 3 ms | 1 and 4 ms |
+
+Segments off is `node scripts/context-memory-ops.mjs preview` at `63d9694`, release checks and the release preparation
+included. Segments on is `scripts/context-memory-preview-acceptance.mjs --segments on` and
+`scripts/context-memory-preview-scenarios.mjs --segments on --acceptance-profile strict` at `9fed624`, package
+`stock-preview+src.ddfacc18976ad9cf`; acceptance on 1.4.0 with segments off passed again there, 36 of 36.
+
+The first pass with segments on failed twice, and both findings were fixed in `9fed624`:
+
+- **Overhead.** With segments on, 20 checkpoints cost 135 ms a request against the 50 ms target, and 10 cost 48 ms.
+  `segment()` ran the session check (about 13 ms at 10 checkpoints), the failure store's inspection (about 35 ms) and
+  the submission's projection, cut, hashes and branch copy on every settled turn before asking whether a range was due.
+  It now asks first, from the branch as it stands; a regression test checks that a turn with no range due builds no
+  projection.
+- **Acceptance.** The two pressure cases count arm A's prepared writer calls, and a segment written in the same band
+  made it two. They now count arm A's calls apart, and every case refuses a segment request when segments are off.
+  The two reopen cases had failed only because they reuse those fixtures.
+
+Checkpoints reopen across versions, each with one request and one `context_history` read of a covered entry through a
+loopback provider on official Pi 1.4.0:
+
+| Checkpoints written by | Reopened by | Result |
+| --- | --- | --- |
+| This build, three on the segments path (P5's 200k route, loopback replay) | `slice-pi@0.7.5` from npm (`stock-preview+src.b0f389ab614f8cf3`) | ready on the latest, read back, no error |
+| `extension-v0.4.3`, two, written on Pi 1.3.0 | This build | ready, read back, no error |
+| `extension-v0.5.3`, two, written on Pi 1.3.0 | This build | ready, read back, no error |
+
+The lifecycle fuzz's gate of 200 seeds was met in WP4 with 1,000.
+
 ## 0.8.0 WP4: the lifecycle fuzz, 2026-11-03 UTC
 
 `packages/coding-agent/test/context-memory-preview-fuzz.test.ts` at the commit that adds this entry, run from
