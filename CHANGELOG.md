@@ -8,6 +8,8 @@ Changes under **Unreleased** are not included in an existing release tag or its 
 
 ### Added
 
+- DSH has an opt-in manual writing preview at `slice-dsh/compaction`: `/compact` writes and validates a Slice checkpoint in the native log, `/compaction-status` reports the gate, and failed or unconfirmed attempts block later requests. It uses `rawOutput`, a field DSH owns, for the structured checkpoint. The default history entry remains retrieval-only; stage 1 has no automatic compaction.
+
 - With preparation on, a checkpoint that preparation did not serve records why in `details.preparation.preparationFallback`: nothing was prepared, a run was still in flight or had failed or been cancelled, the candidate no longer matched its sources, a stale candidate left no reusable prefix, the turn was unfinished, or the prefix did not fit. Work notes already record their own reason in `notesFallback`. Older readers ignore the field; no checkpoint format changes.
 
 ### Maintenance

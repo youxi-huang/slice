@@ -3,9 +3,11 @@ import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { createRequire } from "node:module";
 import { delimiter, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
+import { startVitest } from "vitest/node";
 import { parseOptions, run } from "./context-memory-host-run.mjs";
 import { ADAPTER_HOSTS } from "./context-memory-preview-release-checks.mjs";
 
@@ -45,8 +47,12 @@ export async function acceptAdapters({ packageRoot, hostsRoot, outputDir }) {
 	const path = process.env.PATH;
 	process.env.PATH = [join(pnpm, "node_modules", ".bin"), path].join(delimiter);
 	const summary = { version: built.version, pnpm: PNPM_VERSION, packages: built.packages, runs: [], passed: false };
+	const nextResult = spawnSync("npm", ["view", OFFICIAL.dsh, "dist-tags.next"], { encoding: "utf8" });
+	assert.equal(nextResult.status, 0, nextResult.stderr);
+	const writingVersions = new Set(["0.2.1-rc.5", nextResult.stdout.trim()]);
+	const hosts = { ...ADAPTER_HOSTS, dsh: [...new Set([...ADAPTER_HOSTS.dsh, ...writingVersions])] };
 	try {
-		for (const [host, versions] of Object.entries(ADAPTER_HOSTS)) {
+		for (const [host, versions] of Object.entries(hosts)) {
 			const item = built.packages.find((entry) => entry.host === host);
 			assert(item, `No built ${host} package`);
 			assert.equal(sha256(join(packageRoot, item.archive)), item.sha256, `${item.archive} changed after the build`);
@@ -62,8 +68,20 @@ export async function acceptAdapters({ packageRoot, hostsRoot, outputDir }) {
 				try {
 					assert(!runDir.startsWith(`${realpathSync(root)}${sep}`), "The session must run outside this repository");
 					assert.equal(installedVersion(hostRoot, OFFICIAL[host]), version);
+					if (host === "dsh") {
+						// Use this loop's already installed and verified host; do not maintain another installer.
+						const require = createRequire(join(hostRoot, "package.json"));
+						const names = ["cordis", "dsh-compaction", "dsh-llm", "dsh-session", "dsh-session-persistence-jsonl", "dsh-session-format-catalog", "dsh-commands", "dsh-token-meter", "dsh-session-projection"];
+						const alias = Object.fromEntries(names.map((name) => [`@deepseek-ai/${name}`, require.resolve(`@deepseek-ai/${name}`)]));
+						const probes = await startVitest("test", ["packages/compaction-dsh/test/host-probes.test.ts", "packages/compaction-dsh/test/compaction.test.ts"], { root, config: false, watch: false }, { resolve: { alias } });
+						try {
+							assert.equal(probes.state.getFiles().length, 2);
+							assert(probes.state.getFiles().every((file) => file.result?.state === "pass"), "DSH native and writing regressions failed");
+							assert.equal(probes.state.getUnhandledErrors().length, 0);
+						} finally { await probes.close(); }
+					}
 					const options = parseOptions(["--host", host, "--route", "200k", "--provider", "loopback", "--install", "registry", "--host-root", hostRoot, "--package-dir", join(packageRoot, item.directory), "--output-dir", runDir]);
-					const report = await run(options).finally(() => {
+					const report = await run(options, { dshWriting: host === "dsh" && writingVersions.has(version) }).finally(() => {
 						mkdirSync(evidence, { recursive: true });
 						for (const file of ["report.json", "turns.jsonl", "loopback.jsonl", "host.log"]) {
 							if (existsSync(join(runDir, file))) cpSync(join(runDir, file), join(evidence, file));
@@ -75,6 +93,7 @@ export async function acceptAdapters({ packageRoot, hostsRoot, outputDir }) {
 						compactions: report.compactions.filter((entry) => entry.ok).length,
 						historyResults: report.historyResults,
 						stop: report.stop,
+						...(report.writing ? { writing: report.writing, compactorConflict: report.compactorConflict } : {}),
 					});
 					assert.equal(report.install.sha256, item.sha256, "The host installed other bytes than the built archive");
 					assert.equal(report.stop, null, `The session stopped: ${report.stop}`);
@@ -97,7 +116,7 @@ export async function acceptAdapters({ packageRoot, hostsRoot, outputDir }) {
 		}
 	} finally {
 		process.env.PATH = path;
-		summary.passed = summary.runs.length === Object.values(ADAPTER_HOSTS).flat().length && summary.runs.every((row) => row.passed);
+		summary.passed = summary.runs.length === Object.values(hosts).flat().length && summary.runs.every((row) => row.passed);
 		writeFileSync(join(outputDir, "adapters-acceptance.json"), `${JSON.stringify(summary, null, 2)}\n`);
 	}
 	return summary;

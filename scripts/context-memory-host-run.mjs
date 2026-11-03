@@ -1,3 +1,4 @@
+import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import { once } from "node:events";
 import { createHash } from "node:crypto";
@@ -186,6 +187,7 @@ export function startLoopback({ log } = {}) {
 	const previous = new Map();
 	const historyResults = [];
 	let calls = 0;
+	let failWriter = false;
 	const server = createServer(async (request, response) => {
 		const chunks = [];
 		for await (const chunk of request) chunks.push(chunk);
@@ -216,7 +218,13 @@ export function startLoopback({ log } = {}) {
 		let kind = "turn";
 		let reply = "Noted.";
 		let call;
-		if (/summar/i.test(last) || /summar/i.test(body.instructions ?? "")) {
+		if (last.includes("Entry IDs for citations, in conversation order")) {
+			kind = "slice-writer";
+			const manifest = last.slice(last.indexOf("Entry IDs for citations, in conversation order"));
+			const source = manifest.match(/^([^\s]+) user(?::|$)/m)?.[1];
+			reply = failWriter ? "synthetic invalid JSON" : JSON.stringify({ instructions: [], failedPaths: [], reasons: [], state: [{ text: "Synthetic P5 checkpoint.", sources: [source] }], nextSteps: [], files: [], gaps: [] });
+			failWriter = false;
+		} else if (/summar/i.test(last) || /summar/i.test(body.instructions ?? "")) {
 			kind = "compaction";
 			reply = `## Summary\n${"The ledger migration moves eu-west to eu-central. ".repeat(120)}`;
 		} else if (asked >= 0) {
@@ -276,7 +284,7 @@ export function startLoopback({ log } = {}) {
 		response.end();
 	});
 	return new Promise((done) =>
-		server.listen(0, "127.0.0.1", () => done({ server, url: `http://127.0.0.1:${server.address().port}/v1`, calls: () => calls, historyResults: () => [...historyResults] })),
+		server.listen(0, "127.0.0.1", () => done({ server, url: `http://127.0.0.1:${server.address().port}/v1`, calls: () => calls, failNextWriter: () => { failWriter = true; }, historyResults: () => [...historyResults] })),
 	);
 }
 
@@ -495,7 +503,7 @@ async function openCodeHost(options, work, loopback, registry) {
 }
 
 /** DSH 0.2.1-rc.3: the headless CLI, one process per turn, resumed by session ID; usage from the session log. */
-async function dshHost(options, work, loopback, registry) {
+async function dshHost(options, work, loopback, registry, writing = false) {
 	const route = ROUTES[options.route];
 	const profile = pressureProfile({ contextWindow: route.context, maxOutputTokens: route.output, model: "openai/gpt-6-luna" });
 	const compaction = { ...profile.dsh.config, ...(options.summaryTokens ? { maxTokens: options.summaryTokens } : {}) };
@@ -550,7 +558,29 @@ ${Object.entries(compaction)
     root: !!js dshHomePath('sessions')
     compression: none
 `;
-	writeFileSync(join(home, "profiles/headless/cordis.patch.yml"), patch);
+	// Headless has no slash-command input surface. This acceptance-only plugin invokes the public
+	// command registry on the idle resumed agent, before headless submits its next prompt.
+	const driver = join(work, "manual-command.mjs");
+	if (writing) writeFileSync(driver, `export const inject = ['commands'];
+export function apply(ctx, config) {
+  ctx.on('agent/created', ({ agent, signal }) => {
+    // Creation itself owns maintenance. Queue the human command at its public idle barrier;
+    // headless's own whenIdle follows that command before submitting the next prompt.
+    const operation = agent.whenIdle().then(() => ctx.commands.execute(agent, config.command, [], signal ?? new AbortController().signal));
+    operation.then((result) => process.stderr.write('SLICE_ACCEPTANCE_COMMAND_' + (result?.result.kind ?? 'unknown') + '\\n'),
+      () => process.stderr.write('SLICE_ACCEPTANCE_COMMAND_threw\\n'));
+    ctx.effect(() => () => operation.then(() => {}, () => {}));
+  });
+}
+`);
+	let writingEnabled = writing;
+	function configure(command, both = false) {
+		const engine = writingEnabled ? patch.replace(/- id: compaction-basic\n  config:\n[\s\S]*?(?=- id: session-title-llm)/,
+			`- id: compaction-basic\n  disabled: ${!both}\n- insert:\n    - id: slice-compaction\n      name: slice-dsh/compaction\n`) : patch;
+		const commandRow = command ? `- insert:\n    - id: slice-acceptance-command\n      name: ${JSON.stringify(pathToFileURL(driver).href)}\n      config:\n        command: ${JSON.stringify(command)}\n` : "";
+		writeFileSync(join(home, "profiles/headless/cordis.patch.yml"), engine + commandRow);
+	}
+	configure();
 	const env = { ...base, OPENAI_API_KEY: loopback ? "loopback" : "proxy-injected", ...(loopback ? {} : { NODE_USE_ENV_PROXY: "1" }) };
 	let sessionId;
 	let running;
@@ -564,6 +594,9 @@ ${Object.entries(compaction)
 		return [];
 	};
 	return {
+		events: () => events().filter((event) => Number.isSafeInteger(event.seq)),
+		configure,
+		useBasic() { writingEnabled = false; configure(); },
 		configuration: { compaction, modelOverride: { contextWindow: route.context, maxTokens: route.output } },
 		// DSH compacts in the pre-step of the next request.
 		compactsNextStep: true,
@@ -608,7 +641,8 @@ ${Object.entries(compaction)
 						}
 					});
 					sessionId ??= lines.find((line) => line.type === "session")?.sessionId;
-					done({ reply: lines.find((line) => line.type === "final")?.text ?? null, failed: code === 0 ? null : `exit ${code}: ${stderr.split("\n").filter(Boolean).slice(-3).join(" | ")}` });
+					appendFileSync(join(options.outputDir, "host.log"), stderr);
+					done({ reply: lines.find((line) => line.type === "final")?.text ?? null, diagnostics: stderr, failed: code === 0 ? null : `exit ${code}: ${stderr.split("\n").filter(Boolean).slice(-3).join(" | ")}` });
 				});
 				running = child;
 				child.stdin.end(text);
@@ -618,7 +652,8 @@ ${Object.entries(compaction)
 	};
 }
 
-export async function run(options) {
+export async function run(options, { dshWriting = false } = {}) {
+	if (dshWriting) assert(options.host === "dsh" && options.provider === "loopback", "Writing acceptance uses the DSH loopback fixture only");
 	const route = ROUTES[options.route];
 	const deadline = Date.now() + options.limits.minutes * 60_000;
 	rmSync(options.outputDir, { recursive: true, force: true });
@@ -626,7 +661,7 @@ export async function run(options) {
 	const journal = join(options.outputDir, "turns.jsonl");
 	const loopback = options.provider === "loopback" ? await startLoopback({ log: join(options.outputDir, "loopback.jsonl") }) : undefined;
 	const registry = options.install === "registry" ? await packageRegistry(options.packageDir, join(options.outputDir, "registry")) : undefined;
-	const host = await (options.host === "opencode" ? openCodeHost : dshHost)(options, join(options.outputDir, "work"), loopback, registry);
+	const host = await (options.host === "opencode" ? openCodeHost : dshHost)(options, join(options.outputDir, "work"), loopback, registry, dshWriting);
 	const report = { host: options.host, route: options.route, line: route.line, provider: options.provider, thinking: options.thinking, install: registry?.evidence ?? { from: "directory" }, configuration: host.configuration, limits: options.limits, turns: [], stop: null };
 	const { scoreProbe } = await import(pathToFileURL(join(root, "eval/preview/scorer.ts")).href);
 	async function turn(label, text, estimate) {
@@ -679,6 +714,56 @@ export async function run(options) {
 		});
 	}
 	try {
+		if (dshWriting) {
+			for (const message of hostMessages().slice(0, 2)) {
+				const result = await turn("P5 before first compact", message.text, message.estimate);
+				assert(!result.stopped, result.stopped);
+			}
+			const { dshCompactionRecords } = await import(pathToFileURL(join(root, "packages/compaction-dsh/src/codec.ts")).href);
+			const { validateMemoryCheckpoints } = await import(pathToFileURL(join(root, "packages/compaction-core/src/notes.ts")).href);
+			async function command(expected = "success") {
+				host.configure("/compact");
+				const result = await host.send("Continue the synthetic task.", 120_000);
+				host.configure();
+				assert(result.diagnostics.includes(`SLICE_ACCEPTANCE_COMMAND_${expected}`), result.diagnostics);
+				assert(host.events().filter((event) => event.type === "compaction/start").at(-1)?.data.sourceCommandId, "The command identity was not recorded");
+				return result;
+			}
+			function checkpoint() {
+				const events = host.events();
+				return validateMemoryCheckpoints(dshCompactionRecords(events), undefined, "jcs");
+			}
+			assert.equal((await command()).failed, null);
+			const first = checkpoint(); assert(first);
+			for (const message of hostMessages().slice(2, 4)) {
+				const result = await turn("P5 before second compact", message.text, message.estimate);
+				assert(!result.stopped, result.stopped);
+			}
+			assert.equal((await command()).failed, null);
+			assert.notEqual(checkpoint().entry.id, first.entry.id);
+			loopback.failNextWriter();
+			await command("error");
+			const failed = host.events().filter((event) => event.type === "compaction/end").at(-1);
+			assert(failed?.data.error?.startsWith("CONTEXT_"), "The forced writer failure must end the attempt");
+			const calls = loopback.calls();
+			await host.send("This claimed message must be blocked.", 120_000);
+			assert.equal(loopback.calls(), calls, "A blocked step sent a model request");
+			assert.equal((await command()).failed, null);
+			assert(checkpoint());
+			const history = await turn("history after CLI reopen", `${QUESTIONNAIRE_MARK}\n1. What batch size was originally chosen?`, 30);
+			assert(!history.stopped, history.stopped);
+			assert(loopback.historyResults().some((count) => count > 0));
+			// D10: record the actual host response when both engine rows are enabled.
+			host.configure(undefined, true);
+			const conflict = await host.send("Synthetic compactor conflict probe.", 120_000);
+			assert.match(conflict.diagnostics, /CONTEXT_COMPACTOR_CONFLICT|service.*compaction.*registered/i);
+			report.compactorConflict = "Slice refuses to load while compaction-basic is enabled";
+			host.useBasic();
+			host.configure("/compact");
+			assert.equal((await host.send("Synthetic task after removing the opt-in patch.", 120_000)).failed, null);
+			assert(!host.events().filter((event) => event.type === "compaction/summary").at(-1).data.compactionId.startsWith("slice-"));
+			report.writing = { twoChainedCheckpoints: true, forcedFailure: true, blockedRequests: 0, cliReopen: true, basicAfterRemoval: true };
+		} else {
 		for (const [index, message] of hostMessages().entries()) {
 			const now = await host.read();
 			const done = now.compactions.filter((row) => row.ok).length;
@@ -714,6 +799,7 @@ export async function run(options) {
 			if (result.stopped) report.stop = result.stopped;
 			report.detailsReply = result.reply ?? null;
 			report.details = score(asked.probes, result.reply);
+		}
 		}
 		const final = await host.read();
 		Object.assign(report, {

@@ -1,21 +1,21 @@
 # DSH and OpenCode retrieval previews
 
 These packages, `slice-opencode` and `slice-dsh`, add one `context_history` tool to each host.
-They search or read original stored text in the current session, with bounded
-results and continuation cursors. They do not generate Slice checkpoints,
-replace native compaction, or protect subsequent model requests. Neither
-package is a `Checked` or `Gated` compaction adapter.
+Their default entries search or read original stored text in the current session,
+with bounded results and continuation cursors. `slice-opencode` remains
+retrieval-only. `slice-dsh/compaction` is a separate opt-in manual writing preview:
+it validates and reads back Slice checkpoints and gates later requests after a
+failed or unconfirmed attempt.
 
 The scope and writing prerequisites are in
-[the adapter design](dsh-opencode-adapter-design.md). This implementation is
-retrieval-only; it contains no dormant writer or second transaction engine, and
-DSH writing is planned as described under [DSH writing](#dsh-writing). OpenCode
+[the adapter design](dsh-opencode-adapter-design.md). The default installation is
+retrieval-only; DSH writing is enabled as described under [DSH writing](#dsh-writing). OpenCode
 V2, released as `@opencode/cli` 2.x, is not included.
 
 Native compaction settings for a given route, such as 200k with a 32k output
 cap, and the three-cycle pressure fixtures for both hosts are in
 [capacity profiles](context-pressure.md). They leave both adapters
-retrieval-only.
+retrieval-only unless the DSH writing entry is explicitly enabled.
 
 ## Build, publish and load
 
@@ -196,5 +196,37 @@ same time, and the adapter moves to it once DSH ships one. Do not mutate
 `KNOWN_SESSION_EVENT_TYPES`, copy the private compaction engine, or put
 checkpoint JSON in the replacement message the model reads. The preview's
 design, which puts the checkpoint in `rawOutput`, is in
-[DSH writing preview](dsh-writing.md). Until that preview passes its own
-acceptance, `slice-dsh` stays retrieval-only.
+[DSH writing preview](dsh-writing.md). The default entry remains retrieval-only.
+
+Stage 1 adds `slice-dsh/compaction` as a separate entry. After installing the
+package, opt in with these profile patch rows:
+
+```yaml
+- id: compaction-basic
+  disabled: true
+- insert:
+    - id: slice-compaction
+      name: slice-dsh/compaction
+```
+
+`/compact` uses the session's routed model and reasoning setting, writes the
+native four-event transaction and validates the durable readback with JCS.
+`/compaction-status` shows the gate state and the reliance on DSH's `rawOutput`.
+A failed attempt blocks the next request; DSH discards that rejected input, so
+the notice asks the user to run `/compact` successfully and resend it. A failure
+after the clean end writes no further event: that process remains blocked, and
+a cold process confirms or rejects the checkpoint by reading the log again.
+
+There is no automatic compaction in stage 1. A session that outgrows its window
+fails at the provider until `/compact` is run. Seeded sessions, forks, logs with
+another engine's compactions and region compaction are refused. Removing the
+opt-in rows restores `compaction-basic`, which can open and compact a session
+Slice wrote. The package's bundle patch continues to insert only `slice-history`.
+
+The existing installation acceptance runner runs the native lifecycle probes
+and the writing regressions against the official DSH components it installs,
+then installs the built archive by name. On rc.5 and the current `next` release
+it runs P5 through two manual Slice compactions, a forced writer failure and
+blocked step, recovery, CLI reopen and original-history retrieval. It also
+checks the two-engine conflict and removal of the opt-in patch. These are
+loopback checks, not evidence of writer quality on a real provider.
