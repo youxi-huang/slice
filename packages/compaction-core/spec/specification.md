@@ -324,7 +324,12 @@ carried context reaches it first, and covers everything uncovered. Each later
 link waits for `segmentRangeTokens` of new history, 15 % of the trigger between
 8,192 and 32,000 tokens, measured as compacted sources are. Earlier starts can
 pay for segments even when a session never approaches its trigger.
-These are starting values that 0.8.0's evaluation measures.
+These are starting values that 0.8.0's evaluation measures. The preview coalesces
+a first link below half the trigger for one second before dispatch. If context
+reaches half while it is still queued, it replaces that unsent snapshot with
+the current range. A dispatched request is not cancelled for fresher history:
+its unknown usage would stop further starts under U9.
+
 
 The segment writer is the session writer (`writer.ts` `WriteMemoryOptions`
 `segment`): the session's request through the range's last record, closed by

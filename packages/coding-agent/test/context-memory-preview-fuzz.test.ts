@@ -333,7 +333,13 @@ class Harness {
 			},
 		} as unknown as ExtensionContext;
 		this.journal = new CallJournal(this.agentDir);
-		this.segments = new PreviewSegments({ enabled: true, journal: this.journal, waitMs: 30, deadlineMs: 60 });
+		this.segments = new PreviewSegments({
+			earlyMs: 0,
+			enabled: true,
+			journal: this.journal,
+			waitMs: 30,
+			deadlineMs: 60,
+		});
 		this.controller = new PreviewMemoryController({
 			config: { ...DEFAULT_MEMORY_CONFIG, writerModel: SESSION_WRITER, noteRepair: false },
 			failureStore: new PreviewFailureStore(this.agentDir),

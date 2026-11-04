@@ -708,6 +708,10 @@ export class PreviewMemoryController {
 				this.segments.effort,
 			);
 			this.segments.reconcile(submission);
+			if (this.segments.promoteFirst(usage.tokens, trigger)) {
+				void this.segments.waitForIdle().then(() => this.segment(ctx));
+				return;
+			}
 			const branch = structuredClone(ctx.sessionManager.getBranch());
 			const records = asRecords(branch);
 			const interval = checkpointInterval(branch);
@@ -761,6 +765,7 @@ export class PreviewMemoryController {
 			this.segments.start(
 				{
 					input,
+					contextTokens: usage.tokens,
 					run: async (signal, callHooks) => {
 						let scopeDropped = 0;
 						const written = await writeMemory({

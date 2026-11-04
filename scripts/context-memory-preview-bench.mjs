@@ -682,6 +682,7 @@ async function worker() {
 		// would. Pi compacts wherever its trigger falls; the round ends with /compact at the gold checkpoint unless a
 		// compaction has just covered it. A failed compaction is retried, as a user retries /compact.
 		const steps = JSON.parse(readFileSync(action.stepsFile, "utf8"));
+		const initialToolCount = sessionManager.getEntries().filter((entry) => entry.message?.role === "toolResult").length;
 		const usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0 };
 		const roundUsage = [];
 		let rounds = 0;
@@ -843,6 +844,13 @@ async function worker() {
 			}
 		const journalCalls = [...journal.values()];
 		const sent = journalCalls.filter((call) => call.dispatched !== false);
+		const executed = sessionManager.getEntries().filter((entry) => entry.message?.role === "toolResult").slice(initialToolCount);
+		const expectedTools = steps.flat().filter((entry) => entry.message?.role === "toolResult");
+		const exactTools = executed.length === expectedTools.length && executed.every((entry, index) => {
+			const expected = expectedTools[index].message;
+			return entry.message.toolCallId === expected.toolCallId && entry.message.toolName === expected.toolName && entry.message.isError === expected.isError && JSON.stringify(entry.message.content) === JSON.stringify(expected.content);
+		});
+		if (action.toolReplay && (!exactTools || taskReplies.length)) broken = true;
 		result = {
 			ok: !broken && boundaries.some((row) => row.gold && row.ok),
 			steps: steps.length,
@@ -853,7 +861,7 @@ async function worker() {
 			usage,
 			roundUsage,
 			journalCalls,
-			...(action.toolReplay ? { transportCalls, rateLimitErrors, tools: sessionManager.getEntries().filter((entry) => entry.message?.role === "toolResult").length, remainingReplies: taskReplies.length } : {}),
+			...(action.toolReplay ? { transportCalls: transportCalls.map((call) => ({ ...call, end: Number.isFinite(call.end) ? call.end : performance.timeOrigin + performance.now() })), rateLimitErrors, tools: { expected: expectedTools.length, executed: executed.length, exact: exactTools }, remainingReplies: taskReplies.length } : {}),
 			requests: rounds + sent.length,
 			costUsd: usage.cost + sent.reduce((sum, call) => sum + call.costUsd, 0),
 			...(action.provider === "openai" ? { openaiResponses: responseItems } : {}),

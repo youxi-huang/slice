@@ -53,6 +53,7 @@ import { CallJournal } from "../src/extensions/context-memory/preview/call-journ
 import type { PreviewCompaction, PreviewSession } from "../src/extensions/context-memory/preview/contracts.ts";
 import {
 	assertPreviewSession,
+	assertToolPairs,
 	chooseCut,
 	PreviewMemoryController,
 	piReserveTokens,
@@ -3316,6 +3317,7 @@ describe("preview segments at settled turns (0.8.0 WP2)", () => {
 	let root: string;
 	let session: SyntheticSession;
 	let journal: CallJournal;
+	let store: PreviewFailureStore;
 	let segments: PreviewSegments;
 	let controller: PreviewMemoryController;
 	let ctx: ExtensionContext;
@@ -3391,9 +3393,10 @@ describe("preview segments at settled turns (0.8.0 WP2)", () => {
 			ui: { notify: vi.fn() },
 			abort: vi.fn(),
 		} as unknown as ExtensionContext;
+		store = new PreviewFailureStore(join(root, "agent"));
 		controller = new PreviewMemoryController({
 			config: { ...DEFAULT_MEMORY_CONFIG, writerModel: SESSION_WRITER, noteRepair: false },
-			failureStore: new PreviewFailureStore(join(root, "agent")),
+			failureStore: store,
 			segments,
 			journal,
 		});
@@ -3453,6 +3456,153 @@ describe("preview segments at settled turns (0.8.0 WP2)", () => {
 		expect(instruction(requests[0])).toContain("Write a segment note for entries source-1 through reply-1 only");
 		expect(segments.status()).toMatchObject({ state: "idle", ready: 1, coveredThrough: "reply-1" });
 		expect(controller.status(ctx).calls).toMatchObject({ segmentCalls: 1, preparationCalls: 0, compactionCalls: 0 });
+	});
+
+	async function toolBatches(enabled = true): Promise<PreviewCompaction> {
+		session.entries = [];
+		session.leafId = null;
+		session.persist();
+		if (!enabled) {
+			segments.dispose();
+			segments = new PreviewSegments({ enabled: false, journal });
+			controller = new PreviewMemoryController({
+				config: { ...DEFAULT_MEMORY_CONFIG, writerModel: SESSION_WRITER, noteRepair: false },
+				failureStore: store,
+				segments,
+				journal,
+			});
+		}
+		const append = (id: string, message: AgentMessage) =>
+			session.append({ type: "message", id, parentId: session.getLeafId(), timestamp, message });
+		append("u1", { role: "user", content: "Read the synthetic logs and continue.", timestamp: 1 });
+		controller.sessionStart(ctx);
+		for (const index of [1, 2, 3, 4]) {
+			const calls = [{ type: "toolCall" as const, id: `read-${index}`, name: "read", arguments: {} }];
+			if (index === 1) calls.push({ type: "toolCall", id: "parallel", name: "read", arguments: {} });
+			append(`a${index}`, { ...assistant(), content: calls, stopReason: "toolUse" });
+			if (index === 1) {
+				append("partial", {
+					role: "toolResult",
+					toolCallId: "parallel",
+					toolName: "read",
+					content: [{ type: "text", text: "First parallel result." }],
+					isError: false,
+					timestamp: 1,
+				});
+				controller.segment(ctx);
+				await segments.waitForIdle();
+				expect(requests).toHaveLength(0);
+			}
+			append(`r${index}`, {
+				role: "toolResult",
+				toolCallId: `read-${index}`,
+				toolName: "read",
+				content: [{ type: "text", text: index < 4 ? "Synthetic output. ".repeat(4_000) : "Done." }],
+				isError: false,
+				timestamp: 1,
+			});
+			if (enabled && index < 4)
+				outputs.push({
+					...fact(index, "Synthetic progress."),
+					state: [{ text: "Synthetic progress.", sources: [`r${index}`] }],
+				});
+			await settle();
+		}
+		append("done", assistant());
+		if (!enabled)
+			outputs.push({
+				...fact(1, "Synthetic progress."),
+				state: [{ text: "Synthetic progress.", sources: ["done"] }],
+			});
+		return controller.compact(event(), ctx);
+	}
+
+	it("commits tool chunks, keeps the uncovered batch paired and confirms disk readback", async () => {
+		const value = await toolBatches();
+		expect(value.details?.preparation?.path).toBe("segments");
+		expect(value.details?.preparation?.segmentIds).toHaveLength(3);
+		expect(requests).toHaveLength(3);
+		expect(value.details?.coveredThrough).toBe("r3");
+		expect(value.firstKeptEntryId).toBe("a4");
+		expect(value.details?.sourceHash).toBe(
+			hashEntries(session.entries.slice(0, session.entries.findIndex((entry) => entry.id === "r3") + 1)),
+		);
+		expect(store.inspect(session).state).toBe("pending");
+		commit(value);
+		expect(store.inspect(session).state).toBe("ready");
+		expect(controller.status(ctx).lastCompaction?.diskConfirmed).toBe(true);
+		expect(() => controller.assertReady(ctx)).not.toThrow();
+		expect(() => assertToolPairs(session.buildSessionProjection().messages)).not.toThrow();
+		expect(ctx.abort).not.toHaveBeenCalled();
+	});
+
+	it("keeps tool batches on the synchronous path with segments off", async () => {
+		const value = await toolBatches(false);
+		expect(requests).toHaveLength(1);
+		expect(value.details?.preparation).toBeUndefined();
+		expect(value.details?.coveredThrough).toBe("done");
+		expect(value.firstKeptEntryId).toBe(CONTEXT_KEEP_NONE);
+	});
+
+	it("blocks tool-chunk readback when a covered result changes under its ID", async () => {
+		const value = await toolBatches();
+		const result = session.getEntry("r1");
+		if (result?.type !== "message" || result.message.role !== "toolResult") throw new Error("Missing result");
+		result.message.content = [{ type: "text", text: "Changed synthetic output." }];
+		commit(value);
+		expect(store.inspect(session).state).toBe("blocked");
+		expect(() => controller.assertReady(ctx)).toThrow("CONTEXT_SOURCE_CHANGED");
+		expect(ctx.abort).toHaveBeenCalledOnce();
+	});
+
+	it("coalesces a queued early first link at half the trigger before any call is dispatched", async () => {
+		contextTokens = 30_000;
+		turn(2, long("First early range."));
+		controller.segment(ctx);
+		expect(requests).toHaveLength(0);
+		turn(3, long(long("Large next run.")));
+		contextTokens = 80_000;
+		outputs.push(fact(3, "Large next run."));
+		controller.segment(ctx);
+		await vi.waitFor(() => expect(requests).toHaveLength(1));
+		await segments.waitForIdle();
+		expect(instruction(requests[0])).toContain("through reply-3 only");
+		expect(segments.status()).toMatchObject({
+			ready: 1,
+			coveredThrough: "reply-3",
+			results: { cancelled: 1, failed: {} },
+		});
+		expect(journal.segmentSpend(session.getSessionId(), "none").calls).toBe(1);
+		turn(4, "Continue.");
+		const value = await controller.compact(event(), ctx);
+		expect(value.details?.preparation?.path).toBe("segments");
+		expect(requests).toHaveLength(1);
+	});
+
+	it("keeps a dispatched early first link instead of aborting a request with unknown usage", async () => {
+		segments.dispose();
+		segments = new PreviewSegments({ enabled: true, journal, earlyMs: 0 });
+		controller = new PreviewMemoryController({
+			config: { ...DEFAULT_MEMORY_CONFIG, writerModel: SESSION_WRITER, noteRepair: false },
+			failureStore: store,
+			segments,
+			journal,
+		});
+		controller.sessionStart(ctx);
+		contextTokens = 30_000;
+		turn(2, long("First early range."));
+		outputs.push(fact(2, "First early range."));
+		hold = true;
+		controller.segment(ctx);
+		await vi.waitFor(() => expect(held).toBeDefined());
+		turn(3, long(long("Large next run.")));
+		contextTokens = 80_000;
+		controller.segment(ctx);
+		expect(held?.signal?.aborted).toBe(false);
+		expect(requests).toHaveLength(1);
+		held?.release();
+		await segments.waitForIdle();
+		expect(segments.status()).toMatchObject({ ready: 1, coveredThrough: "reply-2", results: { cancelled: 0 } });
 	});
 
 	it("closes a later link only after a range's worth of new history, on top of the merged note", async () => {

@@ -2,6 +2,8 @@
 // (U10); U9's limits: the journal's per-interval call limit and spending cap, and a breaker after three
 // consecutive failures of one class until the next commit. Segments never block work: any limit leaves the next
 // boundary to the synchronous writer. Assembly at the boundary is WP3's.
+
+import { setTimeout as delay } from "node:timers/promises";
 import type { ThinkingLevel } from "@earendil-works/pi-ai";
 import { segmentBudgetLeft } from "../../../../../compaction-core/src/call-journal.ts";
 import { noteSections } from "../../../../../compaction-core/src/notes.ts";
@@ -82,6 +84,7 @@ export function segmentLevel(
 
 export interface SegmentJob {
 	input: SegmentSnapshot;
+	contextTokens?: number;
 	/** The written note, and how many citations the writer dropped to keep it inside its range. */
 	run(signal: AbortSignal, hooks: WriterCallHooks): Promise<WriteMemoryResult & { scopeDropped?: number }>;
 }
@@ -93,12 +96,19 @@ export class PreviewSegments {
 	/** The thinking level segments are written at (U5): the session's own unless configured. */
 	readonly effort: SegmentEffort;
 	private readonly deadlineMs: number;
+	private readonly earlyMs: number;
 	private readonly settingsError?: string;
 	private readonly journal: CallJournal;
 	private sessionId?: string;
 	private epoch = 0;
 	private links: PreparedSegment[] = [];
-	private running?: { abort: AbortController; settled: Promise<void>; input: SegmentSnapshot };
+	private running?: {
+		abort: AbortController;
+		settled: Promise<void>;
+		input: SegmentSnapshot;
+		belowHalf: boolean;
+		dispatched: boolean;
+	};
 	private streak?: { kind: SegmentFailure; count: number };
 	private results = noResults();
 	private broken?: SegmentFailure;
@@ -112,6 +122,7 @@ export class PreviewSegments {
 		effort?: SegmentEffort;
 		waitMs?: number;
 		deadlineMs?: number;
+		earlyMs?: number;
 	}) {
 		this.enabled = options.enabled && !options.settingsError;
 		this.settingsError = options.settingsError;
@@ -119,6 +130,7 @@ export class PreviewSegments {
 		this.effort = options.effort ?? "session";
 		this.waitMs = options.waitMs ?? WAIT_MS;
 		this.deadlineMs = options.deadlineMs ?? DEADLINE_MS;
+		this.earlyMs = options.earlyMs ?? 1_000;
 	}
 
 	get currentEpoch(): number {
@@ -162,13 +174,35 @@ export class PreviewSegments {
 		);
 	}
 
+	/** Coalesce a queued early first link at the original half-trigger point; sent calls retain U9's usage rules. */
+	promoteFirst(contextTokens: number, triggerTokens: number): boolean {
+		const running = this.running;
+		if (
+			!running?.belowHalf ||
+			running.dispatched ||
+			this.links.length ||
+			contextTokens < Math.floor(triggerTokens / 2)
+		)
+			return false;
+		running.belowHalf = false;
+		running.abort.abort();
+		return true;
+	}
+
 	start(job: SegmentJob, interval: string, triggerTokens: number): boolean {
 		const input = job.input;
 		if (!this.mayStart(input.preparation.sessionId, interval, triggerTokens)) return false;
 		this.activate(input.preparation.sessionId);
 		if (input.preparation.epoch !== this.epoch || input.chainHash !== chainHash(this.links)) return false;
 		const abort = new AbortController();
-		const task = { abort, settled: Promise.resolve(), input };
+		const task = {
+			abort,
+			settled: Promise.resolve(),
+			input,
+			belowHalf:
+				!this.links.length && job.contextTokens !== undefined && job.contextTokens < Math.floor(triggerTokens / 2),
+			dispatched: false,
+		};
 		this.running = task;
 		let late = false;
 		const timer = setTimeout(() => {
@@ -180,6 +214,7 @@ export class PreviewSegments {
 		const callIds: string[] = [];
 		const hooks: WriterCallHooks = {
 			beforeDispatch: async (call) => {
+				task.dispatched = true;
 				const id = await journal.beforeDispatch(call);
 				callIds.push(id);
 				return id;
@@ -190,7 +225,8 @@ export class PreviewSegments {
 			!this.disposed && input.preparation.epoch === this.epoch && this.sessionId === input.preparation.sessionId;
 		// Generation is queued after the host event returns; the task turn never waits for it.
 		task.settled = Promise.resolve()
-			.then(() => {
+			.then(async () => {
+				if (task.belowHalf) await delay(this.earlyMs, undefined, { signal: abort.signal });
 				abort.signal.throwIfAborted();
 				return job.run(abort.signal, hooks);
 			})
