@@ -715,11 +715,12 @@ the pause over a whole session, and in one case they made it worse: the turns
 after the last segment then stayed verbatim up to half the threshold, and a very
 large paste or tool output soon after took the next request past the window,
 where the writer had no room to compact and the session blocked. The tail is
-now bounded to one range, which removes that case in the offline checks; it has
-not yet been measured again on a provider. Leave segments off at a `max`
-thinking level, where a segment can take longer than its two-minute deadline.
-The record is in
-[validation.md](validation.md#080-wp5-segments-on-gpt-6-luna-and-deepseek-v41-flash-2026-11-03-utc).
+now bounded to one range. In a rerun on GPT-6 Luna no session blocked, but
+segments served no compaction, and waiting for one still being written made
+each pause up to 15 seconds longer. Leave segments off unless you are
+measuring them. At a `max` thinking level a segment can also take longer than
+its two-minute deadline. The records are in
+[validation.md](validation.md#080-wp5-rerun-gpt-6-luna-with-the-bounded-tail-2026-11-04-utc).
 
 Segments never block work themselves. They stop for the rest of a checkpoint interval
 after eight calls, or once their calls have spent as many uncached tokens as
