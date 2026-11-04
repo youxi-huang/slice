@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 
 export const WRITER_REQUESTS = ["Return ONLY the memory note itself", "Return ONLY one JSON object matching this schema"];
@@ -39,14 +40,15 @@ export function recordedReply(payload, reply, usage) {
 		return chunk({ role: "assistant", content: text, ...(tools.length ? { tool_calls: tools.map((part, index) => ({ index, id: recordedCallId(part.id), type: "function", function: { name: part.name, arguments: JSON.stringify(part.arguments) } })) } : {}) }, null)
 			+ chunk({}, tools.length ? "tool_calls" : "stop", usage) + "data: [DONE]\n\n";
 	}
+	const responseId = randomUUID().replaceAll("-", "");
 	const output = [
-		...(text ? [{ type: "message", id: "msg_bench", role: "assistant", status: "completed", content: [{ type: "output_text", text, annotations: [] }] }] : []),
+		...(text ? [{ type: "message", id: `msg_replay_${responseId}`, role: "assistant", status: "completed", content: [{ type: "output_text", text, annotations: [] }] }] : []),
 		// Pi's parser needs an item ID, but its serializer drops IDs without the native fc_ prefix.
 		...tools.map((part) => ({ type: "function_call", id: `replay_${recordedCallId(part.id)}`, call_id: recordedCallId(part.id), name: part.name, arguments: JSON.stringify(part.arguments), status: "completed" })),
 	];
 	const event = (value) => `event: ${value.type}\ndata: ${JSON.stringify(value)}\n\n`;
 	return output.map((item, output_index) => event({ type: "response.output_item.done", output_index, item })).join("")
-		+ event({ type: "response.completed", response: { id: "resp_bench", object: "response", status: "completed", model: payload.model, output, ...(usage ? { usage } : {}) } });
+		+ event({ type: "response.completed", response: { id: `resp_replay_${responseId}`, object: "response", status: "completed", model: payload.model, output, ...(usage ? { usage } : {}) } });
 }
 
 /** Observe only usage and error state, never retain upstream text or request headers. */

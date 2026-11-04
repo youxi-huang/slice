@@ -134,6 +134,8 @@ for (const [provider, id, api] of [["openai", "gpt-6-luna", "openai-responses"],
 			if (api === "openai-responses") {
 				assert.equal(payload.prompt_cache_key, "synthetic-provider-proof");
 				assert.equal(payload.input.some((item) => item.type === "reasoning"), false);
+				const itemIds = payload.input.map((item) => item.id).filter(Boolean);
+				assert.equal(new Set(itemIds).size, itemIds.length, "Locally answered history must not repeat item IDs");
 				assert.ok(payload.input.filter((item) => item.type === "function_call").every((item) => item.id === undefined && item.call_id === "call_recorded"));
 				assert.deepEqual(payload.input.slice(0, received[0].input.length), received[0].input);
 				if (position) assert.equal(payload.input.filter((item) => item.type === "function_call_output" && item.call_id === "call_recorded").length, 1);
