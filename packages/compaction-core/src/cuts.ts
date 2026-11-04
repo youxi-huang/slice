@@ -4,7 +4,9 @@
 // projection shapes in records.ts, and the host's projection builder and token estimator are the
 // caller's to supply: the Pi adapter binds `buildSessionProjection` and `estimateTokens`. Logic,
 // bounds and thrown messages are unchanged (rule K2).
+import { assertToolPairs } from "./guards.ts";
 import type { RecordProjection, SessionRecord } from "./records.ts";
+import type { ReducibleMessage } from "./reduction.ts";
 
 /**
  * Keep complete recent turns; a zero budget uses stock Pi's no-matching-kept-entry convention. The cut
@@ -55,6 +57,37 @@ export function prefixCut(
 		if (entry?.type === "message" && entry.message.role === "user" && projected.has(entry.id)) return index;
 	}
 	return undefined;
+}
+
+/** Segments may also release a covered complete tool batch at the next projected assistant message. */
+export function segmentPrefixCut(
+	branch: readonly SessionRecord[],
+	projection: RecordProjection<ReducibleMessage>,
+	coveredIndex: number,
+	cut: number,
+): number | undefined {
+	const next = coveredIndex + 1;
+	const covered = branch[coveredIndex];
+	const entry = branch[next];
+	if (
+		next <= cut &&
+		next > branch.findLastIndex((record) => record.type === "compaction") &&
+		covered?.type === "message" &&
+		covered.message.role === "toolResult" &&
+		entry?.type === "message" &&
+		entry.message.role === "assistant" &&
+		projection.entries.some((record) => record.sourceEntry.id === entry.id && record.messages.length)
+	) {
+		const prefix = new Set(branch.slice(0, next).map((record) => record.id));
+		assertToolPairs(
+			projection.entries.filter((record) => prefix.has(record.sourceEntry.id)).flatMap((record) => record.messages),
+		);
+		assertToolPairs(
+			projection.entries.filter((record) => !prefix.has(record.sourceEntry.id)).flatMap((record) => record.messages),
+		);
+		return next;
+	}
+	return prefixCut(branch, projection, coveredIndex, cut);
 }
 
 /** The interval a preparation belongs to: the latest checkpoint on the branch, or none yet. */

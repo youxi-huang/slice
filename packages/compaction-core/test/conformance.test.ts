@@ -33,9 +33,9 @@ const manifest: { version: string; files: Record<string, string> } = JSON.parse(
 const vectors: ConformanceVector[] = JSON.parse(readFileSync(new URL("vectors.json", directory), "utf8"));
 const segments: SegmentVector[] = JSON.parse(readFileSync(new URL("segments.json", directory), "utf8"));
 
-describe("0.8-conformance.1", () => {
+describe("0.8-conformance.2", () => {
 	it("pins the complete data set and uses only unique IDs and closed-set refusal classes", () => {
-		expect(manifest.version).toBe("0.8-conformance.1");
+		expect(manifest.version).toBe("0.8-conformance.2");
 		expect(Object.keys(manifest.files).sort()).toEqual(
 			readdirSync(directory)
 				.filter((name) => name.endsWith(".json") && name !== "manifest.json")
@@ -51,7 +51,7 @@ describe("0.8-conformance.1", () => {
 			).toBe(digest);
 		}
 		expect(vectors).toHaveLength(34);
-		expect(segments).toHaveLength(26);
+		expect(segments).toHaveLength(35);
 		const all = [...vectors, ...segments];
 		expect(new Set(all.map((vector) => vector.id)).size).toBe(all.length);
 		for (const vector of all) {

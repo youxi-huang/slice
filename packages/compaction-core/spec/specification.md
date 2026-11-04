@@ -316,13 +316,14 @@ no link after it is merged out of order. A base checkpoint without a
 `coveredThrough` starts no chain.
 
 The core chooses each range (`segments.ts` `nextSegmentRange`). A range ends at
-the branch's last record, which must close a settled turn: an assistant
-message that stopped, with every tool call in the range answered. A range that
-cannot close defers and the chain does not advance. The first link of an
-interval waits until the context reaches half the trigger and then covers
-everything uncovered, so a session that never nears compaction pays for no
-segment. Each later link waits for `segmentRangeTokens` of new history, 15 % of
-the trigger between 8,192 and 32,000 tokens, measured as compacted sources are.
+the branch's last record: a stopped assistant message or the last result of a
+complete tool batch. Every tool call in the range must have its result; a
+partial parallel batch defers without advancing the chain. The first link of
+an interval starts after one range of new history, or at half the trigger when
+carried context reaches it first, and covers everything uncovered. Each later
+link waits for `segmentRangeTokens` of new history, 15 % of the trigger between
+8,192 and 32,000 tokens, measured as compacted sources are. Earlier starts can
+pay for segments even when a session never approaches its trigger.
 These are starting values that 0.8.0's evaluation measures.
 
 The segment writer is the session writer (`writer.ts` `WriteMemoryOptions`
@@ -540,8 +541,12 @@ window, else `CONTEXT_WRITER_CAPACITY` (`writeMemory`); budget arguments must
 be valid integer counts, else `CONTEXT_CONFIG`. The cut that selects what
 leaves context must land on a turn start that follows the previous
 checkpoint, else `CONTEXT_NO_CUT` (`cuts.ts` `chooseCut`); a prefix
-commit uses the latest turn start inside the covered prefix
-(`cuts.ts` `prefixCut`).
+commit uses the latest projected user-message turn start inside the covered
+prefix (`cuts.ts` `prefixCut`). Only the segments path may instead cut just
+after a covered complete tool batch, at the next projected assistant message,
+within the ordinary cut and after the previous checkpoint. Both sides must
+retain complete tool pairs (`cuts.ts` `segmentPrefixCut`). The notes path and
+arm A retain the user-message rule. Segments remain off by default (U13).
 
 ## Commit and failure states
 

@@ -1,6 +1,6 @@
 # Core conformance vectors
 
-`0.8-conformance.1` adds WP1's segment contract to the vectors half of 0.7.0's
+`0.8-conformance.2` adds WP1's segment contract to the vectors half of 0.7.0's
 WP3 from [the specification](../spec/specification.md). Every record and sentence
 is invented. These vectors exercise the core directly. The Pi adapter path
 (`eval/preview/conformance-adapter.test.ts`) replays `vectors.json` through the
@@ -52,7 +52,7 @@ unpaired tool batch, a present/missing continuation rendering, and changed cited
 content under both source serializations. No vector combines independent faults.
 
 Each object in `segments.json` also has a unique `id`, `stage` and ordered
-`records`. Its 26 vectors pin the settled 0.8.0 contract with three stages:
+`records`. Its 35 vectors pin the settled 0.8.0 contract with five stages:
 
 - `segment`: `link` names `firstId`, `lastId` and its `note`.
   `freezeSegmentInput` freezes its input and `finalizeSegment` checks its note.
@@ -104,3 +104,12 @@ existing native `JSON.stringify` framing; checkpoint readers select JCS explicit
 Run `node scripts/context-memory-core-check.mjs` from the repository root for the
 import gate, in-place vectors, isolated build and isolated vectors. The required
 repository acceptance is `node scripts/context-memory-ops.mjs verify`.
+
+`0.8-conformance.2` amends U3 and the segments prefix cut. `segment-range`
+passes `options` to `nextSegmentRange` and pins its range or deferral. The
+first-start vectors distinguish a full range below half the trigger, a short
+range below both lines and carried context at half. Complete and partial
+parallel batches pin the new range end. `segment-cut` supplies `coveredIndex`,
+`cut` and `path` (`segments` or the unchanged `prefix`); it pins the selected
+index or refusal. It covers the assistant cut, the user-only control, the
+ordinary-cut bound and refusal to release a partial batch.
