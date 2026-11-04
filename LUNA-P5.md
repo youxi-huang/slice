@@ -38,3 +38,37 @@ Observations:
    Capped task requests took 10.0 to 23.8 s in the first chain and never exceeded the 10 s turn delay afterwards.
 5. **Tokens.** Luna counts about 6% more input than the bench's bytes/3 estimate at cut 1 (146,117 against
    137,545) and about 11% more at cut 3 of the control (144,428 against 130,048).
+
+## Rerun on V2 with the capacity fix, 2026-11-04 UTC
+
+The same four chains on the same terms, approved by the maintainer before the first request with the same limits.
+Spent: US$0.46 in 261 requests over 45.6 minutes. No 4xx, no rate-limit error.
+
+- Package: V2 with the capacity fix, PR #119 at `e758e11`, build `stock-preview+src.7c815afa75319b7b`, bundle
+  SHA-256 `310fd964…`. Bench, command and fixture as above; labels `luna-10-<route>-v2fix-<on|off>`.
+- Raw metrics under `luna-p5/luna-10-*-v2fix-*/`, the same three files per chain.
+
+| Chain | Route | Segments | Boundaries | Paths | Total pause (s) | Requests T/S/W | Peak 60 s input | Cost (US$) |
+| --- | --- | --- | --- | --- | ---: | --- | ---: | ---: |
+| `luna-10-200k-v2fix-on` | 200k | on | 3/3, one refused attempt before cut 3 | segments 1, sync 2 | 169.084 | 61/5/11 | 986,587 | 0.1509 |
+| `luna-10-200k-v2fix-off` | 200k | off | 3/3 | sync 3 | 60.436 | 61/0/3 | 829,994 | 0.0963 |
+| `luna-10-272k-v2fix-on` | 272k | on | 2/2 | sync 2 | 43.656 | 56/4/2 | 1,361,051 | 0.1114 |
+| `luna-10-272k-v2fix-off` | 272k | off | 2/2 | sync 2 | 49.668 | 56/0/2 | 1,170,526 | 0.0997 |
+
+Observations:
+
+1. **The block is gone; the chunked writer is slow and failed once.** Cut 1 was served by segments in 45 ms. Cut 3
+   again became Pi's own trigger at step 4, and no handover form fitted, so the writer read the evidence in bounded
+   chunks. The automatic attempt wrote three chunks in 55.6 s and its note failed validation with
+   `CONTEXT_NOTE_INVALID`, a schema fault outside the repairable classes, so it stopped there. The retry
+   (`instruction-superseded`) committed through seven chunks in 143.1 s at 161,242 tokens: 25,849 to 35,274 input
+   tokens and 18.1 to 23.3 s per call, none from the cache. From the first chunk to the commit, the session waited
+   198.8 s; the bench's pause counts only the committed attempt. Cut 5 went to the writer after
+   `ambiguous-supersede`, 25.9 s, nearly all from the cache.
+2. **What that compaction cost.** The ten chunk calls read 322,054 uncached input tokens for US$0.044, against
+   US$0.011 for all three of the control's writers, which read from the cache.
+3. **272k with segments on.** Both cuts went to the writer after `ambiguous-supersede`, 15.0 and 28.6 s, and the
+   four segment calls were discarded. In the first run the merge served cut 4 in 108 ms; the fix touches neither
+   the merge nor the segments, so the difference comes from what Luna wrote in each run.
+4. **Controls.** 200k: 17.5, 23.0 and 20.0 s (51.4 s in all before, 60.4 s now). 272k: 26.7 and 23.0 s (37.5 s
+   before, 49.7 s now). Every control writer read its input from the cache.
