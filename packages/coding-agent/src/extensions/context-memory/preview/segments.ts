@@ -3,7 +3,6 @@
 // consecutive failures of one class until the next commit. Segments never block work: any limit leaves the next
 // boundary to the synchronous writer. Assembly at the boundary is WP3's.
 
-import { setTimeout as delay } from "node:timers/promises";
 import type { ThinkingLevel } from "@earendil-works/pi-ai";
 import { segmentBudgetLeft } from "../../../../../compaction-core/src/call-journal.ts";
 import { noteSections } from "../../../../../compaction-core/src/notes.ts";
@@ -84,7 +83,6 @@ export function segmentLevel(
 
 export interface SegmentJob {
 	input: SegmentSnapshot;
-	coalesce?: boolean;
 	/** The written note, and how many citations the writer dropped to keep it inside its range. */
 	run(signal: AbortSignal, hooks: WriterCallHooks): Promise<WriteMemoryResult & { scopeDropped?: number }>;
 }
@@ -96,7 +94,6 @@ export class PreviewSegments {
 	/** The thinking level segments are written at (U5): the session's own unless configured. */
 	readonly effort: SegmentEffort;
 	private readonly deadlineMs: number;
-	private readonly coalesceMs: number;
 	private lastCallMs?: number;
 	private readonly settingsError?: string;
 	private readonly journal: CallJournal;
@@ -107,8 +104,6 @@ export class PreviewSegments {
 		abort: AbortController;
 		settled: Promise<void>;
 		input: SegmentSnapshot;
-		coalesce: boolean;
-		dispatched: boolean;
 		dispatchedAt?: number;
 	};
 	private streak?: { kind: SegmentFailure; count: number };
@@ -124,7 +119,6 @@ export class PreviewSegments {
 		effort?: SegmentEffort;
 		waitMs?: number;
 		deadlineMs?: number;
-		coalesceMs?: number;
 	}) {
 		this.enabled = options.enabled && !options.settingsError;
 		this.settingsError = options.settingsError;
@@ -132,7 +126,6 @@ export class PreviewSegments {
 		this.effort = options.effort ?? "session";
 		this.waitMs = options.waitMs ?? WAIT_MS;
 		this.deadlineMs = options.deadlineMs ?? DEADLINE_MS;
-		this.coalesceMs = options.coalesceMs ?? 1_000;
 	}
 
 	get currentEpoch(): number {
@@ -195,16 +188,6 @@ export class PreviewSegments {
 		);
 	}
 
-	/** Refresh a queued first link at a newer closed range; sent calls retain U9's usage rules. */
-	coalesceFirst(lastId: string): boolean {
-		const running = this.running;
-		if (!running?.coalesce || running.dispatched || this.links.length || lastId === running.input.lastId)
-			return false;
-		running.coalesce = false;
-		running.abort.abort();
-		return true;
-	}
-
 	start(job: SegmentJob, interval: string, triggerTokens: number): boolean {
 		const input = job.input;
 		if (!this.mayStart(input.preparation.sessionId, interval, triggerTokens)) return false;
@@ -215,8 +198,6 @@ export class PreviewSegments {
 			abort,
 			settled: Promise.resolve(),
 			input,
-			coalesce: job.coalesce === true,
-			dispatched: false,
 			dispatchedAt: undefined as number | undefined,
 		};
 		this.running = task;
@@ -233,7 +214,6 @@ export class PreviewSegments {
 		const callIds: string[] = [];
 		const hooks: WriterCallHooks = {
 			beforeDispatch: async (call) => {
-				task.dispatched = true;
 				const id = await journal.beforeDispatch(call);
 				task.dispatchedAt = performance.now();
 				callIds.push(id);
@@ -248,8 +228,7 @@ export class PreviewSegments {
 			!this.disposed && input.preparation.epoch === this.epoch && this.sessionId === input.preparation.sessionId;
 		// Generation is queued after the host event returns; the task turn never waits for it.
 		task.settled = Promise.resolve()
-			.then(async () => {
-				if (task.coalesce) await delay(this.coalesceMs, undefined, { signal: abort.signal });
+			.then(() => {
 				abort.signal.throwIfAborted();
 				return job.run(abort.signal, hooks);
 			})

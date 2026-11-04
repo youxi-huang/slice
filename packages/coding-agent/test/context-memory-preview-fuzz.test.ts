@@ -334,7 +334,6 @@ class Harness {
 		} as unknown as ExtensionContext;
 		this.journal = new CallJournal(this.agentDir);
 		this.segments = new PreviewSegments({
-			coalesceMs: 0,
 			enabled: true,
 			journal: this.journal,
 			waitMs: 3,

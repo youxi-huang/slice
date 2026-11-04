@@ -718,10 +718,6 @@ export class PreviewMemoryController {
 				contextTokens: usage.tokens,
 			});
 			if (!("range" in choice)) return;
-			if (this.segments.coalesceFirst(choice.range.lastId)) {
-				void this.segments.waitForIdle().then(() => this.segment(ctx));
-				return;
-			}
 			if (!this.segments.mayStart(sessionId, interval, trigger)) return;
 			// The current note: the base checkpoint's with the chain merged in. A chain that already leaves its
 			// boundary to the writer gains nothing from another link.
@@ -765,7 +761,6 @@ export class PreviewMemoryController {
 			this.segments.start(
 				{
 					input,
-					coalesce: !chain.length,
 					run: async (signal, callHooks) => {
 						let scopeDropped = 0;
 						const written = await writeMemory({

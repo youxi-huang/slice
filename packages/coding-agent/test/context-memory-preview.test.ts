@@ -3346,7 +3346,7 @@ describe("preview segments at settled turns (0.8.0 WP2)", () => {
 		root = fs.mkdtempSync(join(tmpdir(), "pi-preview-segments-"));
 		session = new SyntheticSession(root);
 		journal = new CallJournal(join(root, "agent"));
-		segments = new PreviewSegments({ enabled: true, journal, coalesceMs: 0 });
+		segments = new PreviewSegments({ enabled: true, journal });
 		// Pi's default reserve leaves a 111,616-token trigger in this window; the first segment waits for half of it.
 		contextTokens = 60_000;
 		outputs = [];
@@ -3553,65 +3553,6 @@ describe("preview segments at settled turns (0.8.0 WP2)", () => {
 		expect(store.inspect(session).state).toBe("blocked");
 		expect(() => controller.assertReady(ctx)).toThrow("CONTEXT_SOURCE_CHANGED");
 		expect(ctx.abort).toHaveBeenCalledOnce();
-	});
-
-	it("coalesces a queued early first link at a newer closed range before any call is dispatched", async () => {
-		segments.dispose();
-		segments = new PreviewSegments({ enabled: true, journal });
-		controller = new PreviewMemoryController({
-			config: { ...DEFAULT_MEMORY_CONFIG, writerModel: SESSION_WRITER, noteRepair: false },
-			failureStore: store,
-			segments,
-			journal,
-		});
-		controller.sessionStart(ctx);
-		contextTokens = 30_000;
-		turn(2, long("First early range."));
-		controller.segment(ctx);
-		expect(requests).toHaveLength(0);
-		turn(3, long(long("Large next run.")));
-		contextTokens = 40_000;
-		outputs.push(fact(3, "Large next run."));
-		controller.segment(ctx);
-		await vi.waitFor(() => expect(requests).toHaveLength(1), { timeout: 2_000 });
-		await segments.waitForIdle();
-		expect(instruction(requests[0])).toContain("through reply-3 only");
-		expect(segments.status()).toMatchObject({
-			ready: 1,
-			coveredThrough: "reply-3",
-			results: { cancelled: 1, failed: {} },
-		});
-		expect(journal.segmentSpend(session.getSessionId(), "none").calls).toBe(1);
-		turn(4, "Continue.");
-		const value = await controller.compact(event(), ctx);
-		expect(value.details?.preparation?.path).toBe("segments");
-		expect(requests).toHaveLength(1);
-	});
-
-	it("keeps a dispatched early first link instead of aborting a request with unknown usage", async () => {
-		segments.dispose();
-		segments = new PreviewSegments({ enabled: true, journal, coalesceMs: 0 });
-		controller = new PreviewMemoryController({
-			config: { ...DEFAULT_MEMORY_CONFIG, writerModel: SESSION_WRITER, noteRepair: false },
-			failureStore: store,
-			segments,
-			journal,
-		});
-		controller.sessionStart(ctx);
-		contextTokens = 30_000;
-		turn(2, long("First early range."));
-		outputs.push(fact(2, "First early range."));
-		hold = true;
-		controller.segment(ctx);
-		await vi.waitFor(() => expect(held).toBeDefined());
-		turn(3, long(long("Large next run.")));
-		contextTokens = 80_000;
-		controller.segment(ctx);
-		expect(held?.signal?.aborted).toBe(false);
-		expect(requests).toHaveLength(1);
-		held?.release();
-		await segments.waitForIdle();
-		expect(segments.status()).toMatchObject({ ready: 1, coveredThrough: "reply-2", results: { cancelled: 0 } });
 	});
 
 	it("closes a later link only after a range's worth of new history, on top of the merged note", async () => {

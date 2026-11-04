@@ -496,6 +496,8 @@ async function worker() {
 		}
 		const writer = WRITER_REQUESTS.some((marker) => serialized.includes(marker));
 		call.kind = writer ? serialized.includes("Write a segment note for entries") ? "segment" : "writer" : "main";
+		const range = writer ? serialized.match(/Write a segment note for entries (\S+) through (\S+) only/) : null;
+		if (action.toolReplay && range) call.range = [range[1], range[2]];
 		const latency = writer ? action.latencyMs : action.turnLatencyMs;
 		if (latency) await new Promise((done) => setTimeout(done, latency));
 		const readable = new Set(
@@ -534,7 +536,6 @@ async function worker() {
 			response.end("data: [DONE]\n\n");
 			return;
 		}
-		const range = writer ? serialized.match(/Write a segment note for entries (\S+) through (\S+) only/) : null;
 		const entries = readLines(action.sessionFile).slice(1);
 		const ids = action.toolReplay ? replaySourceIds(fixture.entries, entries) : new Map();
 		const effectiveGold = action.toolReplay ? { ...gold, checkpoints: gold.checkpoints.map((cut) => ({ ...cut, afterEntryId: ids.get(cut.afterEntryId) })), probes: gold.probes.map((probe) => ({ ...probe, evidence: probe.evidence.map((id) => ids.get(id)).filter(Boolean) })) } : gold;
@@ -771,7 +772,7 @@ async function worker() {
 					}
 					const ms = Math.round(performance.now() - started);
 					await quiet();
-					const row = await describe(trigger, step, checkpoints() > before, { attempt, ms, ...extra, ...(error ? { error } : {}) });
+				const row = await describe(trigger, step, checkpoints() > before, { attempt, ms, ...(action.toolReplay ? { startedAt: performance.timeOrigin + started } : {}), ...extra, ...(error ? { error } : {}) });
 					boundaries.push(row);
 					if (row.ok) return true;
 				}
