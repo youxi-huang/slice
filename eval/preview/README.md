@@ -206,10 +206,19 @@ With `--replay-tools`, the loopback replay drives official Pi through each recor
 per fixture chain, so in-memory state survives its checkpoints. Adjacent assistant
 records are coalesced into the next tool-call reply; their text, calls and arguments remain, and tools return the
 recorded results and error status without executing commands. P5 has no elapsed tool times.
-This mode requires `--replay --provider loopback --pace immediate --cache session`. `--latency-ms` delays writer
-replies and `--turn-latency-ms` delays task replies, including the next tool-call batch. Both take integers from
-0 to 180000 milliseconds, default to zero and reject nonzero values for other providers. These are injected
-reply delays, not timings inferred from the fixture. Long delayed chains may need `--unit-minutes 20`.
+This mode requires `--replay --pace immediate --cache session`, with `--provider loopback` or a provider run.
+`--latency-ms` delays loopback writer replies and `--turn-latency-ms` delays task replies, including the next
+tool-call batch. Both take integers from 0 to 180000 milliseconds and default to zero; `--latency-ms` rejects
+nonzero values for providers. These are injected reply delays, not timings inferred from the fixture. Long delayed
+chains may need `--unit-minutes 20`.
+
+With `--provider openai`, `relay` or `deepseek`, every task, writer and segment request goes to the provider with
+Pi's body and its own Authorization header unchanged, so the provider's cache holds the session's real prefix. Task
+requests cap output at the API's minimum before Pi builds them, their upstream answer is discarded, and the recorded
+reply is released after the upstream completes and the turn delay passes. Writers and segments answer at the
+provider's own latency. Forwarding stops at the first error or limit, a rate-limit error inside HTTP 200 included,
+and `--max-requests`, `--max-minutes`, `--max-cost-usd` and `--max-input-tokens` count every forwarded call.
+`scripts/context-memory-preview-provider-proof.mjs` proves the forwarding offline against fake upstreams.
 Round rows check every tool result and report HTTP request lifetimes; the replay summary adds overlapping
 segment calls, their summed input, peak rolling-minute input, each interval's linked segments and uncached
 spend, and rate-limit errors. With `--cache session` they include the continuation-cache simulation above;

@@ -1,12 +1,15 @@
 # Validation record
 
-## 0.8.0 segment scheduling review: official-Pi P5 batch replay, offline, 2026-11-04 UTC
+## 0.8.0 segment scheduling review: official-Pi P5 batch replay, offline and on GPT-6 Luna, 2026-11-04 UTC
 
-**In progress: continuation-only cache and sequential ablation. No model provider was called. No variant is
-finally selected and no Luna budget is proposed.** The earlier shared-prefix simulation and concurrent ablation
-are superseded by the maintainer's addendum. Their provisional V2 choice in `1bf62be` is not evidence under the
-new rule. The branch currently contains that V2 candidate; re-evaluate it after the serial run. If none qualifies,
-the fallback is the original V3 runtime from `eea33a3`, not the provisional V2.
+**Grid complete; V2 selected, pending a capacity investigation. Four GPT-6 Luna chains ran within the maintainer's
+budget, for US$0.39.** The serial grid's eight cells and its one required repeat ran on five machines. Rule C, as the
+maintainer amended it, selects V2, the runtime this branch has carried since `1bf62be`, and D's gate holds for every
+variant. The provider replay mode is merged from `codex/segments-p5-provider` and proven offline. On Luna, V2 served
+boundaries in 48 and 108 ms and cut the 272k route's total pause from 37.5 to 19.0 s. On the 200k route, a boundary
+that segments did not serve left the writer no room, and the chain stopped with `CONTEXT_WRITER_CAPACITY`. Whether
+that risk is specific to segments is open and under investigation on `codex/segments-p5-capacity`; V2 stays
+provisional until it closes. No further Luna budget is proposed. Final checks have not run on the final source.
 
 ### Cache semantics and recorded provider evidence
 
@@ -31,11 +34,12 @@ tokenisation is simulated.
 | Same cell, V1 | 96.45% | 95.55% |
 | Same cell, V2 | 91.07% | 95.55% |
 | Same cell, V3 | 83.08% | 95.55% |
+| GPT-6 Luna through the provider replay mode, four chains below | 99.88-100% | 100% |
 
-The writer diagnostic agrees with the recorded range. Segment shares do not reproduce the recorded 100%; keep
-that discrepancy visible. These are estimates on recorded P5 batches, not a repeat of those provider requests.
-Later serial cells report their own shares below. The provider evidence remains in the WP5 entries below and
-[Prompt cache](openai-api.md#prompt-cache).
+The writer diagnostic agrees with the recorded range. Simulated segment shares stay below the recorded 100%,
+and the provider replay below reproduced 99.88 to 100% on Luna itself, so the simulation is conservative: it
+overstates uncached segment spend. The simulated rows are estimates on recorded P5 batches. Earlier provider
+evidence remains in the WP5 entries below and [Prompt cache](openai-api.md#prompt-cache).
 
 ### Serial protocol and provenance
 
@@ -44,7 +48,7 @@ variant and its own control run one after another on the otherwise idle machine,
 gap. No builds, tests or other benchmarks run during a measured chain. Main runs first, then V1, V2 and V3,
 each on immediately followed by its off control. There are 64 base commands. If any variant differs from main
 by exactly one served boundary, repeat the entire eight-arm cell once and report both runs. Never select the
-better repeat. The coordinator may park between arms for handoff/publication; no measured chain is suspended.
+better repeat.
 P5's roughly 70k-token run has eight tool batches; the recording supplies no elapsed tool times. Each completed
 200k chain verifies 46/46 tool results and the 272k chain 43/43, including their error flags.
 
@@ -78,95 +82,231 @@ node scripts/context-memory-preview-build.mjs --output-dir <build-root>/package
 node scripts/context-memory-preview-bench.mjs --package-dir <build-root>/package --stock-root <official-pi-1.4.0> --output-dir <scratch> --mode probes --provider loopback --fixtures P5 --cache session --replay --replay-tools --pace immediate --cuts <cuts> --window <window> --reserve 30000 --compactions-only --latency-ms <13000|28000> --turn-latency-ms <5000|10000> --thinking medium --session-settings previewSegments=<on|off> --chain-attempts 1 --unit-minutes 20 --label <run-cell-package-arm>
 ```
 
-### Serial results (updated between completed cells)
+The grid ran on five machines so that it would finish sooner. A cell's arms always ran on one machine, and every
+comparison stays within a cell. B to E rebuilt the four packages with `p5-tools/build-packages.sh`, which stops
+unless each `dist/extension.js` matches the bundle digest above; all matched, and every build ID matches its
+package. Each row below was recomputed from its machine's raw metrics (`summary.json`, `boundaries.jsonl` and
+`rounds.jsonl` per arm, content-free) and matched the published row.
 
-Times are seconds. Each arm is one chain with 3 or 2 committed boundaries; nearest-rank P95 is its maximum,
-not a population-tail estimate. Off is the same package's synchronous control. Wait counts include numeric zero
-fields; estimated skips have no numeric wait. Interval spend is input + cache writes + output, excluding cache
-reads; unknown usage is marked, not treated as free. Cache shares use calls with reported usage. Overlap input
-counts each intersecting task/segment request once; peak counts all inputs starting in each rolling 60 seconds.
-Calls T/S/W are task/segment/writer HTTP dispatches; all input includes cancelled calls as well as cache reads.
-Cold first wait is recorded only when no writer or segment had completed before the first boundary began.
-All input counts toward the real provider's limit. These remain synthetic input estimates.
+| Machine | Cells | Rows and raw metrics |
+| --- | --- | --- |
+| A, the earlier coordinator | 5 s / 13 s and 5 s / 28 s, both routes, and the required repeat | this entry through `a8d165f`; its later duplicate 10 s cells are not included |
+| B, the maintainer's reviewer session, Node 22 | 10 s / 28 s, both routes | `claude/confident-thompson-3k0e8p` at `ede43d2`, with `P5-CELL-INSTRUCTIONS.md` and `p5-tools/` |
+| C, Codex | 10 s / 13 s / 200k | `codex/segments-p5-cell-c` at `2fbda49` |
+| D, Codex | 10 s / 13 s / 272k | `codex/segments-p5-cell-d` at `c414bf6` |
+| E, Codex | 10 s / 28 s / 200k, a second run | `codex/segments-p5-cell-e` at `280bcaf` |
 
-<!-- serial-continuation-results:start -->
+Only 5 s / 28 s / 200k required a repeat: V3 served one boundary more than main. E's run was started before B's
+first run was known and counts like a repeat.
 
-Serial collection: **40/72 commands verified**, 104 committed boundaries. Status: **between cells**. Choice and budget remain unevaluated.
+### Serial results: the complete grid
+
+Times are seconds. Each cell gives served boundaries and total pause with segments on; the last column is the range
+of the four packages' synchronous controls in the same run. Nearest-rank P95 over 2 or 3 boundaries is a chain's
+maximum, not a population tail. Interval spend is input + cache writes + output, excluding cache reads; unknown
+usage is marked, not treated as free. All input, cache reads included, counts toward the provider's limit; these
+are synthetic estimates.
+
+| Turn / writer / route | Run | main | V1 | V2 | V3 | Off controls |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| 5 / 13 / 200k | A1 | 3/3; 16.19 | 3/3; 16.14 | 3/3; 0.40 | 3/3; 0.34 | 39.29–40.10 |
+| 5 / 13 / 272k | A1 | 2/2; 16.01 | 2/2; 15.79 | 2/2; 0.19 | 2/2; 0.23 | 26.21–27.01 |
+| 5 / 28 / 200k | A1 | 1/3; 86.35 | 1/3; 71.93 | 3/3; 33.70 | 2/3; 43.51 | 84.32–84.84 |
+| 5 / 28 / 200k | A2 | 1/3; 86.36 | 1/3; 73.18 | 3/3; 33.27 | 2/3; 43.55 | 84.35–85.46 |
+| 5 / 28 / 272k | A1 | 0/2; 86.30 | 0/2; 56.33 | 2/2; 12.81 | 2/2; 2.59 | 56.28–61.26 |
+| 10 / 13 / 200k | C1 | 3/3; 6.08 | 3/3; 6.07 | 3/3; 0.14 | 3/3; 0.19 | 39.20–39.29 |
+| 10 / 13 / 272k | D1 | 2/2; 6.09 | 2/2; 6.04 | 2/2; 0.13 | 2/2; 0.12 | 26.15–26.20 |
+| 10 / 28 / 200k | B1 | 1/3; 86.32 | 1/3; 71.29 | 3/3; 0.25 | 3/3; 0.25 | 84.31–84.36 |
+| 10 / 28 / 200k | E2 | 1/3; 86.22 | 1/3; 71.19 | 3/3; 0.17 | 3/3; 0.17 | 84.19–84.25 |
+| 10 / 28 / 272k | B1 | 0/2; 86.24 | 0/2; 56.23 | 2/2; 0.19 | 2/2; 0.15 | 56.22–56.25 |
+
+<details>
+<summary>All 80 rows</summary>
 
 | Run | Turn / writer / route | Package / arm | Served | Fallbacks | Wait n; total (P50/P95) | Pause P50/P95; total | Overlap calls / summed input | Peak 60 s input | Calls T/S/W; all input | Cold first wait | Cut: links / uncached spend | Segment / writer cache % | Rate errors |
 | --- | --- | --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | ---: | ---: |
-| 1 | 5 / 13 / 200k | main / on | 3/3 | - | 2; 15.890 (7.922/7.968) | 8.023/8.052; 16.188 | 4 / 1,200,552 | 1,380,592 | 61/4/0; 4,765,989 | 7.968 | 1: 1/4,728; 3: 1/4,892; 5: 1/4,608 + unknown | 96.45 / - | 0 |
-| 1 | 5 / 13 / 200k | main / off | 0/3 | - | 0; 0.000 (-/-) | 13.117/13.167; 39.393 | 0 / 0 | 1,306,598 | 61/0/3; 4,674,261 | - | 1: 0/0; 3: 0/0; 5: 0/0 | - / 95.55 | 0 |
-| 1 | 5 / 13 / 200k | v1 / on | 3/3 | - | 2; 15.897 (7.930/7.967) | 8.021/8.026; 16.142 | 4 / 1,200,543 | 1,380,582 | 61/4/0; 4,765,942 | 7.967 | 1: 1/4,728; 3: 1/4,892; 5: 1/4,609 + unknown | 96.45 / - | 0 |
-| 1 | 5 / 13 / 200k | v1 / off | 0/3 | - | 0; 0.000 (-/-) | 13.139/13.210; 39.437 | 0 / 0 | 1,306,591 | 61/0/3; 4,674,217 | - | 1: 0/0; 3: 0/0; 5: 0/0 | - / 95.55 | 0 |
-| 1 | 5 / 13 / 200k | v2 / on | 3/3 | - | 0; 0.000 (-/-) | 0.118/0.237; 0.397 | 10 / 4,240,764 | 1,737,342 | 61/10/0; 6,135,448 | - | 1: 2/26,091 + unknown; 3: 3/18,394 + unknown; 5: 3/33,245 | 91.07 / - | 0 |
-| 1 | 5 / 13 / 200k | v2 / off | 0/3 | - | 0; 0.000 (-/-) | 13.116/13.900; 40.103 | 0 / 0 | 1,306,591 | 61/0/3; 4,674,217 | - | 1: 0/0; 3: 0/0; 5: 0/0 | - / 95.55 | 0 |
-| 1 | 5 / 13 / 200k | v3 / on | 3/3 | - | 0; 0.000 (-/-) | 0.116/0.155; 0.342 | 14 / 4,709,530 | 1,663,654 | 61/14/0; 5,914,622 | - | 1: 4/62,245; 3: 5/68,032; 5: 4/49,767 + unknown | 83.08 / - | 0 |
-| 1 | 5 / 13 / 200k | v3 / off | 0/3 | - | 0; 0.000 (-/-) | 13.084/13.131; 39.290 | 0 / 0 | 1,306,591 | 61/0/3; 4,674,217 | - | 1: 0/0; 3: 0/0; 5: 0/0 | - / 95.55 | 0 |
-| 1 | 5 / 13 / 272k | main / on | 2/2 | - | 2; 15.807 (7.863/7.944) | 7.984/8.023; 16.007 | 3 / 1,302,636 | 2,192,605 | 56/3/0; 5,733,164 | - | 2: 2/8,738; 4: 1/5,559 | 97.39 / - | 0 |
-| 1 | 5 / 13 / 272k | main / off | 0/2 | - | 0; 0.000 (-/-) | 13.142/13.240; 26.382 | 0 / 0 | 1,930,085 | 56/0/2; 5,595,892 | - | 2: 0/0; 4: 0/0 | - / 96.67 | 0 |
-| 1 | 5 / 13 / 272k | v1 / on | 2/2 | - | 2; 15.651 (7.740/7.911) | 7.831/7.963; 15.794 | 3 / 1,302,629 | 2,192,595 | 56/3/0; 5,733,122 | - | 2: 2/8,737; 4: 1/5,560 | 97.39 / - | 0 |
-| 1 | 5 / 13 / 272k | v1 / off | 0/2 | - | 0; 0.000 (-/-) | 13.147/13.407; 26.554 | 0 / 0 | 1,930,076 | 56/0/2; 5,595,855 | - | 2: 0/0; 4: 0/0 | - / 96.67 | 0 |
-| 1 | 5 / 13 / 272k | v2 / on | 2/2 | - | 0; 0.000 (-/-) | 0.060/0.129; 0.189 | 6 / 3,357,466 | 2,273,528 | 56/6/0; 7,053,648 | - | 2: 2/34,578 + unknown; 4: 3/37,203 | 90.50 / - | 0 |
-| 1 | 5 / 13 / 272k | v2 / off | 0/2 | - | 0; 0.000 (-/-) | 13.120/13.891; 27.011 | 0 / 0 | 1,930,076 | 56/0/2; 5,595,855 | - | 2: 0/0; 4: 0/0 | - / 96.67 | 0 |
-| 1 | 5 / 13 / 272k | v3 / on | 2/2 | - | 0; 0.000 (-/-) | 0.112/0.121; 0.233 | 10 / 4,427,519 | 2,383,905 | 56/10/0; 7,256,472 | - | 2: 4/56,815 + unknown; 4: 5/55,027 | 88.31 / - | 0 |
-| 1 | 5 / 13 / 272k | v3 / off | 0/2 | - | 0; 0.000 (-/-) | 13.101/13.114; 26.215 | 0 / 0 | 1,930,076 | 56/0/2; 5,595,855 | - | 2: 0/0; 4: 0/0 | - / 96.67 | 0 |
-| 1 | 5 / 28 / 200k | main / on | 1/3 | in-flight 2 | 2; 30.005 (15.002/15.003) | 43.097/43.175; 86.346 | 3 / 1,314,720 | 1,380,592 | 61/3/2; 4,917,673 | 15.002 | 1: 1/4,728; 3: 1/4,860; 5: 1/4,683 + unknown | 96.40 / 96.21 | 0 |
-| 1 | 5 / 28 / 200k | main / off | 0/3 | - | 0; 0.000 (-/-) | 28.122/28.138; 84.349 | 0 / 0 | 1,306,598 | 61/0/3; 4,674,261 | - | 1: 0/0; 3: 0/0; 5: 0/0 | - / 95.55 | 0 |
-| 1 | 5 / 28 / 200k | v1 / on | 1/3 | in-flight 2 | 1; 15.002 (15.002/15.002) | 28.713/43.129; 71.933 | 3 / 1,314,712 | 1,380,582 | 61/3/2; 4,917,626 | 15.002 | 1: 1/4,728; 3: 1/4,861; 5: 1/4,683 + unknown | 96.40 / 96.21 | 0 |
-| 1 | 5 / 28 / 200k | v1 / off | 0/3 | - | 0; 0.000 (-/-) | 28.334/28.408; 84.840 | 0 / 0 | 1,306,591 | 61/0/3; 4,674,217 | - | 1: 0/0; 3: 0/0; 5: 0/0 | - / 95.55 | 0 |
-| 1 | 5 / 28 / 200k | v2 / on | 3/3 | - | 3; 33.229 (12.765/12.904) | 12.865/12.968; 33.697 | 6 / 3,743,150 | 1,459,288 | 61/6/0; 5,176,957 | - | 1: 2/16,194; 3: 2/25,738; 5: 2/27,534 | 89.35 / - | 0 |
-| 1 | 5 / 28 / 200k | v2 / off | 0/3 | - | 0; 0.000 (-/-) | 28.143/28.198; 84.446 | 0 / 0 | 1,306,591 | 61/0/3; 4,674,217 | - | 1: 0/0; 3: 0/0; 5: 0/0 | - / 95.55 | 0 |
-| 1 | 5 / 28 / 200k | v3 / on | 2/3 | in-flight 1 | 2; 15.244 (2.872/12.372) | 12.469/28.098; 43.510 | 10 / 5,343,956 | 1,689,455 | 61/10/1; 5,645,143 | - | 1: 3/29,129; 3: 4/45,164; 5: 3/38,722 | 87.02 / 95.68 | 0 |
-| 1 | 5 / 28 / 200k | v3 / off | 0/3 | - | 0; 0.000 (-/-) | 28.118/28.119; 84.322 | 0 / 0 | 1,306,591 | 61/0/3; 4,674,217 | - | 1: 0/0; 3: 0/0; 5: 0/0 | - / 95.55 | 0 |
-| 2 | 5 / 28 / 200k | main / on | 1/3 | in-flight 2 | 2; 30.003 (15.001/15.002) | 43.114/43.137; 86.365 | 3 / 1,314,720 | 1,380,592 | 61/3/2; 4,917,673 | 15.002 | 1: 1/4,728; 3: 1/4,860; 5: 1/4,683 + unknown | 96.40 / 96.21 | 0 |
-| 2 | 5 / 28 / 200k | main / off | 0/3 | - | 0; 0.000 (-/-) | 28.613/28.743; 85.464 | 0 / 0 | 1,306,598 | 61/0/3; 4,674,261 | - | 1: 0/0; 3: 0/0; 5: 0/0 | - / 95.55 | 0 |
-| 2 | 5 / 28 / 200k | v1 / on | 1/3 | in-flight 2 | 1; 15.003 (15.003/15.003) | 28.162/44.934; 73.183 | 3 / 1,314,712 | 1,380,582 | 61/3/2; 4,917,626 | 15.003 | 1: 1/4,728; 3: 1/4,861; 5: 1/4,683 + unknown | 96.40 / 96.21 | 0 |
-| 2 | 5 / 28 / 200k | v1 / off | 0/3 | - | 0; 0.000 (-/-) | 28.111/28.136; 84.347 | 0 / 0 | 1,306,591 | 61/0/3; 4,674,217 | - | 1: 0/0; 3: 0/0; 5: 0/0 | - / 95.55 | 0 |
-| 2 | 5 / 28 / 200k | v2 / on | 3/3 | - | 3; 32.946 (12.665/12.763) | 12.734/12.889; 33.267 | 6 / 3,743,150 | 1,459,288 | 61/6/0; 5,176,957 | - | 1: 2/24,961; 3: 2/25,738; 5: 2/27,534 | 87.99 / - | 0 |
-| 2 | 5 / 28 / 200k | v2 / off | 0/3 | - | 0; 0.000 (-/-) | 28.148/28.846; 85.106 | 0 / 0 | 1,306,591 | 61/0/3; 4,674,217 | - | 1: 0/0; 3: 0/0; 5: 0/0 | - / 95.55 | 0 |
-| 2 | 5 / 28 / 200k | v3 / on | 2/3 | in-flight 1 | 2; 15.193 (2.564/12.629) | 12.789/28.124; 43.549 | 10 / 5,343,956 | 1,689,455 | 61/10/1; 5,645,143 | - | 1: 3/29,129; 3: 4/45,164; 5: 3/38,722 | 87.02 / 95.68 | 0 |
-| 2 | 5 / 28 / 200k | v3 / off | 0/3 | - | 0; 0.000 (-/-) | 28.207/28.313; 84.634 | 0 / 0 | 1,306,591 | 61/0/3; 4,674,217 | - | 1: 0/0; 3: 0/0; 5: 0/0 | - / 95.55 | 0 |
-| 1 | 5 / 28 / 272k | main / on | 0/2 | tail 1, in-flight 1 | 2; 30.006 (15.002/15.004) | 43.127/43.168; 86.295 | 3 / 1,790,996 | 2,192,605 | 56/3/2; 6,108,111 | - | 2: 2/8,738; 4: 1/5,515 | 97.38 / 96.67 | 0 |
-| 1 | 5 / 28 / 272k | main / off | 0/2 | - | 0; 0.000 (-/-) | 28.143/33.113; 61.256 | 0 / 0 | 1,930,085 | 56/0/2; 5,595,892 | - | 2: 0/0; 4: 0/0 | - / 96.67 | 0 |
-| 1 | 5 / 28 / 272k | v1 / on | 0/2 | in-flight 2 | 0; 0.000 (-/-) | 28.104/28.221; 56.325 | 3 / 1,790,987 | 2,262,786 | 56/3/2; 6,108,072 | - | 2: 2/8,737; 4: 1/5,514 | 97.38 / 96.67 | 0 |
-| 1 | 5 / 28 / 272k | v1 / off | 0/2 | - | 0; 0.000 (-/-) | 28.171/28.180; 56.351 | 0 / 0 | 1,930,076 | 56/0/2; 5,595,855 | - | 2: 0/0; 4: 0/0 | - / 96.67 | 0 |
-| 1 | 5 / 28 / 272k | v2 / on | 2/2 | - | 1; 12.357 (12.357/12.357) | 0.188/12.627; 12.815 | 6 / 5,285,533 | 2,416,586 | 56/6/0; 7,062,544 | - | 2: 2/34,578 + unknown; 4: 3/37,261 | 90.60 / - | 0 |
-| 1 | 5 / 28 / 272k | v2 / off | 0/2 | - | 0; 0.000 (-/-) | 28.130/28.146; 56.276 | 0 / 0 | 1,930,076 | 56/0/2; 5,595,855 | - | 2: 0/0; 4: 0/0 | - / 96.67 | 0 |
-| 1 | 5 / 28 / 272k | v3 / on | 2/2 | - | 1; 2.349 (2.349/2.349) | 0.138/2.451; 2.589 | 8 / 6,401,957 | 2,251,582 | 56/8/0; 6,728,762 | - | 2: 4/40,910; 4: 4/54,054 | 88.94 / - | 0 |
-| 1 | 5 / 28 / 272k | v3 / off | 0/2 | - | 0; 0.000 (-/-) | 28.199/28.254; 56.453 | 0 / 0 | 1,930,076 | 56/0/2; 5,595,855 | - | 2: 0/0; 4: 0/0 | - / 96.67 | 0 |
+| A1 | 5 / 13 / 200k | main / on | 3/3 | - | 2; 15.890 (7.922/7.968) | 8.023/8.052; 16.188 | 4 / 1,200,552 | 1,380,592 | 61/4/0; 4,765,989 | 7.968 | 1: 1/4,728; 3: 1/4,892; 5: 1/4,608 + unknown | 96.45 / - | 0 |
+| A1 | 5 / 13 / 200k | main / off | 0/3 | - | 0; 0.000 (-/-) | 13.117/13.167; 39.393 | 0 / 0 | 1,306,598 | 61/0/3; 4,674,261 | - | 1: 0/0; 3: 0/0; 5: 0/0 | - / 95.55 | 0 |
+| A1 | 5 / 13 / 200k | v1 / on | 3/3 | - | 2; 15.897 (7.930/7.967) | 8.021/8.026; 16.142 | 4 / 1,200,543 | 1,380,582 | 61/4/0; 4,765,942 | 7.967 | 1: 1/4,728; 3: 1/4,892; 5: 1/4,609 + unknown | 96.45 / - | 0 |
+| A1 | 5 / 13 / 200k | v1 / off | 0/3 | - | 0; 0.000 (-/-) | 13.139/13.210; 39.437 | 0 / 0 | 1,306,591 | 61/0/3; 4,674,217 | - | 1: 0/0; 3: 0/0; 5: 0/0 | - / 95.55 | 0 |
+| A1 | 5 / 13 / 200k | v2 / on | 3/3 | - | 0; 0.000 (-/-) | 0.118/0.237; 0.397 | 10 / 4,240,764 | 1,737,342 | 61/10/0; 6,135,448 | - | 1: 2/26,091 + unknown; 3: 3/18,394 + unknown; 5: 3/33,245 | 91.07 / - | 0 |
+| A1 | 5 / 13 / 200k | v2 / off | 0/3 | - | 0; 0.000 (-/-) | 13.116/13.900; 40.103 | 0 / 0 | 1,306,591 | 61/0/3; 4,674,217 | - | 1: 0/0; 3: 0/0; 5: 0/0 | - / 95.55 | 0 |
+| A1 | 5 / 13 / 200k | v3 / on | 3/3 | - | 0; 0.000 (-/-) | 0.116/0.155; 0.342 | 14 / 4,709,530 | 1,663,654 | 61/14/0; 5,914,622 | - | 1: 4/62,245; 3: 5/68,032; 5: 4/49,767 + unknown | 83.08 / - | 0 |
+| A1 | 5 / 13 / 200k | v3 / off | 0/3 | - | 0; 0.000 (-/-) | 13.084/13.131; 39.290 | 0 / 0 | 1,306,591 | 61/0/3; 4,674,217 | - | 1: 0/0; 3: 0/0; 5: 0/0 | - / 95.55 | 0 |
+| A1 | 5 / 13 / 272k | main / on | 2/2 | - | 2; 15.807 (7.863/7.944) | 7.984/8.023; 16.007 | 3 / 1,302,636 | 2,192,605 | 56/3/0; 5,733,164 | - | 2: 2/8,738; 4: 1/5,559 | 97.39 / - | 0 |
+| A1 | 5 / 13 / 272k | main / off | 0/2 | - | 0; 0.000 (-/-) | 13.142/13.240; 26.382 | 0 / 0 | 1,930,085 | 56/0/2; 5,595,892 | - | 2: 0/0; 4: 0/0 | - / 96.67 | 0 |
+| A1 | 5 / 13 / 272k | v1 / on | 2/2 | - | 2; 15.651 (7.740/7.911) | 7.831/7.963; 15.794 | 3 / 1,302,629 | 2,192,595 | 56/3/0; 5,733,122 | - | 2: 2/8,737; 4: 1/5,560 | 97.39 / - | 0 |
+| A1 | 5 / 13 / 272k | v1 / off | 0/2 | - | 0; 0.000 (-/-) | 13.147/13.407; 26.554 | 0 / 0 | 1,930,076 | 56/0/2; 5,595,855 | - | 2: 0/0; 4: 0/0 | - / 96.67 | 0 |
+| A1 | 5 / 13 / 272k | v2 / on | 2/2 | - | 0; 0.000 (-/-) | 0.060/0.129; 0.189 | 6 / 3,357,466 | 2,273,528 | 56/6/0; 7,053,648 | - | 2: 2/34,578 + unknown; 4: 3/37,203 | 90.50 / - | 0 |
+| A1 | 5 / 13 / 272k | v2 / off | 0/2 | - | 0; 0.000 (-/-) | 13.120/13.891; 27.011 | 0 / 0 | 1,930,076 | 56/0/2; 5,595,855 | - | 2: 0/0; 4: 0/0 | - / 96.67 | 0 |
+| A1 | 5 / 13 / 272k | v3 / on | 2/2 | - | 0; 0.000 (-/-) | 0.112/0.121; 0.233 | 10 / 4,427,519 | 2,383,905 | 56/10/0; 7,256,472 | - | 2: 4/56,815 + unknown; 4: 5/55,027 | 88.31 / - | 0 |
+| A1 | 5 / 13 / 272k | v3 / off | 0/2 | - | 0; 0.000 (-/-) | 13.101/13.114; 26.215 | 0 / 0 | 1,930,076 | 56/0/2; 5,595,855 | - | 2: 0/0; 4: 0/0 | - / 96.67 | 0 |
+| A1 | 5 / 28 / 200k | main / on | 1/3 | in-flight 2 | 2; 30.005 (15.002/15.003) | 43.097/43.175; 86.346 | 3 / 1,314,720 | 1,380,592 | 61/3/2; 4,917,673 | 15.002 | 1: 1/4,728; 3: 1/4,860; 5: 1/4,683 + unknown | 96.40 / 96.21 | 0 |
+| A1 | 5 / 28 / 200k | main / off | 0/3 | - | 0; 0.000 (-/-) | 28.122/28.138; 84.349 | 0 / 0 | 1,306,598 | 61/0/3; 4,674,261 | - | 1: 0/0; 3: 0/0; 5: 0/0 | - / 95.55 | 0 |
+| A1 | 5 / 28 / 200k | v1 / on | 1/3 | in-flight 2 | 1; 15.002 (15.002/15.002) | 28.713/43.129; 71.933 | 3 / 1,314,712 | 1,380,582 | 61/3/2; 4,917,626 | 15.002 | 1: 1/4,728; 3: 1/4,861; 5: 1/4,683 + unknown | 96.40 / 96.21 | 0 |
+| A1 | 5 / 28 / 200k | v1 / off | 0/3 | - | 0; 0.000 (-/-) | 28.334/28.408; 84.840 | 0 / 0 | 1,306,591 | 61/0/3; 4,674,217 | - | 1: 0/0; 3: 0/0; 5: 0/0 | - / 95.55 | 0 |
+| A1 | 5 / 28 / 200k | v2 / on | 3/3 | - | 3; 33.229 (12.765/12.904) | 12.865/12.968; 33.697 | 6 / 3,743,150 | 1,459,288 | 61/6/0; 5,176,957 | - | 1: 2/16,194; 3: 2/25,738; 5: 2/27,534 | 89.35 / - | 0 |
+| A1 | 5 / 28 / 200k | v2 / off | 0/3 | - | 0; 0.000 (-/-) | 28.143/28.198; 84.446 | 0 / 0 | 1,306,591 | 61/0/3; 4,674,217 | - | 1: 0/0; 3: 0/0; 5: 0/0 | - / 95.55 | 0 |
+| A1 | 5 / 28 / 200k | v3 / on | 2/3 | in-flight 1 | 2; 15.244 (2.872/12.372) | 12.469/28.098; 43.510 | 10 / 5,343,956 | 1,689,455 | 61/10/1; 5,645,143 | - | 1: 3/29,129; 3: 4/45,164; 5: 3/38,722 | 87.02 / 95.68 | 0 |
+| A1 | 5 / 28 / 200k | v3 / off | 0/3 | - | 0; 0.000 (-/-) | 28.118/28.119; 84.322 | 0 / 0 | 1,306,591 | 61/0/3; 4,674,217 | - | 1: 0/0; 3: 0/0; 5: 0/0 | - / 95.55 | 0 |
+| A2 | 5 / 28 / 200k | main / on | 1/3 | in-flight 2 | 2; 30.003 (15.001/15.002) | 43.114/43.137; 86.365 | 3 / 1,314,720 | 1,380,592 | 61/3/2; 4,917,673 | 15.002 | 1: 1/4,728; 3: 1/4,860; 5: 1/4,683 + unknown | 96.40 / 96.21 | 0 |
+| A2 | 5 / 28 / 200k | main / off | 0/3 | - | 0; 0.000 (-/-) | 28.613/28.743; 85.464 | 0 / 0 | 1,306,598 | 61/0/3; 4,674,261 | - | 1: 0/0; 3: 0/0; 5: 0/0 | - / 95.55 | 0 |
+| A2 | 5 / 28 / 200k | v1 / on | 1/3 | in-flight 2 | 1; 15.003 (15.003/15.003) | 28.162/44.934; 73.183 | 3 / 1,314,712 | 1,380,582 | 61/3/2; 4,917,626 | 15.003 | 1: 1/4,728; 3: 1/4,861; 5: 1/4,683 + unknown | 96.40 / 96.21 | 0 |
+| A2 | 5 / 28 / 200k | v1 / off | 0/3 | - | 0; 0.000 (-/-) | 28.111/28.136; 84.347 | 0 / 0 | 1,306,591 | 61/0/3; 4,674,217 | - | 1: 0/0; 3: 0/0; 5: 0/0 | - / 95.55 | 0 |
+| A2 | 5 / 28 / 200k | v2 / on | 3/3 | - | 3; 32.946 (12.665/12.763) | 12.734/12.889; 33.267 | 6 / 3,743,150 | 1,459,288 | 61/6/0; 5,176,957 | - | 1: 2/24,961; 3: 2/25,738; 5: 2/27,534 | 87.99 / - | 0 |
+| A2 | 5 / 28 / 200k | v2 / off | 0/3 | - | 0; 0.000 (-/-) | 28.148/28.846; 85.106 | 0 / 0 | 1,306,591 | 61/0/3; 4,674,217 | - | 1: 0/0; 3: 0/0; 5: 0/0 | - / 95.55 | 0 |
+| A2 | 5 / 28 / 200k | v3 / on | 2/3 | in-flight 1 | 2; 15.193 (2.564/12.629) | 12.789/28.124; 43.549 | 10 / 5,343,956 | 1,689,455 | 61/10/1; 5,645,143 | - | 1: 3/29,129; 3: 4/45,164; 5: 3/38,722 | 87.02 / 95.68 | 0 |
+| A2 | 5 / 28 / 200k | v3 / off | 0/3 | - | 0; 0.000 (-/-) | 28.207/28.313; 84.634 | 0 / 0 | 1,306,591 | 61/0/3; 4,674,217 | - | 1: 0/0; 3: 0/0; 5: 0/0 | - / 95.55 | 0 |
+| A1 | 5 / 28 / 272k | main / on | 0/2 | tail 1, in-flight 1 | 2; 30.006 (15.002/15.004) | 43.127/43.168; 86.295 | 3 / 1,790,996 | 2,192,605 | 56/3/2; 6,108,111 | - | 2: 2/8,738; 4: 1/5,515 | 97.38 / 96.67 | 0 |
+| A1 | 5 / 28 / 272k | main / off | 0/2 | - | 0; 0.000 (-/-) | 28.143/33.113; 61.256 | 0 / 0 | 1,930,085 | 56/0/2; 5,595,892 | - | 2: 0/0; 4: 0/0 | - / 96.67 | 0 |
+| A1 | 5 / 28 / 272k | v1 / on | 0/2 | in-flight 2 | 0; 0.000 (-/-) | 28.104/28.221; 56.325 | 3 / 1,790,987 | 2,262,786 | 56/3/2; 6,108,072 | - | 2: 2/8,737; 4: 1/5,514 | 97.38 / 96.67 | 0 |
+| A1 | 5 / 28 / 272k | v1 / off | 0/2 | - | 0; 0.000 (-/-) | 28.171/28.180; 56.351 | 0 / 0 | 1,930,076 | 56/0/2; 5,595,855 | - | 2: 0/0; 4: 0/0 | - / 96.67 | 0 |
+| A1 | 5 / 28 / 272k | v2 / on | 2/2 | - | 1; 12.357 (12.357/12.357) | 0.188/12.627; 12.815 | 6 / 5,285,533 | 2,416,586 | 56/6/0; 7,062,544 | - | 2: 2/34,578 + unknown; 4: 3/37,261 | 90.60 / - | 0 |
+| A1 | 5 / 28 / 272k | v2 / off | 0/2 | - | 0; 0.000 (-/-) | 28.130/28.146; 56.276 | 0 / 0 | 1,930,076 | 56/0/2; 5,595,855 | - | 2: 0/0; 4: 0/0 | - / 96.67 | 0 |
+| A1 | 5 / 28 / 272k | v3 / on | 2/2 | - | 1; 2.349 (2.349/2.349) | 0.138/2.451; 2.589 | 8 / 6,401,957 | 2,251,582 | 56/8/0; 6,728,762 | - | 2: 4/40,910; 4: 4/54,054 | 88.94 / - | 0 |
+| A1 | 5 / 28 / 272k | v3 / off | 0/2 | - | 0; 0.000 (-/-) | 28.199/28.254; 56.453 | 0 / 0 | 1,930,076 | 56/0/2; 5,595,855 | - | 2: 0/0; 4: 0/0 | - / 96.67 | 0 |
+| C1 | 10 / 13 / 200k | main / on | 3/3 | - | 2; 5.939 (2.954/2.985) | 3.005/3.018; 6.082 | 4 / 1,092,326 | 899,514 | 61/4/0; 4,766,161 | 2.985 | 1: 1/4,727; 3: 1/4,891; 5: 1/4,608 + unknown | 96.45 / - | 0 |
+| C1 | 10 / 13 / 200k | main / off | 0/3 | - | 0; 0.000 (-/-) | 13.074/13.104; 39.241 | 0 / 0 | 782,375 | 61/0/3; 4,674,453 | - | 1: 0/0; 3: 0/0; 5: 0/0 | - / 95.55 | 0 |
+| C1 | 10 / 13 / 200k | v1 / on | 3/3 | - | 2; 5.921 (2.951/2.970) | 3.002/3.003; 6.066 | 4 / 1,092,314 | 899,504 | 61/4/0; 4,766,072 | 2.970 | 1: 1/4,728; 3: 1/4,892; 5: 1/4,609 + unknown | 96.45 / - | 0 |
+| C1 | 10 / 13 / 200k | v1 / off | 0/3 | - | 0; 0.000 (-/-) | 13.067/13.069; 39.195 | 0 / 0 | 782,367 | 61/0/3; 4,674,370 | - | 1: 0/0; 3: 0/0; 5: 0/0 | - / 95.55 | 0 |
+| C1 | 10 / 13 / 200k | v2 / on | 3/3 | - | 0; 0.000 (-/-) | 0.056/0.056; 0.142 | 8 / 2,600,102 | 1,000,256 | 61/8/0; 5,132,234 | - | 1: 3/36,099; 3: 3/25,259; 5: 2/29,523 | 89.68 / - | 0 |
+| C1 | 10 / 13 / 200k | v2 / off | 0/3 | - | 0; 0.000 (-/-) | 13.093/13.100; 39.244 | 0 / 0 | 782,367 | 61/0/3; 4,674,370 | - | 1: 0/0; 3: 0/0; 5: 0/0 | - / 95.55 | 0 |
+| C1 | 10 / 13 / 200k | v3 / on | 3/3 | - | 0; 0.000 (-/-) | 0.060/0.089; 0.188 | 14 / 3,549,802 | 1,056,094 | 61/14/0; 5,914,772 | - | 1: 4/62,245; 3: 5/68,032; 5: 5/69,702 | 83.37 / - | 0 |
+| C1 | 10 / 13 / 200k | v3 / off | 0/3 | - | 0; 0.000 (-/-) | 13.109/13.111; 39.290 | 0 / 0 | 782,367 | 61/0/3; 4,674,370 | - | 1: 0/0; 3: 0/0; 5: 0/0 | - / 95.55 | 0 |
+| D1 | 10 / 13 / 272k | main / on | 2/2 | - | 2; 5.915 (2.925/2.990) | 3.011/3.083; 6.094 | 3 / 1,148,754 | 1,231,789 | 56/3/0; 5,733,317 | - | 2: 2/8,736; 4: 1/5,559 | 97.39 / - | 0 |
+| D1 | 10 / 13 / 272k | main / off | 0/2 | - | 0; 0.000 (-/-) | 13.063/13.086; 26.149 | 0 / 0 | 1,079,028 | 56/0/2; 5,596,066 | - | 2: 0/0; 4: 0/0 | - / 96.67 | 0 |
+| D1 | 10 / 13 / 272k | v1 / on | 2/2 | - | 2; 5.905 (2.918/2.987) | 2.991/3.054; 6.045 | 3 / 1,148,745 | 1,231,781 | 56/3/0; 5,733,240 | - | 2: 2/8,737; 4: 1/5,560 | 97.39 / - | 0 |
+| D1 | 10 / 13 / 272k | v1 / off | 0/2 | - | 0; 0.000 (-/-) | 13.083/13.120; 26.203 | 0 / 0 | 1,079,019 | 56/0/2; 5,595,986 | - | 2: 0/0; 4: 0/0 | - / 96.67 | 0 |
+| D1 | 10 / 13 / 272k | v2 / on | 2/2 | - | 0; 0.000 (-/-) | 0.052/0.076; 0.128 | 5 / 2,165,282 | 1,355,862 | 56/5/0; 5,948,992 | - | 2: 3/47,104; 4: 2/26,367 | 90.03 / - | 0 |
+| D1 | 10 / 13 / 272k | v2 / off | 0/2 | - | 0; 0.000 (-/-) | 13.076/13.096; 26.172 | 0 / 0 | 1,079,019 | 56/0/2; 5,595,986 | - | 2: 0/0; 4: 0/0 | - / 96.67 | 0 |
+| D1 | 10 / 13 / 272k | v3 / on | 2/2 | - | 0; 0.000 (-/-) | 0.048/0.069; 0.117 | 9 / 2,876,384 | 1,355,960 | 56/9/0; 6,188,063 | - | 2: 5/69,390; 4: 4/51,158 | 87.64 / - | 0 |
+| D1 | 10 / 13 / 272k | v3 / off | 0/2 | - | 0; 0.000 (-/-) | 13.096/13.102; 26.198 | 0 / 0 | 1,079,019 | 56/0/2; 5,595,986 | - | 2: 0/0; 4: 0/0 | - / 96.67 | 0 |
+| B1 | 10 / 28 / 200k | main / on | 1/3 | in-flight 2 | 2; 30.002 (15.001/15.001) | 43.088/43.110; 86.317 | 4 / 1,201,619 | 900,673 | 61/4/2; 5,047,531 | 15.001 | 1: 1/4,727; 3: 1/4,861; 5: 1/4,683 + unknown | 96.40 / 96.21 | 0 |
+| B1 | 10 / 28 / 200k | main / off | 0/3 | - | 0; 0.000 (-/-) | 28.109/28.153; 84.356 | 0 / 0 | 782,351 | 61/0/3; 4,674,197 | - | 1: 0/0; 3: 0/0; 5: 0/0 | - / 95.55 | 0 |
+| B1 | 10 / 28 / 200k | v1 / on | 1/3 | in-flight 2 | 1; 15.001 (15.001/15.001) | 28.114/43.087; 71.293 | 4 / 1,201,607 | 900,663 | 61/4/2; 5,047,443 | 15.001 | 1: 1/4,728; 3: 1/4,861; 5: 1/4,683 + unknown | 96.40 / 96.21 | 0 |
+| B1 | 10 / 28 / 200k | v1 / off | 0/3 | - | 0; 0.000 (-/-) | 28.115/28.133; 84.332 | 0 / 0 | 782,343 | 61/0/3; 4,674,114 | - | 1: 0/0; 3: 0/0; 5: 0/0 | - / 95.55 | 0 |
+| B1 | 10 / 28 / 200k | v2 / on | 3/3 | - | 0; 0.000 (-/-) | 0.083/0.132; 0.252 | 10 / 4,240,690 | 1,099,735 | 61/10/0; 6,135,306 | - | 1: 2/26,091 + unknown; 3: 3/18,394 + unknown; 5: 3/21,221 | 92.47 / - | 0 |
+| B1 | 10 / 28 / 200k | v2 / off | 0/3 | - | 0; 0.000 (-/-) | 28.100/28.115; 84.311 | 0 / 0 | 782,343 | 61/0/3; 4,674,114 | - | 1: 0/0; 3: 0/0; 5: 0/0 | - / 95.55 | 0 |
+| B1 | 10 / 28 / 200k | v3 / on | 3/3 | - | 0; 0.000 (-/-) | 0.091/0.112; 0.250 | 14 / 4,709,420 | 1,056,062 | 61/14/0; 5,914,472 | - | 1: 4/62,245; 3: 5/59,255; 5: 4/49,767 + unknown | 83.91 / - | 0 |
+| B1 | 10 / 28 / 200k | v3 / off | 0/3 | - | 0; 0.000 (-/-) | 28.100/28.131; 84.312 | 0 / 0 | 782,343 | 61/0/3; 4,674,114 | - | 1: 0/0; 3: 0/0; 5: 0/0 | - / 95.55 | 0 |
+| E2 | 10 / 28 / 200k | main / on | 1/3 | in-flight 2 | 2; 30.002 (15.001/15.001) | 43.052/43.075; 86.219 | 4 / 1,201,667 | 900,711 | 61/4/2; 5,047,845 | 15.001 | 1: 1/4,728; 3: 1/4,861; 5: 1/4,683 + unknown | 96.40 / 96.21 | 0 |
+| E2 | 10 / 28 / 200k | main / off | 0/3 | - | 0; 0.000 (-/-) | 28.068/28.088; 84.218 | 0 / 0 | 782,379 | 61/0/3; 4,674,498 | - | 1: 0/0; 3: 0/0; 5: 0/0 | - / 95.55 | 0 |
+| E2 | 10 / 28 / 200k | v1 / on | 1/3 | in-flight 2 | 1; 15.001 (15.001/15.001) | 28.061/43.058; 71.185 | 4 / 1,201,655 | 900,700 | 61/4/2; 5,047,758 | 15.001 | 1: 1/4,728; 3: 1/4,860; 5: 1/4,683 + unknown | 96.40 / 96.21 | 0 |
+| E2 | 10 / 28 / 200k | v1 / off | 0/3 | - | 0; 0.000 (-/-) | 28.062/28.077; 84.195 | 0 / 0 | 782,371 | 61/0/3; 4,674,409 | - | 1: 0/0; 3: 0/0; 5: 0/0 | - / 95.55 | 0 |
+| E2 | 10 / 28 / 200k | v2 / on | 3/3 | - | 0; 0.000 (-/-) | 0.060/0.073; 0.170 | 10 / 4,240,860 | 1,099,769 | 61/10/0; 6,135,637 | - | 1: 2/26,092 + unknown; 3: 3/18,394 + unknown; 5: 3/33,246 | 91.07 / - | 0 |
+| E2 | 10 / 28 / 200k | v2 / off | 0/3 | - | 0; 0.000 (-/-) | 28.066/28.070; 84.200 | 0 / 0 | 782,371 | 61/0/3; 4,674,409 | - | 1: 0/0; 3: 0/0; 5: 0/0 | - / 95.55 | 0 |
+| E2 | 10 / 28 / 200k | v3 / on | 3/3 | - | 0; 0.000 (-/-) | 0.058/0.069; 0.165 | 14 / 4,709,673 | 1,056,096 | 61/14/0; 5,914,818 | - | 1: 4/62,247; 3: 5/68,031; 5: 4/49,767 + unknown | 83.08 / - | 0 |
+| E2 | 10 / 28 / 200k | v3 / off | 0/3 | - | 0; 0.000 (-/-) | 28.081/28.096; 84.253 | 0 / 0 | 782,371 | 61/0/3; 4,674,409 | - | 1: 0/0; 3: 0/0; 5: 0/0 | - / 95.55 | 0 |
+| B1 | 10 / 28 / 272k | main / on | 0/2 | tail 1, in-flight 1 | 2; 30.002 (15.001/15.001) | 43.101/43.135; 86.236 | 3 / 1,302,735 | 1,231,761 | 56/3/2; 6,108,032 | - | 2: 2/8,736; 4: 1/5,514 | 97.38 / 96.67 | 0 |
+| B1 | 10 / 28 / 272k | main / off | 0/2 | - | 0; 0.000 (-/-) | 28.105/28.113; 56.218 | 0 / 0 | 1,079,004 | 56/0/2; 5,595,834 | - | 2: 0/0; 4: 0/0 | - / 96.67 | 0 |
+| B1 | 10 / 28 / 272k | v1 / on | 0/2 | in-flight 2 | 0; 0.000 (-/-) | 28.107/28.126; 56.233 | 3 / 1,302,726 | 1,269,837 | 56/3/2; 6,107,950 | - | 2: 2/8,737; 4: 1/5,514 | 97.38 / 96.67 | 0 |
+| B1 | 10 / 28 / 272k | v1 / off | 0/2 | - | 0; 0.000 (-/-) | 28.117/28.125; 56.242 | 0 / 0 | 1,078,995 | 56/0/2; 5,595,754 | - | 2: 0/0; 4: 0/0 | - / 96.67 | 0 |
+| B1 | 10 / 28 / 272k | v2 / on | 2/2 | - | 0; 0.000 (-/-) | 0.076/0.118; 0.194 | 6 / 3,564,863 | 1,380,583 | 56/6/0; 7,053,524 | - | 2: 2/18,274 + unknown; 4: 3/37,203 | 92.69 / - | 0 |
+| B1 | 10 / 28 / 272k | v2 / off | 0/2 | - | 0; 0.000 (-/-) | 28.122/28.131; 56.253 | 0 / 0 | 1,078,995 | 56/0/2; 5,595,754 | - | 2: 0/0; 4: 0/0 | - / 96.67 | 0 |
+| B1 | 10 / 28 / 272k | v3 / on | 2/2 | - | 0; 0.000 (-/-) | 0.051/0.102; 0.153 | 10 / 4,427,441 | 1,355,928 | 56/10/0; 7,256,340 | - | 2: 4/56,815 + unknown; 4: 5/55,027 | 88.31 / - | 0 |
+| B1 | 10 / 28 / 272k | v3 / off | 0/2 | - | 0; 0.000 (-/-) | 28.110/28.125; 56.235 | 0 / 0 | 1,078,995 | 56/0/2; 5,595,754 | - | 2: 0/0; 4: 0/0 | - / 96.67 | 0 |
 
-<!-- serial-continuation-results:end -->
+</details>
 
-### Decision and budget rules still to apply
+### Decision: rule C as amended, and D's gate
 
-Apply C to every observed run: each candidate must serve at least as many boundaries as main, and its total
-pause must not exceed its own control by more than 2 s plus a first-boundary U8 wait only when no call had
-completed to supply an estimate. Prefer V1, then V2, then V3; replace a simpler qualifying candidate only if the
-more complex one serves more in at least two distinct cells and fewer in none. No decision is final yet.
+The maintainer amended rule C on 2026-11-04 after the first 5 s / 13 s cells showed V2 serving as often as V1
+while cutting total pause from 16.14 to 0.40 s. Qualification is unchanged: in every observed run a candidate serves
+at least as many boundaries as main, and its total pause exceeds its own control by at most 2 s, plus a
+first-boundary U8 wait only when no call had completed to supply an estimate. Among qualifiers, prefer V1, then V2,
+then V3. A more complex qualifier replaces a simpler one when, in at least two distinct cells, it serves more
+boundaries or pauses at least 5 s less in total, and in no cell serves fewer or pauses more than 2 s longer. Every
+observed run counts, repeats included.
 
-D additionally requires raw total pause below the chosen candidate's control in both 5 s / 13 s cells. Only then
-build and prove the provider mode offline, using the existing `--replay-tools` and provider options, with no new
-configuration switch. Reuse the repair forward path: `configureHttpDispatcher()`, the measured catalog model's
-address moved to checked `127.0.0.1`, and the request's own Authorization header forwarded unchanged inline.
-The environment's proxy replaces the placeholder; never inspect, log or store that header. Local replies must
-speak the catalog API (Responses for Luna). Forward every task, writer and segment body unchanged; cap task
-output at the API minimum **before Pi serialises it**, discard its upstream reply, and release the recorded local
-reply only after both upstream completion and the turn delay. Thus the provider sees the session's own prefix,
-and all forwarded task tokens count toward rate and cost. Recorded calls omit `fc_` item IDs and reasoning items,
-as foreign history does. Abort upstream on Pi disconnect and time out every forwarded request. Prove this
-offline in both roles with a fake upstream checking byte-identical bodies and history without native item IDs.
-That new proof is **not run**; the earlier per-writer warm-up prototype is superseded and was not retained.
+- **All three qualify.** No candidate serves fewer than main in any run. V1 never exceeds its control: its closest
+  runs are 56.33 against 56.35 s and 56.23 against 56.24 s on 272k with 28 s writers.
+- **V2 replaces V1.** It serves more in 5 s / 28 s on both routes and in 10 s / 28 s on both routes, in every run,
+  and pauses at least 5 s less in all four 13 s cells (16.14 to 0.40, 15.79 to 0.19, 6.07 to 0.14 and 6.04 to
+  0.13 s). It serves fewer or pauses longer in no cell.
+- **V3 does not replace V2.** It serves more in no cell and pauses at least 5 s less only in 5 s / 28 s / 272k
+  (2.59 against 12.81 s), and it serves one boundary fewer in 5 s / 28 s / 200k in both runs (2/3 against 3/3).
+- **What V2 costs.** 5 to 10 segment calls per chain against V1's 3 or 4, and 55,477 to 90,881 known uncached
+  segment tokens per chain against 14,229 to 14,297. Its peak rolling-minute input reaches 1,380,583 at 10 s
+  turns, below the 1,600,000 pacing line, and 2,416,586 at 5 s turns, above Luna's limit; any provider run uses
+  10 s turns.
 
-A budget, if justified, starts with one smoke chain, prefers a turn delay whose offline peak is below 1,600,000
-input tokens/minute (80% of the 2,000,000 limit), counts all forwarded tasks/writers/segments and cache reads,
-and stops at the first 4xx or rate-limit error, including one inside HTTP 200. State each cell's expected service,
-pause, request/token counts, pacing and hard time/cost limits. Begin with only one smoke chain because locally
-answered history has never been sent to Luna in this form. No budget is proposed and no provider request is authorised.
+D's gate holds: in both 5 s / 13 s cells V2's raw total pause, 0.40 and 0.19 s, is below its controls of 40.10 and
+27.01 s, and V1 and V3 pass as well.
 
-### Checks so far; final checks pending selection
+### Provider replay mode
 
-These checks cover the provisional V2 runtime, not a final selection or the new provider mode:
+Merged from `codex/segments-p5-provider` (`87e7c48`, `cc1aa02`, `69d0ed0`). The existing `--replay --replay-tools
+--cache session --pace immediate` accepts `--provider openai|relay|deepseek`, and `--turn-latency-ms` applies to
+its task replies; `--latency-ms` stays loopback-only and the existing provider limits stay required. Every task,
+writer and segment body and its own Authorization header pass unchanged through the repair forward path
+(`configureHttpDispatcher()`, the catalog address moved to checked `127.0.0.1`); no header is logged or retained.
+Tasks cap output before Pi serialises the request (Responses 16, Chat Completions 1), discard the upstream answer,
+and release the recorded reply after upstream completion and the turn delay. Luna's local replies use Responses;
+recorded reasoning and native `fc_` item IDs never enter later requests, and local message IDs are unique.
+Disconnects abort upstream, every forwarded request times out, and an error or limit stops later forwarding.
+
+| Command | Result / source | Exit |
+| --- | --- | ---: |
+| `node --test scripts/context-memory-preview-provider-proof.mjs scripts/context-memory-preview-bench.test.mjs` | 27/27: 17 proof + 10 bench; fake upstreams compare Pi's bytes and headers for two tasks, one writer and one segment per API, plus completion and delay order, disconnects and timeouts, HTTP 401/429, rate errors inside HTTP 200 and in-chain limits; `cc1aa02` | 0 |
+| Same command after the merge into this branch | 27/27 on Node 22, machine B, `61a614d` | 0 |
+| `node scripts/context-memory-ops.mjs verify` | core 221 + isolated 221; adapters 39; runtime 727; scripts 167; security 461; `cc1aa02` | 0 |
+| `node scripts/context-memory-ops.mjs preview` | `87e7c48`: stock 42/36/36/36, strict scenarios 157, release checks 37 | 0 |
+| `node scripts/context-memory-ops.mjs preview` | `cc1aa02`: stock 42/36/36/36; strict scenarios 156/157, the bounded-growth timing guard comparing 0 ms at 10 checkpoints with 16 ms at 20; the runtime is unchanged from `87e7c48` | 1 |
+
+The bounded-growth guard reruns with the final checks.
+
+### GPT-6 Luna through the provider replay mode
+
+Provider evidence, apart from the simulated grid. The maintainer approved at most four chains before the first
+request, each at most 120 requests, 25 minutes, US$1 and 270,000 input tokens per request, stopping at the first
+4xx or rate-limit error. They used 232 requests and US$0.39, with no 4xx and no rate-limit error. Machine B ran
+them one at a time with nothing else measured: V2's package (build `stock-preview+src.54b54e481662267f`), official
+Pi 1.4.0, 10 s turns, Luna as the writer and segment model at its own latency, thinking `medium`. Raw metrics and
+the exact command: `LUNA-P5.md` and `luna-p5/` on `claude/confident-thompson-3k0e8p` at `348858d`.
+
+| Chain | Route | Segments | Boundaries | Paths | Total pause (s) | Requests T/S/W | Peak 60 s input | Cost (US$) |
+| --- | --- | --- | --- | --- | ---: | --- | ---: | ---: |
+| `luna-smoke-10-200k-v2-on` | 200k | on | 1 committed, then 2 failed | segments 1 | 0.048 | 41/5/0 | 840,582 | 0.0809 |
+| `luna-control-10-200k-v2-off` | 200k | off | 3/3 | sync 3 | 51.382 | 61/0/3 | 829,989 | 0.0953 |
+| `luna-10-272k-v2-on` | 272k | on | 2/2 | sync 1, segments 1 | 19.048 | 56/6/2 | 1,361,452 | 0.1148 |
+| `luna-control-10-272k-v2-off` | 272k | off | 2/2 | sync 2 | 37.524 | 56/0/2 | 1,170,524 | 0.0995 |
+
+- Luna accepted every locally answered history, and every tool result the chains reached replayed exactly.
+- On 272k, cut 2 fell back to the writer with `segmentsFallback: ambiguous-supersede` (18.9 s), and cut 4 was
+  served by segments in 108 ms.
+- Writers took 13.2 to 20.8 s and segments 15.0 to 42.7 s, longer than the grid's 28 s cells. Capped task requests
+  took 10.0 to 23.8 s in the first chain and never exceeded the 10 s turn delay afterwards.
+- Luna counted about 6% more input than the bench's bytes/3 estimate at cut 1 (146,117 against 137,545) and about
+  11% more at the control's cut 3 (144,428 against 130,048).
+
+### Open: the writer's room at Pi's own trigger
+
+In the 200k chain with segments on, cut 1 was served by segments in 48 ms. Cut 3 became Pi's own trigger at step 4,
+in the middle of a tool batch, at 161,175 input tokens. Segments had not covered it: their calls took 21.6 to
+42.7 s. The synchronous writer refused twice with `CONTEXT_WRITER_CAPACITY` ("the session context leaves no room
+for the handover request"), and the chain stopped. With segments off, the chain reached its planned cuts first, at
+146,117, 144,428 and 142,503 tokens, below Pi's 150,000 trigger, so it never met Pi's own trigger.
+
+Offline, V2's second boundary on 200k is also Pi's own trigger, at 154,428 estimated tokens against 130,048 for
+the control's planned cut, and on 272k it reaches 207,527 against 174,321. Segments served every one of those
+boundaries offline, so the writer's fallback after a segments commit was never exercised. A verbatim tail of one
+range (22,500 tokens on 200k, 31,500 on 272k) raises the start of the next interval. A real session meets Pi's own
+trigger at every boundary, after whatever batch crosses it, so the same refusal may reach the writer with segments
+off.
+
+`codex/segments-p5-capacity` is to establish which, state the headroom the writer needs at Pi's trigger plus a
+batch, fix it with the smallest change that keeps every boundary compactable without substituting a writer, add a
+focused regression, reproduce it offline if the loopback can, and name the grid cells, if any, its fix can change.
+Machine B's offline attempt did not reach it. V2 with a 40 s loopback writer at 10 s turns on 200k met Pi's own
+trigger at cut 3 at 154,420 estimated tokens, but U8 waited 9.8 s, the segment in flight finished, and segments
+served the boundary (pause 9.9 s); the writer's fallback never ran. Reaching it offline needs a segment that U8
+does not wait for, and the loopback's bytes/3 estimate runs 6 to 11% below Luna's count, so a focused test with
+exact token counts is the more reliable regression.
+After the fix, the same four Luna chains would cost about US$0.40; no such run is proposed yet.
+
+### Checks so far; final checks pending
+
+These cover the V2 runtime at `1bf62be` and the provider mode at `cc1aa02`, not the final source:
 
 | Command | Result / source | Exit |
 | --- | --- | ---: |
@@ -181,7 +321,7 @@ merge after wait 1, skipped wait 8, custom-focus fallback 51, tail fallback 50, 
 hanging compaction 25, breaker 141, branch move before checkpoint 128, restart dropping segments 42.
 
 Final `verify`, `preview`, stock-on checks, strict-on scenarios, 200-seed fuzz, core/conformance, P5 off-equivalence
-against main and `git diff --check` remain to be tied to the final chosen source. No resident fingerprint,
+against main and `git diff --check` run on the final source after the capacity fix. No resident fingerprint,
 evaluation pin, release version, commit guard, spending cap or checkpoint source hash was changed.
 
 ### Labelled historical context: no cache, including zero-delay worst case
