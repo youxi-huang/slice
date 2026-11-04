@@ -41,7 +41,7 @@ export function segmentFailure(error: unknown): SegmentFailure {
 }
 
 /**
- * How this session's segments ended, content-free: calls linked into the chain; calls cancelled in flight, by a
+ * How this session's segments ended, content-free: calls linked into the chain; runs cancelled before or after dispatch, by a
  * checkpoint, a branch or writer change or the session's end; calls whose result no longer extended the chain; calls
  * refused or failed, by error code, with `CONTEXT_SEGMENT_DEADLINE` for a run past its deadline; and links the chain
  * dropped when a settled turn classified it again, by the reason the chain stopped.
@@ -84,7 +84,7 @@ export function segmentLevel(
 
 export interface SegmentJob {
 	input: SegmentSnapshot;
-	contextTokens?: number;
+	coalesce?: boolean;
 	/** The written note, and how many citations the writer dropped to keep it inside its range. */
 	run(signal: AbortSignal, hooks: WriterCallHooks): Promise<WriteMemoryResult & { scopeDropped?: number }>;
 }
@@ -96,7 +96,7 @@ export class PreviewSegments {
 	/** The thinking level segments are written at (U5): the session's own unless configured. */
 	readonly effort: SegmentEffort;
 	private readonly deadlineMs: number;
-	private readonly earlyMs: number;
+	private readonly coalesceMs: number;
 	private readonly settingsError?: string;
 	private readonly journal: CallJournal;
 	private sessionId?: string;
@@ -106,7 +106,7 @@ export class PreviewSegments {
 		abort: AbortController;
 		settled: Promise<void>;
 		input: SegmentSnapshot;
-		belowHalf: boolean;
+		coalesce: boolean;
 		dispatched: boolean;
 	};
 	private streak?: { kind: SegmentFailure; count: number };
@@ -122,7 +122,7 @@ export class PreviewSegments {
 		effort?: SegmentEffort;
 		waitMs?: number;
 		deadlineMs?: number;
-		earlyMs?: number;
+		coalesceMs?: number;
 	}) {
 		this.enabled = options.enabled && !options.settingsError;
 		this.settingsError = options.settingsError;
@@ -130,7 +130,7 @@ export class PreviewSegments {
 		this.effort = options.effort ?? "session";
 		this.waitMs = options.waitMs ?? WAIT_MS;
 		this.deadlineMs = options.deadlineMs ?? DEADLINE_MS;
-		this.earlyMs = options.earlyMs ?? 1_000;
+		this.coalesceMs = options.coalesceMs ?? 1_000;
 	}
 
 	get currentEpoch(): number {
@@ -174,17 +174,12 @@ export class PreviewSegments {
 		);
 	}
 
-	/** Coalesce a queued early first link at the original half-trigger point; sent calls retain U9's usage rules. */
-	promoteFirst(contextTokens: number, triggerTokens: number): boolean {
+	/** Refresh a queued first link at a newer closed range; sent calls retain U9's usage rules. */
+	coalesceFirst(lastId: string): boolean {
 		const running = this.running;
-		if (
-			!running?.belowHalf ||
-			running.dispatched ||
-			this.links.length ||
-			contextTokens < Math.floor(triggerTokens / 2)
-		)
+		if (!running?.coalesce || running.dispatched || this.links.length || lastId === running.input.lastId)
 			return false;
-		running.belowHalf = false;
+		running.coalesce = false;
 		running.abort.abort();
 		return true;
 	}
@@ -199,8 +194,7 @@ export class PreviewSegments {
 			abort,
 			settled: Promise.resolve(),
 			input,
-			belowHalf:
-				!this.links.length && job.contextTokens !== undefined && job.contextTokens < Math.floor(triggerTokens / 2),
+			coalesce: job.coalesce === true,
 			dispatched: false,
 		};
 		this.running = task;
@@ -226,7 +220,7 @@ export class PreviewSegments {
 		// Generation is queued after the host event returns; the task turn never waits for it.
 		task.settled = Promise.resolve()
 			.then(async () => {
-				if (task.belowHalf) await delay(this.earlyMs, undefined, { signal: abort.signal });
+				if (task.coalesce) await delay(this.coalesceMs, undefined, { signal: abort.signal });
 				abort.signal.throwIfAborted();
 				return job.run(abort.signal, hooks);
 			})

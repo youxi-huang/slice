@@ -708,14 +708,9 @@ export class PreviewMemoryController {
 				this.segments.effort,
 			);
 			this.segments.reconcile(submission);
-			if (this.segments.promoteFirst(usage.tokens, trigger)) {
-				void this.segments.waitForIdle().then(() => this.segment(ctx));
-				return;
-			}
 			const branch = structuredClone(ctx.sessionManager.getBranch());
 			const records = asRecords(branch);
 			const interval = checkpointInterval(branch);
-			if (!this.segments.mayStart(sessionId, interval, trigger)) return;
 			const chain = this.segments.chain;
 			const choice = nextSegmentRange(records, {
 				chainEnd: chain.at(-1)?.snapshot.lastId,
@@ -723,6 +718,11 @@ export class PreviewMemoryController {
 				contextTokens: usage.tokens,
 			});
 			if (!("range" in choice)) return;
+			if (this.segments.coalesceFirst(choice.range.lastId)) {
+				void this.segments.waitForIdle().then(() => this.segment(ctx));
+				return;
+			}
+			if (!this.segments.mayStart(sessionId, interval, trigger)) return;
 			// The current note: the base checkpoint's with the chain merged in. A chain that already leaves its
 			// boundary to the writer gains nothing from another link.
 			let current = latestMemory(records)?.memory.note;
@@ -765,7 +765,7 @@ export class PreviewMemoryController {
 			this.segments.start(
 				{
 					input,
-					contextTokens: usage.tokens,
+					coalesce: !chain.length,
 					run: async (signal, callHooks) => {
 						let scopeDropped = 0;
 						const written = await writeMemory({

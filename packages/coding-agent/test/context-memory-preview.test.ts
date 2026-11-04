@@ -3346,7 +3346,7 @@ describe("preview segments at settled turns (0.8.0 WP2)", () => {
 		root = fs.mkdtempSync(join(tmpdir(), "pi-preview-segments-"));
 		session = new SyntheticSession(root);
 		journal = new CallJournal(join(root, "agent"));
-		segments = new PreviewSegments({ enabled: true, journal });
+		segments = new PreviewSegments({ enabled: true, journal, coalesceMs: 0 });
 		// Pi's default reserve leaves a 111,616-token trigger in this window; the first segment waits for half of it.
 		contextTokens = 60_000;
 		outputs = [];
@@ -3555,16 +3555,25 @@ describe("preview segments at settled turns (0.8.0 WP2)", () => {
 		expect(ctx.abort).toHaveBeenCalledOnce();
 	});
 
-	it("coalesces a queued early first link at half the trigger before any call is dispatched", async () => {
+	it("coalesces a queued early first link at a newer closed range before any call is dispatched", async () => {
+		segments.dispose();
+		segments = new PreviewSegments({ enabled: true, journal });
+		controller = new PreviewMemoryController({
+			config: { ...DEFAULT_MEMORY_CONFIG, writerModel: SESSION_WRITER, noteRepair: false },
+			failureStore: store,
+			segments,
+			journal,
+		});
+		controller.sessionStart(ctx);
 		contextTokens = 30_000;
 		turn(2, long("First early range."));
 		controller.segment(ctx);
 		expect(requests).toHaveLength(0);
 		turn(3, long(long("Large next run.")));
-		contextTokens = 80_000;
+		contextTokens = 40_000;
 		outputs.push(fact(3, "Large next run."));
 		controller.segment(ctx);
-		await vi.waitFor(() => expect(requests).toHaveLength(1));
+		await vi.waitFor(() => expect(requests).toHaveLength(1), { timeout: 2_000 });
 		await segments.waitForIdle();
 		expect(instruction(requests[0])).toContain("through reply-3 only");
 		expect(segments.status()).toMatchObject({
@@ -3581,7 +3590,7 @@ describe("preview segments at settled turns (0.8.0 WP2)", () => {
 
 	it("keeps a dispatched early first link instead of aborting a request with unknown usage", async () => {
 		segments.dispose();
-		segments = new PreviewSegments({ enabled: true, journal, earlyMs: 0 });
+		segments = new PreviewSegments({ enabled: true, journal, coalesceMs: 0 });
 		controller = new PreviewMemoryController({
 			config: { ...DEFAULT_MEMORY_CONFIG, writerModel: SESSION_WRITER, noteRepair: false },
 			failureStore: store,
