@@ -345,6 +345,17 @@ describe("choosing the next range (0.8.0 WP2, U3)", () => {
 		});
 	});
 
+	it("starts a full range before half the trigger so its writer has the intervening turns to finish", () => {
+		const records = [...branch(), long("u4", "a3"), reply("a4", "u4")];
+		expect(nextSegmentRange(records, { triggerTokens: trigger, contextTokens: 30_000 })).toMatchObject({
+			range: { firstId: "u1", lastId: "a4" },
+		});
+		const first = segment(records, "u1", "a4", [], note({ state: [fact("u1")] }));
+		const later = [...records, user("u5", "a4", "Continue checking."), reply("a5", "u5")];
+		expect(classifyChain([first], submission(later)).coveredThrough).toBe("a4");
+		expect(mergeChain(undefined, [first])).toEqual({ note: note({ state: [fact("u1")] }) });
+	});
+
 	it("closes a later link only after a range's worth of new history", () => {
 		const records = branch();
 		expect(nextSegmentRange(records, { chainEnd: "a1", triggerTokens: trigger, contextTokens: 0 })).toEqual({

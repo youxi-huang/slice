@@ -150,8 +150,8 @@ export interface SegmentRange {
  * U3: the next range to prepare, or why none closes now. A range starts right after the chain's last link, or
  * after the base checkpoint's coverage for the first link of an interval, and ends at the branch's last record,
  * which must close a settled turn: an assistant reply that stopped, with every tool call in the range answered.
- * The first link waits until the context passes half the trigger and then covers everything uncovered, so a
- * session that never nears compaction pays nothing; each later link waits for `segmentRangeTokens` of new history.
+ * The first link starts after one range of new history, or at half the trigger when carried context reaches it
+ * first. Each later link waits for `segmentRangeTokens` of new history.
  */
 export function nextSegmentRange(
 	branch: readonly SessionRecord[],
@@ -161,7 +161,11 @@ export function nextSegmentRange(
 	if (options.chainEnd === undefined) {
 		start = chainStart(branch);
 		if (start === undefined) return { defer: "base-unsupported" };
-		if (options.contextTokens < Math.floor(options.triggerTokens / 2)) return { defer: "below-start" };
+		if (
+			options.contextTokens < Math.floor(options.triggerTokens / 2) &&
+			compactedSourceTokens(branch.slice(start)) < segmentRangeTokens(options.triggerTokens)
+		)
+			return { defer: "below-start" };
 	} else {
 		start = branch.findIndex((record) => record.id === options.chainEnd) + 1;
 		if (start === 0) return { defer: "not-contiguous" };
