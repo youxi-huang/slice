@@ -72,3 +72,35 @@ Observations:
    the merge nor the segments, so the difference comes from what Luna wrote in each run.
 4. **Controls.** 200k: 17.5, 23.0 and 20.0 s (51.4 s in all before, 60.4 s now). 272k: 26.7 and 23.0 s (37.5 s
    before, 49.7 s now). Every control writer read its input from the cache.
+
+## Recovery check on V2 with the capacity fix, 2026-11-04 UTC
+
+The maintainer chose to ship 0.8.0 with segments off by default and asked first for a small recovery check on Luna,
+within US$5. The same four chains as the rerun, now with P5's probes, each answered on its own copy of the chain at
+its checkpoint with only `context_history` active. Per chain at most 250 requests, 45 minutes, US$1.20 and 270,000
+input tokens per request. Spent: US$0.62 in 614 requests over 80.2 minutes. No 4xx, no rate-limit error. Other
+offline checks ran on the same machine during the first chain; its pauses are not timing evidence.
+
+- Command as above, without `--compactions-only`, plus `--probe-conditions history --chain-attempts 4
+  --unit-minutes 30` and the limits above; labels `luna-probes-<route>-v2fix-<on|off>`.
+- Raw metrics under `luna-p5/luna-probes-*/`, the same three files per chain; the probe scores are in
+  `summary.json` under `probes`. No answers, notes or session content.
+
+| Chain | Route | Segments | Boundaries | Paths | Total pause (s) | Probes passed (wrong, blocked, invalid) | Superseded values | Requests | Cost (US$) |
+| --- | --- | --- | --- | --- | ---: | --- | --- | ---: | ---: |
+| `luna-probes-200k-v2fix-on` | 200k | on | 3/3 | segments 1, sync 2 | 178.129 | 28 of 30 (0, 0, 2) | 3 of 3 | 185 | 0.2527 |
+| `luna-probes-200k-v2fix-off` | 200k | off | 3/3 | sync 3 | 58.729 | 29 of 30 (0, 0, 1) | 3 of 3 | 169 | 0.1198 |
+| `luna-probes-272k-v2fix-on` | 272k | on | 2/2 | sync 2 | 40.782 | 19 of 19 (0, 0, 0) | 2 of 2 | 137 | 0.1305 |
+| `luna-probes-272k-v2fix-off` | 272k | off | 2/2 | sync 2 | 52.095 | 18 of 19 (0, 0, 1) | 2 of 2 | 123 | 0.1139 |
+
+Observations:
+
+1. **Recovery holds, on a small sample.** Both arms passed 47 of 49 probes, with no wrong answer, no blocked probe
+   and no fabrication; every superseded value and every answer whose source crossed an earlier checkpoint was right.
+   Segments answered 43 from the records and 4 as correct unknowns, the controls 42 and 5. The misses are answers
+   without a valid answer object. One chain per cell cannot show a difference smaller than that.
+2. **The chunked path again, and this time first time.** On 200k with segments on, cut 3 came at Pi's own trigger
+   at step 4 again, and the writer committed through seven chunks in 154.7 s (18.1 to 26.7 s per call, none from
+   the cache) with no refused attempt. Across the two runs it has now committed twice and been refused once.
+3. **Segments served one boundary of five.** Cut 1 on 200k merged in 50 ms. Every other segments boundary went to
+   the writer after `ambiguous-supersede`, both 272k cuts included, as in the rerun.
