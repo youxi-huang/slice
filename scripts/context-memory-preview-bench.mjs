@@ -149,7 +149,7 @@ export function loopbackLatencyMs(value, provider, flag = "--latency-ms") {
 	return ms;
 }
 
-/** Whole-message prefix reuse with the same tools; scoped to one session, reusable at dispatch, without expiry. */
+/** Continue a whole earlier request with the same tools; one session, reusable at dispatch, without expiry. */
 export function loopbackPrefixCache() {
 	const requests = new Map();
 	return (payload) => {
@@ -159,9 +159,8 @@ export function loopbackPrefixCache() {
 		const previous = requests.get(tools) ?? [];
 		let shared = 0;
 		for (const earlier of previous) {
-			let count = 0;
-			while (count < parts.length && parts[count] === earlier[count]) count++;
-			shared = Math.max(shared, count);
+			if (earlier.length <= parts.length && earlier.every((part, index) => part === parts[index]))
+				shared = Math.max(shared, earlier.length);
 		}
 		previous.push(parts);
 		requests.set(tools, previous);
@@ -1412,7 +1411,7 @@ async function parent() {
 	const report = { label, mode, provider, model: provider === "loopback" ? LOOPBACK.id : relay ? `${relay.model.provider}/${relay.id}` : `${MEASURED[provider].provider}/${MEASURED[provider].id}`, ...(relay && relay.id !== relay.model.id ? { catalogModel: `${relay.model.provider}/${relay.model.id}` } : {}), ...(baseUrl ? { endpoint: new URL(baseUrl).host } : provider === "openai" ? { endpoint: OPENAI_HOST } : {}), thinking, cache, arm, ...(cuts ? { cuts } : {}), ...(mode === "probes" ? { probeConditions, compactionsOnly } : {}), ...(mode === "writer" || mode === "repair" ? { attempts } : {}), ...(mode === "probes" ? { chainAttempts } : {}), concurrency, build: build.buildId ?? build.build ?? null, piVersion: hostVersion, fixtures, sessionSettings, ...(segmentEffort ? { segmentEffort } : {}), unitSettings: Object.keys(unitSettings).length ? unitSettings : null, control, limits: { ...shown, inputTokensPerRequest: Number.isFinite(maxInputTokens) ? maxInputTokens : "unlimited" } };
 	if (latencyMs) report.latencyMs = latencyMs;
 	if (turnLatencyMs) report.turnLatencyMs = turnLatencyMs;
-	if (provider === "loopback") report.loopbackCache = cache === "session" ? "simulated whole-message prefix, same tools, reusable at dispatch, no expiry within a session" : "no cache";
+	if (provider === "loopback") report.loopbackCache = cache === "session" ? "simulated continuation of a whole earlier request, same tools, reusable at dispatch, no expiry within a session" : "no cache";
 	if (toolReplay) Object.assign(report, { toolReplay: { host: inspectOfficialPi(stockRoot, hostVersion), tools: "recorded content, no commands executed or invented delays", mainLatencyMs: turnLatencyMs, adjacentAssistants: "coalesced until the next recorded tool batch or user", writerCache: report.loopbackCache } });
 
 	if (mode === "smoke") {

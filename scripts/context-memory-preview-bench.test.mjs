@@ -21,7 +21,7 @@ function scratch(t) {
 
 const settingsFile = (agentDir) => join(agentDir, "pi-context-memory.json");
 
-test("session prefix cache shares only whole messages with the same system prompt and tools across all request roles", () => {
+test("session cache requires a whole earlier request to continue, with the same system prompt and tools", () => {
 	const cached = loopbackPrefixCache();
 	const tools = [{ type: "function", function: { name: "read", parameters: { type: "object" } } }];
 	const messages = [{ role: "system", content: "Synthetic prompt" }, { role: "user", content: "Synthetic task" }];
@@ -30,10 +30,15 @@ test("session prefix cache shares only whole messages with the same system promp
 	for (const content of ["Task reply", "Return ONLY the memory note itself", "Write a segment note for entries a through b only"])
 		assert.equal(cached({ messages: [...messages, { role: "user", content }], tools }), tokens(messages));
 	assert.equal(cached({ messages, tools }), tokens(messages));
-	assert.equal(cached({ messages: [messages[0], { role: "user", content: "Synthetic task changed" }], tools }), tokens(messages.slice(0, 1)));
+	assert.equal(cached({ messages: [messages[0], { role: "user", content: "Synthetic task changed" }], tools }), 0);
 	assert.equal(cached({ messages, tools: [] }), 0);
 	assert.equal(cached({ messages: [{ ...messages[0], content: "Different prompt" }, messages[1]], tools }), 0);
 	assert.equal(loopbackPrefixCache()({ messages, tools }), 0);
+	const forked = loopbackPrefixCache();
+	const prior = [...messages, { role: "assistant", content: "Earlier branch" }];
+	assert.equal(forked({ messages: prior, tools }), 0);
+	assert.equal(forked({ messages: [...messages, { role: "assistant", content: "Different branch" }], tools }), 0);
+	assert.equal(forked({ messages: [...prior, { role: "user", content: "Continue" }], tools }), tokens(prior));
 });
 
 test("loopback writer and task latency share bounds and reject provider runs before dispatch", () => {
