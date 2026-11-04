@@ -1,6 +1,6 @@
 ---
 branch: claude/v0.8.0-release
-pr: none yet
+pr: 121
 head: 65b9d8d5dd40ebd94e2e2d7a1da6d0925c82b720
 written: 2026-11-04, Claude Code cloud (the maintainer's reviewer session)
 ---
