@@ -75,6 +75,7 @@ import { checkpointRecords, equivalenceLine, errorClasses } from "./context-memo
 // before the next step; immediate does not. --window sets the route's window. --session-settings previewSegments=on
 // and --segment-effort turn segments on at a level; probe units run with segments off. Rows go to boundaries.jsonl
 // and rounds.jsonl, and summary.json gains `replay`.
+// --latency-ms delays loopback writer replies only, leaving the task's short replies immediate.
 
 const script = fileURLToPath(import.meta.url);
 const root = resolve(script, "../..");
@@ -135,6 +136,14 @@ export function writeUnitSettings(agentDir, settings) {
 
 /** The note request of 0.5.3 and later, then that of v0.5.2 and earlier, which the quotation repair still carries. */
 const WRITER_REQUESTS = ["Return ONLY the memory note itself", "Return ONLY one JSON object matching this schema"];
+
+export function loopbackLatencyMs(value, provider) {
+	const ms = Number(value);
+	if (!Number.isSafeInteger(ms) || ms < 0 || ms > 180_000)
+		throw new Error("--latency-ms takes an integer from 0 to 180000");
+	if (ms && provider !== "loopback") throw new Error("--latency-ms needs --provider loopback");
+	return ms;
+}
 /** The catalog model each provider measures; `deepseek-local` builds deepseek-flash's requests and answers them here. */
 const MEASURED = {
 	deepseek: { provider: "deepseek", id: "deepseek-flash" },
@@ -436,6 +445,7 @@ async function worker() {
 			return;
 		}
 		const writer = WRITER_REQUESTS.some((marker) => serialized.includes(marker));
+		if (writer && action.latencyMs) await new Promise((done) => setTimeout(done, action.latencyMs));
 		const readable = new Set(
 			readLines(action.sessionFile)
 				.slice(1)
@@ -860,6 +870,7 @@ async function parent() {
 	const outputDir = resolve(argument("--output-dir"));
 	const mode = argument("--mode");
 	const provider = argument("--provider", "loopback");
+	const latencyMs = loopbackLatencyMs(argument("--latency-ms", "0"), provider);
 	const fixtures = argument("--fixtures", "P1,P2,P3").split(",");
 	const attempts = Number(argument("--attempts", "8"));
 	const thinking = argument("--thinking", "high");
@@ -984,7 +995,7 @@ async function parent() {
 		// prefix after a few hundred tokens; a warm run shares one directory, as one user's session does.
 		const cwd = join(runDir, "cwd", cache === "cold" ? id : "shared");
 		writeUnitSettings(agentDir, action.type === "probe" && action.condition !== "session" ? probeSettings : unitSettings);
-		const encoded = Buffer.from(JSON.stringify({ ...action, arm, cwd, ...(window ? { window } : {}), ...(reserve ? { reserve } : {}), ...(action.provider === "relay" ? { baseUrl, relay } : {}), ...(equivalenceOut ? { equivalence: true } : {}) })).toString("base64url");
+		const encoded = Buffer.from(JSON.stringify({ ...action, arm, cwd, ...(latencyMs ? { latencyMs } : {}), ...(window ? { window } : {}), ...(reserve ? { reserve } : {}), ...(action.provider === "relay" ? { baseUrl, relay } : {}), ...(equivalenceOut ? { equivalence: true } : {}) })).toString("base64url");
 		const child = spawn(process.execPath, [script, "--worker", "--action", encoded, "--package-dir", packageDir, "--stock-root", stockRoot], { cwd: runDir, env: environment(agentDir), stdio: ["ignore", "pipe", "pipe"] });
 		let stdout = "";
 		let stderr = "";
@@ -1221,6 +1232,7 @@ async function parent() {
 
 	const shown = Object.fromEntries(Object.entries(limits).map(([name, value]) => [name, Number.isFinite(value) ? value : "unlimited"]));
 	const report = { label, mode, provider, model: provider === "loopback" ? LOOPBACK.id : relay ? `${relay.model.provider}/${relay.id}` : `${MEASURED[provider].provider}/${MEASURED[provider].id}`, ...(relay && relay.id !== relay.model.id ? { catalogModel: `${relay.model.provider}/${relay.model.id}` } : {}), ...(baseUrl ? { endpoint: new URL(baseUrl).host } : provider === "openai" ? { endpoint: OPENAI_HOST } : {}), thinking, cache, arm, ...(cuts ? { cuts } : {}), ...(mode === "probes" ? { probeConditions, compactionsOnly } : {}), ...(mode === "writer" || mode === "repair" ? { attempts } : {}), ...(mode === "probes" ? { chainAttempts } : {}), concurrency, build: build.buildId ?? build.build ?? null, piVersion: hostVersion, fixtures, sessionSettings, ...(segmentEffort ? { segmentEffort } : {}), unitSettings: Object.keys(unitSettings).length ? unitSettings : null, control, limits: { ...shown, inputTokensPerRequest: Number.isFinite(maxInputTokens) ? maxInputTokens : "unlimited" } };
+	if (latencyMs) report.latencyMs = latencyMs;
 
 	if (mode === "smoke") {
 		// One small request through the history conversion: the opening turn of P1 and a one-word reply.

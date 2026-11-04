@@ -9,7 +9,7 @@ import { readMemoryConfig } from "../packages/coding-agent/src/extensions/contex
 import { readExcerptSettings } from "../packages/coding-agent/src/extensions/context-memory/preview/excerpts.ts";
 import { readPreparationSettings } from "../packages/coding-agent/src/extensions/context-memory/preview/preparation.ts";
 // Importing the bench starts no run: only its helpers are read here.
-import { parseSessionSettings, percentile, settledSteps, writeUnitSettings } from "./context-memory-preview-bench.mjs";
+import { loopbackLatencyMs, parseSessionSettings, percentile, settledSteps, writeUnitSettings } from "./context-memory-preview-bench.mjs";
 
 const script = fileURLToPath(new URL("./context-memory-preview-bench.mjs", import.meta.url));
 
@@ -20,6 +20,13 @@ function scratch(t) {
 }
 
 const settingsFile = (agentDir) => join(agentDir, "pi-context-memory.json");
+
+test("loopback writer latency covers Luna's measured range and refuses provider runs before dispatch", () => {
+	for (const ms of [0, 13_000, 28_000, 52_000, 133_000, 180_000]) assert.equal(loopbackLatencyMs(String(ms), "loopback"), ms);
+	for (const value of ["-1", "0.5", "Infinity", "NaN", "180001"]) assert.throws(() => loopbackLatencyMs(value, "loopback"), /--latency-ms takes/);
+	assert.throws(() => loopbackLatencyMs("13000", "openai"), /needs --provider loopback/);
+	assert.equal(loopbackLatencyMs("0", "openai"), 0);
+});
 
 test("a unit's pi-context-memory.json carries each named switch in the shape the preview reads", (t) => {
 	const { label, settings } = parseSessionSettings("previewReduction=on,previewExcerpts=off");
@@ -143,6 +150,8 @@ test("--provider openai is a provider run on the official API, and the long-rout
 		);
 	// Each is refused before the package, the host or the run directory is read, so no request can follow.
 	for (const [flags, message] of [
+		[["--mode", "probes", "--provider", "openai", "--latency-ms", "13000"], /--latency-ms needs --provider loopback/],
+		[["--mode", "probes", "--latency-ms", "180001"], /--latency-ms takes an integer/],
 		[["--mode", "smoke", "--provider", "openai"], /Missing --max-requests/],
 		[["--mode", "smoke", "--provider", "openai", "--max-requests", "1", "--max-minutes", "1", "--max-cost-usd", "0"], /--max-costUsd must be positive for a provider run/],
 		[["--mode", "repair", "--provider", "openai", "--max-requests", "1", "--max-minutes", "1", "--max-cost-usd", "0.01"], /--provider openai does not serve --mode repair/],
