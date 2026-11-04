@@ -3,4 +3,4 @@
  * extension-preview branch and on npm as slice-pi, and the OpenCode and DSH retrieval packages, published on npm as
  * slice-opencode and slice-dsh. Release preparation changes it here and nowhere else.
  */
-export const SLICE_VERSION = "0.7.5";
+export const SLICE_VERSION = "0.8.0";
