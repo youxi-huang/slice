@@ -37,6 +37,10 @@ const workerCase = argument("--runtime-case", true);
 // A case run again from another installation keeps its own evidence directory.
 const caseLabel = argument("--runtime-label", true) ?? workerCase;
 const installedPackage = resolve(argument("--installed-package-dir", true) ?? packageDir);
+// --segments on runs every runtime case with 0.8.0's previewSegments switched on, the release gate's second pass. The
+// parent hands it to each case through the case's environment, which the preview never reads.
+const segmentsOn = argument("--segments", true) === "on" || process.env.SLICE_ACCEPTANCE_SEGMENTS === "on";
+const segmentsSetting = segmentsOn ? { previewSegments: { enabled: true } } : {};
 mkdirSync(outputDir, { recursive: true });
 
 function environment(agentDir) {
@@ -57,6 +61,7 @@ function environment(agentDir) {
 		GIT_CONFIG_GLOBAL: join(workDir, "empty-git-config"),
 	};
 	if (process.env.SystemRoot) value.SystemRoot = process.env.SystemRoot;
+	if (segmentsOn) value.SLICE_ACCEPTANCE_SEGMENTS = "on";
 	return value;
 }
 
@@ -130,12 +135,12 @@ async function runtimeAcceptance() {
 	const duplicateCase = workerCase === "duplicate-copies";
 	const secondCopy = join(caseDir, "second-copy");
 	if (!reuseAgentDir) {
-		writeFileSync(join(agentDir, "pi-context-memory.json"), JSON.stringify({ enabled: true, writerModel: fixedWriterUnavailable ? "missing-provider/missing-writer" : "session", eventLog: false, noteRepair: false, keepRecentTokens: 0 }));
+		writeFileSync(join(agentDir, "pi-context-memory.json"), JSON.stringify({ enabled: true, writerModel: fixedWriterUnavailable ? "missing-provider/missing-writer" : "session", eventLog: false, noteRepair: false, keepRecentTokens: 0, ...segmentsSetting }));
 		if (workerCase === "config-invalid") writeFileSync(join(agentDir, "pi-context-memory.json"), "{invalid config");
 		if (duplicateCase) cpSync(packageDir, secondCopy, { recursive: true });
 		writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ packages: duplicateCase ? [installedPackage, secondCopy] : [installedPackage], compaction: { enabled: automaticCase, keepRecentTokens: 0, reserveTokens: 16_384 }, retry: { enabled: false, provider: { maxRetries: 0 } }, cacheWarming: warmingCase ? "idle" : "off", defaultTools: [] }));
 		if (pressureCase) {
-			writeFileSync(join(agentDir, "pi-context-memory.json"), JSON.stringify({ enabled: true, writerModel: "session", eventLog: false, noteRepair: false, ...pressure.pi.slice, previewPreparation: { enabled: true } }));
+			writeFileSync(join(agentDir, "pi-context-memory.json"), JSON.stringify({ enabled: true, writerModel: "session", eventLog: false, noteRepair: false, ...pressure.pi.slice, previewPreparation: { enabled: true }, ...segmentsSetting }));
 			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ packages: [installedPackage], ...pressure.pi.settings, retry: { enabled: false, provider: { maxRetries: 0 } }, cacheWarming: "off", defaultTools: [] }));
 		}
 	}
@@ -159,7 +164,10 @@ async function runtimeAcceptance() {
 		// A normal request can contain every note-schema field in a checkpoint and tool loadout.
 		// The session writer ends its request with an explicit handover instruction.
 		const writer = JSON.stringify(payload.messages?.at(-1) ?? "").includes("Internal context-compaction request, not a new user task or ruling.");
-		requests.push({ writer, model: payload.model });
+		// A segment's request closes with an instruction that names its range; only --segments on can send one.
+		const segment = writer && JSON.stringify(payload.messages?.at(-1) ?? "").includes("Write a segment note for entries");
+		assert(segmentsOn || !segment, "A segment was written with previewSegments off");
+		requests.push({ writer, segment, model: payload.model });
 		assert(requests.length <= 40, "Synthetic provider call budget exceeded");
 		if (writer) {
 			await onWriter?.();
@@ -252,20 +260,22 @@ async function runtimeAcceptance() {
 				}
 				assert.equal(status.preparation?.state, workerCase === "pressure-failed" ? "failed" : "ready", "Preparation did not finish in the lowered band");
 				assert.equal(checkpoints().length, cycle, "Host compacted before the configured line");
-				const paid = requests.filter((value) => value.writer).length;
+				// Arm A's own calls: with --segments on a segment may also be written in the band, under its own limits.
+				const prepared = () => requests.filter((value) => value.writer && !value.segment).length;
+				const paid = prepared();
 				assert.equal(paid, cycle + 1, "More than one prepared writer call per interval");
 				pressureUsage = pressure.targetTokens + 1;
 				await session.prompt(`Finish synthetic recent-cycle-${cycle}.`);
 				if (workerCase === "pressure-failed") {
 					assert(existsSync(marker), "Failed synchronous writer did not block after failed preparation");
 					assert.equal(checkpoints().length, 0);
-					assert.equal(requests.filter((value) => value.writer).length, paid + 1);
+					assert.equal(prepared(), paid + 1);
 					await assertBlocked();
 					await session.reload();
 					await assertBlocked();
 				} else {
 					assert.equal(checkpoints().length, cycle + 1, "Native threshold did not commit a Slice checkpoint");
-					assert.equal(requests.filter((value) => value.writer).length, paid, "Prepared boundary made a synchronous writer request");
+					assert.equal(prepared(), paid, "Prepared boundary made a synchronous writer request");
 					assert(!existsSync(marker));
 					assert(JSON.stringify(manager.buildSessionProjection().messages).includes(`recent-cycle-${cycle}`), "Recent text was lost");
 					pressureUsage = 100;
@@ -663,6 +673,7 @@ async function parentAcceptance() {
 		await check("official CLI, SDK, runner and session storage bytes stayed unchanged", () => assert.deepEqual(finalStockHashes, originalStockHashes));
 		report.passed = report.assertions.length > 0 && report.assertions.every((value) => value.passed);
 		report.isolation = isolation;
+		report.segments = segmentsOn ? "on" : "off";
 		report.cleanup = { retained: ["report.json", "runtime/*/result.json"], removed: ["isolated package copy", "loopback Git server and source checkout", "managed test installation", "synthetic session/config/auth files", "temporary npm cache"] };
 		writeFileSync(join(outputDir, "report.json"), `${JSON.stringify(report, null, 2)}\n`);
 		const runtimeDir = join(workDir, "runtime");

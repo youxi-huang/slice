@@ -268,7 +268,16 @@ export interface DoctorSettings {
 	writerModel?: string;
 	/** Every loaded copy of this package, when Pi lists more than one. */
 	copies?: readonly LoadedCopy[];
+	/** 0.8.0 segments, reported only when switched on or misconfigured. */
+	segments?: { enabled: boolean; state: string; reason?: string; effort?: string };
 }
+
+const SEGMENT_FAILURES: Record<string, string> = {
+	refusal: "notes the checks refused",
+	"tool-call": "tool calls instead of notes",
+	"exhausted-output": "notes cut off at the output limit",
+	error: "writer errors",
+};
 
 /** A read-only self-check; Pi's own history gate is unknown through the extension API. */
 export function doctorReport(diagnosis: PreviewDiagnosis, settings: DoctorSettings): string {
@@ -343,6 +352,23 @@ export function doctorReport(diagnosis: PreviewDiagnosis, settings: DoctorSettin
 	} else {
 		line("writer", "unknown", settings.configError ? "depends on pi-context-memory.json" : "select a model first");
 	}
+	const segments = settings.segments;
+	if (segments?.reason === "invalid-config")
+		line("segments", "off", "previewSegments in pi-context-memory.json is not valid, so segments stay off");
+	else if (segments?.enabled && settings.writerModel !== "session")
+		line("segments", "inactive", "they need the session writer. The fixed writer compacts as before");
+	else if (segments?.state === "paused")
+		line(
+			"segments",
+			"paused",
+			`three ${SEGMENT_FAILURES[segments.reason ?? "error"] ?? "failures"} in a row. The writer compacts until the next checkpoint`,
+		);
+	else if (segments?.enabled)
+		line(
+			"segments",
+			"ok",
+			`written at settled turns${segments.effort && segments.effort !== "session" ? ` at thinking level ${segments.effort}` : ""} and merged at the next compaction without a writer call`,
+		);
 	const manual = diagnosis.manualCompaction;
 	const tokens = manual.contextTokens
 		? ` About ${manual.contextTokens.toLocaleString("en-US")} tokens are in context now.`

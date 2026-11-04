@@ -4,7 +4,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Usage } from "@earendil-works/pi-ai";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { CallJournal, PREPARATION_CALLS_PER_ATTEMPT } from "../src/extensions/context-memory/preview/call-journal.ts";
+import {
+	CallJournal,
+	PREPARATION_CALLS_PER_ATTEMPT,
+	SEGMENT_CALLS_PER_INTERVAL,
+} from "../src/extensions/context-memory/preview/call-journal.ts";
 import type { WriterDispatchRequest } from "../src/extensions/context-memory/preview/writer.ts";
 
 const call: WriterDispatchRequest = { callIndex: 1, phase: "generate", model: "synthetic/writer", writerEffort: "low" };
@@ -117,5 +121,41 @@ describe("preview call journal: one record of every writer call", () => {
 		);
 		expect(typeof (await journal.hooks("session-1", "compaction", "none").beforeDispatch(call))).toBe("string");
 		expect(journal.summary("session-1").gap).toBe("unwritable");
+	});
+
+	it("counts segment calls apart and stops them at the interval's limit, across a restart (0.8.0 U9)", async () => {
+		const settle = async (journal: CallJournal, interval: string, reported?: Usage) => {
+			const hooks = journal.hooks("session-1", "segment", interval);
+			const id = await hooks.beforeDispatch(call);
+			await hooks.afterDispatch({
+				callIndex: 1,
+				callId: id,
+				phase: "generate",
+				dispatched: true,
+				outcome: "success",
+				elapsedMs: 5,
+				...(reported ? { usage: reported } : {}),
+			});
+		};
+		const journal = new CallJournal(agentDir);
+		for (let index = 1; index < SEGMENT_CALLS_PER_INTERVAL; index++) await settle(journal, "cp-1", usage);
+		const restarted = new CallJournal(agentDir);
+		expect(restarted.summary("session-1")).toMatchObject({
+			segmentCalls: SEGMENT_CALLS_PER_INTERVAL - 1,
+			preparationCalls: 0,
+			compactionCalls: 0,
+		});
+		expect(restarted.segmentSpend("session-1", "cp-1")).toEqual({
+			calls: SEGMENT_CALLS_PER_INTERVAL - 1,
+			uncachedTokens: (SEGMENT_CALLS_PER_INTERVAL - 1) * 120,
+			unknown: false,
+		});
+		await settle(restarted, "cp-1");
+		expect(restarted.segmentSpend("session-1", "cp-1").unknown).toBe(true);
+		await expect(async () => restarted.hooks("session-1", "segment", "cp-1").beforeDispatch(call)).rejects.toThrow(
+			"CONTEXT_PREPARATION_BUDGET",
+		);
+		await settle(restarted, "cp-2", usage);
+		expect(restarted.segmentSpend("session-1", "cp-2")).toMatchObject({ calls: 1, unknown: false });
 	});
 });

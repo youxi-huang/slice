@@ -1,5 +1,6 @@
 import { selectNoteBudget, type NoteBudget } from "../src/config.ts";
 import { errorCode, PROJECT_CODES } from "../src/events.ts";
+import { assertToolPairs } from "../src/guards.ts";
 import { CONTEXT_KEEP_NONE, CONTEXT_MEMORY_KIND, CONTEXT_MEMORY_VERSION } from "../src/identity.ts";
 import { removeNoteEnvelope } from "../src/note-envelope.ts";
 import {
@@ -11,13 +12,22 @@ import {
 	validateMemoryCheckpoints,
 	validateNote,
 } from "../src/notes.ts";
+import type { PreparationSubmission, PreparationWriterIdentity } from "../src/preparation-candidate.ts";
 import { diagnoseQuotes, type QuoteFailureKind } from "../src/quote-diagnostics.ts";
 import { applyQuoteRepair, quoteRepairEligible } from "../src/quote-repair.ts";
 import type { CompactionRecord, SessionRecord } from "../src/records.ts";
 import { diagnoseSchema, type SchemaCounts } from "../src/schema-diagnostics.ts";
 import type { ScopeCounts } from "../src/scope-diagnostics.ts";
+import {
+	chainHash,
+	type ChainClassification,
+	classifyChain,
+	finalizeSegment,
+	freezeSegmentInput,
+	mergeChain,
+	type PreparedSegment,
+} from "../src/segments.ts";
 import { applySourcesRepair, sourcesRepairEligible } from "../src/sources-repair.ts";
-import { assertToolPairs } from "../src/guards.ts";
 
 export type Serialization = "pi" | "jcs";
 export type Outcome = { outcome: "commit" } | { outcome: "refusal"; code: string };
@@ -59,6 +69,80 @@ export type ConformanceVector = VectorBase &
 				};
 		  }
 	);
+
+export interface SegmentLink {
+	firstId: string;
+	lastId: string;
+	note: unknown;
+	processedUserEntryIds?: string[];
+	chainHash?: string;
+}
+
+interface SegmentBoundary {
+	records?: SessionRecord[];
+	session?: string;
+	epoch?: number;
+	writer?: Partial<PreparationWriterIdentity>;
+	customInstructions?: string;
+	noteBudget?: Partial<NoteBudget>;
+}
+
+export type SegmentChainOutcome = { links: number } & Pick<ChainClassification, "coveredThrough" | "stop">;
+export type SegmentMergeOutcome = ReturnType<typeof mergeChain>;
+type SegmentOutcome = Outcome | SegmentChainOutcome | SegmentMergeOutcome;
+
+export type SegmentVector = Pick<VectorBase, "id" | "records"> &
+	(
+		| { stage: "segment"; link: SegmentLink; expected: Outcome }
+		| { stage: "segment-chain"; links: SegmentLink[]; boundary?: SegmentBoundary; expected: SegmentChainOutcome }
+		| {
+				stage: "segment-merge";
+				links: SegmentLink[];
+				previous?: MemoryNote;
+				boundary?: SegmentBoundary;
+				expected: SegmentMergeOutcome;
+		  }
+	);
+
+const segmentWriter: PreparationWriterIdentity = {
+	role: "fixed",
+	model: "synthetic/segment",
+	effort: "low",
+	policyHash: "synthetic-policy",
+	promptHash: "synthetic-prompt",
+	schemaHash: "synthetic-schema",
+	contextHash: null,
+};
+const segmentBudget = selectNoteBudget({}, 64_000, 100);
+
+/** Each link is dispatched on its own settled prefix, before any later turns arrive. */
+function prepareSegment(records: SessionRecord[], link: SegmentLink, before: PreparedSegment[]): PreparedSegment {
+	const prefix = records.slice(0, records.findIndex((record) => record.id === link.lastId) + 1);
+	const snapshot = freezeSegmentInput({
+		sessionId: "synthetic-session",
+		epoch: 1,
+		branch: prefix,
+		coveredThrough: link.lastId,
+		processedUserEntryIds:
+			link.processedUserEntryIds ??
+			prefix
+				.filter((record) => record.type === "message" && record.message.role === "user")
+				.map((record) => record.id),
+		writer: segmentWriter,
+		noteBudget: segmentBudget,
+		firstId: link.firstId,
+		chainHash: link.chainHash ?? chainHash(before),
+	});
+	return finalizeSegment(snapshot, {
+		note: link.note,
+		provenance: {
+			writerRole: segmentWriter.role,
+			writerModel: segmentWriter.model,
+			writerEffort: segmentWriter.effort,
+			callIds: [`synthetic-call-${link.lastId}`],
+		},
+	});
+}
 
 /** Exact-size expansion only for the budget vectors; all other candidates remain untouched. */
 export function materializeCandidate(vector: ConformanceVector): unknown {
@@ -114,8 +198,36 @@ export function checkpointBranch(
 }
 
 /** Run only the nominated stage, always reaching the real core check that owns its refusal. */
-export function runCoreVector(vector: ConformanceVector, serialization: Serialization = "pi"): Outcome {
+export function runCoreVector(vector: ConformanceVector, serialization?: Serialization): Outcome;
+export function runCoreVector(vector: SegmentVector, serialization?: Serialization): SegmentOutcome;
+export function runCoreVector(
+	vector: ConformanceVector | SegmentVector,
+	serialization: Serialization = "pi",
+): SegmentOutcome {
 	try {
+		if (vector.stage === "segment" || vector.stage === "segment-chain" || vector.stage === "segment-merge") {
+			const links: PreparedSegment[] = [];
+			for (const link of vector.stage === "segment" ? [vector.link] : vector.links)
+				links.push(prepareSegment(vector.records, link, links));
+			if (vector.stage === "segment") return { outcome: "commit" };
+			const boundary = vector.boundary;
+			const submission: PreparationSubmission = {
+				sessionId: boundary?.session ?? "synthetic-session",
+				epoch: boundary?.epoch ?? 1,
+				branch: boundary?.records ?? vector.records,
+				writer: { ...segmentWriter, ...boundary?.writer },
+				noteBudget: { ...segmentBudget, ...boundary?.noteBudget },
+				customInstructions: boundary?.customInstructions,
+			};
+			const classification = classifyChain(links, submission);
+			if (vector.stage === "segment-chain") {
+				const { links: valid, ...result } = classification;
+				return { links: valid.length, ...result };
+			}
+			if (classification.stop) throw new Error(`Invalid segment-merge chain: ${vector.id}`);
+			if (vector.previous) validateNote(vector.previous, vector.records);
+			return mergeChain(vector.previous, classification.links);
+		}
 		let candidate = removeNoteEnvelope(materializeCandidate(vector)).value;
 		switch (vector.stage) {
 			case "note": {

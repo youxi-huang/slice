@@ -1,5 +1,478 @@
 # Validation record
 
+## 0.8.0 WP5 rerun: GPT-6 Luna with the bounded tail, 2026-11-04 UTC
+
+A real-provider run, recorded apart from the offline evidence below. Official Pi 1.4.0 with the independent preview at
+`1a2468c`, package `stock-preview+src.ef16bf86bac1ed9b`, and fixture P5 replayed as WP5 replayed it: `--replay
+--cache session --pace immediate`, the 200k route (cuts 1, 3 and 5, a 180,000-token window) and the 272k route (cuts
+2 and 4, 240,000), Pi's reserve at 30,000, probes with `context_history` only. GPT-6 Luna ran on OpenAI's API, with no
+DeepSeek run, as the maintainer asked. The maintainer approved 1,000 requests, 240 minutes and $5. The ten runs used
+984 requests, 99.9 minutes and $1.05 at catalog prices, and the largest request was 230,299 input tokens; each run was
+given only what the earlier ones had left.
+
+**No session was blocked, and the pause gate is not met.** Every segments chain completed. In WP5, Luna's `medium`
+segments chain on the 200k route overflowed and recovered only on its third retry, and both DeepSeek segments chains
+stopped. But segments served none of the 12 boundaries the segments arms committed, and every segments arm paused
+longer than its control.
+
+| Session level | Route | Arm | Committed, all by the writer | Refused attempts | Chain | Pause P50 / P95 | Segments fallbacks, after U8's wait | Probes passed (wrong, blocked, invalid) |
+| --- | --- | --- | --- | ---: | --- | --- | --- | --- |
+| `medium` | 200k | control | 3 | 0 | complete | 16.5 s / 19.5 s | | 28 of 30 (0, 0, 2) |
+| `medium` | 200k | segments | 3 | 0 | complete | 36.1 s / 38.0 s | cut 1 `tail` after 6.0 s; cuts 3 and 5 `in-flight` after 15 s | 29 of 30 (0, 0, 1) |
+| `medium` | 200k | control, second chain | 3 | 2 | complete | 20.0 s / 27.7 s | | 28 of 30 (0, 2, 0) |
+| `medium` | 200k | segments, second chain | 3 | 0 | complete | 30.6 s / 32.7 s | cut 1 `tail` after 10.5 s; cut 3 `in-flight` after 15 s; cut 5 `ambiguous-supersede` after 15 s | 28 of 30 (0, 1, 1) |
+| `medium` | 272k | control | 2 | 1 | complete | 19.9 s / 20.2 s | | 18 of 19 (0, 1, 0) |
+| `medium` | 272k | segments | 2, cut 2 at Pi's own trigger | 0 | complete | 30.5 s / 40.8 s | cut 2 `tail` after 12.3 s; cut 4 `in-flight` after 15 s | 18 of 19 (0, 0, 1) |
+| `medium` | 272k | control, second chain | 2, cut 2 at Pi's own trigger | 0 | complete | 17.8 s / 19.9 s | | 18 of 19 (0, 0, 1) |
+| `medium` | 272k | segments, second chain | 2 | 1 | complete | 18.5 s / 35.8 s | cut 2 `tail`, nothing in flight; cut 4 `in-flight` after 15 s | 19 of 19 (0, 0, 0) |
+| `max` | 272k | control | 2 | 0 | complete | 85.7 s / 121.1 s | | 17 of 19 (0, 0, 2) |
+| `max` | 272k | segments | 2 | 0 | complete | 125.1 s / 147.8 s | cuts 2 and 4 `in-flight` after 15 s | 17 of 19 (0, 0, 2) |
+
+What the segments boundaries met:
+
+- **`tail`, 4 of 12**, each at a route's first boundary, the round whose history holds P5's 70,000-token run. More
+  than one range of history followed the chain, so the writer ran. Before the bound, that history would have stayed
+  verbatim, the case that overflowed in WP5.
+- **`in-flight`, 7 of 12**: no segment was ready, and the one in flight did not finish within U8's 15 s. Each round's
+  segment was the first of its interval, covering everything since half the trigger. At `max` both went on to fail at
+  their 120 s deadline (`CONTEXT_SEGMENT_DEADLINE`), as on the 200k route in WP5.
+- **`ambiguous-supersede`, 1 of 12**: the segment settled within the wait, and the merge left the boundary to the
+  writer.
+
+The 14 segment calls were all discarded. They read every input token from the session's cache and cost $0.03 in all.
+The writers' work was about equal in the two arms: 14 calls, 2.45 million input tokens and $0.068 with segments, against 15,
+2.55 million and $0.069 without. The writer's own `CONTEXT_NOTE_INVALID` refused 4 of 28 attempts, 3 on the controls,
+and each chain committed on the next attempt. Luna at `max` on the 272k route, not run in WP5, committed both rounds at
+the first attempt. Four probe requests, in three runs, made no progress for 9 to 18 minutes and were ended, as the
+unit limit would have ended them; they count as blocked. No answer was wrong in any run.
+
+Not covered: P5 and Luna only, one or two chains per cell, and `max` on the 200k route, whose WP5 result the bound
+does not change.
+
+## 0.8.0 WP5 follow-up: a bound on the verbatim tail, offline, 2026-11-04 UTC
+
+No model service was called. The maintainer chose to fix WP5's overflow before 0.8.0 ships: a segments boundary now
+keeps at most one range verbatim after the chain, `segmentRangeTokens` of Pi's trigger, and a longer tail goes to the
+writer as `tail`. The change is `1a2468c`; U7's amendment is in the [plan](v0.8.0-plan.md#wp5-provider-acceptance).
+
+| Route | Pi's trigger | The bound now: one range, on the tail | The bound before: half the preview's threshold, on note, system prompt and tail together |
+| --- | ---: | ---: | ---: |
+| P5 200k (`--window 180000 --reserve 30000`) | 150,000 | 22,500 | 72,000 |
+| P5 272k (`--window 240000 --reserve 30000`) | 210,000 | 31,500 | 96,000 |
+
+The tail is counted as the context estimate counts the retained originals. The half-threshold check still applies
+after it.
+
+**Regressions**, in `context-memory-preview.test.ts`:
+
+- About 28,500 tokens after the chain, past one range of 16,742 and under half the threshold: the boundary records
+  `tail` and the writer runs. Before the change it committed through segments with no writer call, the first run of
+  the test failing on 2 requests where 3 were expected.
+- The same tail with the segment in flight that covers it: the boundary waits, then merges without the writer. With
+  `tail` taken out of U8's wait set, the test fails.
+
+**Lifecycle fuzz.** Seeds 1 to 1,000 passed every invariant in 273 s, with
+`CONTEXT_MEMORY_FUZZ_SEEDS=1000 CONTEXT_MEMORY_FUZZ_REPORT=<file>`:
+
+| Event | Before the change (`b99714c`'s controller) | After |
+| --- | ---: | ---: |
+| Committed boundaries: segments / synchronous writer | 427 / 2,659 | 112 / 2,933 |
+| Segment fallbacks: `tail` | none | 276 |
+| Merges after U8's wait | 79 | 12 |
+| Merges that replaced a ruling | 218 | 59 |
+| Failed compactions | 657 | 687 |
+
+The column before the change reproduces WP4's counts exactly.
+
+The bound costs the fuzz three boundaries in four that segments served. Its long turn is about 17,100 tokens, just past
+the 16,742-token range at its trigger, and a compaction that comes before the segment covering such a turn, as the
+room check's does, now goes to the writer: WP5's first reason, met here at the scale of one turn. Seeds 1 to 40, CI's set until now, no longer reach a
+merge after U8's wait: seed 31's one left a 17,134-token turn after the chain. CI runs seeds 1 to 100, which reach 3,
+the same in two runs side by side; `fallback tail` joins the paths a run must reach.
+
+**Offline gates on `1a2468c`**, package ``stock-preview+src.ef16bf86bac1ed9b``:
+
+| Gate | Segments off | Segments on |
+| --- | --- | --- |
+| Stock-Pi acceptance, official Pi 1.4.0 with 1.3.0, 1.2.0 and 1.1.0 as compatible hosts | 42 of 42 | 42 of 42 |
+| Stock-Pi acceptance on Pi 1.3.0, 1.2.0 and 1.1.0 | 36 of 36 each | 36 of 36 each |
+| Scenarios under the strict profile, Pi 1.4.0 with 1.0.4 as the other host | 157 passed | 157 passed |
+| Overhead per model request at 10 and 20 checkpoints (2.9 and 5.9 MB) | 1 and 1 ms | 0 and 0 ms |
+
+Segments off is `node scripts/context-memory-ops.mjs preview` at `b7aef09`, exit 0, release checks (37 of 37) and
+release preparation included. Segments on is `scripts/context-memory-preview-acceptance.mjs --segments on` on each host
+and `scripts/context-memory-preview-scenarios.mjs --segments on --acceptance-profile strict`, the same package.
+`node scripts/context-memory-ops.mjs verify` exited 0 on the same code before it was committed: the context-memory check
+passed 722 tests in 15 files, the 100-seed fuzz among them, and the security regression check passed. The core's own
+tests passed 210 of 210.
+
+**P5 through the loopback provider**, `--replay --pace immediate` on both routes, with WP5's package
+(`stock-preview+src.72c8ba45c5791e42`, built from `b99714c`) and this one:
+
+| Route | Control | Segments before the change | Segments after |
+| --- | --- | --- | --- |
+| 200k, cuts 1, 3 and 5 | 3 committed by the writer | 3 of 3 on the segments path | 3 of 3 on the segments path |
+| 272k, cuts 2 and 4 | 2 committed by the writer | 2 of 2 on the segments path | 2 of 2 on the segments path |
+
+Every round compacted at its gold checkpoint, and each segments boundary covered everything through its last entry,
+so no tail was kept and the bound did not act. The loopback does not reproduce WP5's overflow: its writer answers at
+once, and its token counts never take Pi past the trigger before a gold checkpoint. Whether the bound removes the
+overflow on real token counts is the provider rerun's question.
+
+## 0.8.0 WP5: segments on GPT-6 Luna and DeepSeek V4.1 Flash, 2026-11-03 UTC
+
+A real-provider run, recorded apart from the synthetic evidence below. Official Pi 1.4.0 with the independent preview,
+fixture P5 replayed as a session meets it (`--replay`, [eval/preview/README.md](../../eval/preview/README.md#runner)):
+each round's entries join the session where the agent settles, a real turn on the session follows every settled step,
+Pi compacts where its trigger falls, and segments are written at the events that write them in use. The 200k route
+(cuts 1, 3 and 5) ran with a 180,000-token window and the 272k route (cuts 2 and 4) with 240,000, both with Pi's
+reserve at 30,000. GPT-6 Luna ran on OpenAI's API, DeepSeek V4.1 Flash on DeepSeek's, keys as network secrets.
+Probes ran with `context_history` only, as a session has it. The maintainer approved 1,600 requests, 300 minutes and
+$9 for Luna and 900 requests, 150 minutes and $6 for DeepSeek; the runs used 967 requests, 167 minutes and $2.41 on Luna and 424 requests, 22 minutes and $3.09 on DeepSeek, at catalog prices.
+
+**The gate is not met.** Where segments served a boundary it paused 45 to 68 ms when the segment was ready and
+3.1 to 9.5 s when the boundary waited for one in flight. Over all boundaries the segments arm never paused less than
+the control on the same day, and on P5's second round it stopped sessions that the control carried through.
+
+### What the first runs found, in order
+
+| Finding | Fix |
+| --- | --- |
+| A 170,000-token window left the session writer no room for its handover at P5's cuts, and the catalog's output maximum (Luna 128,000, DeepSeek 384,000) became the preview's own reserve, so DeepSeek refused with `CONTEXT_CAPACITY` | `--window` caps the output maximum at 32,000 and `--reserve` sets Pi's reserve, `9fed624` |
+| With segments on, a 20-checkpoint session paid 135 ms a request: `segment()` ran its session, failure-state and submission work on every settled turn | It asks first whether a range is due, `9fed624`; 4 ms at 20 checkpoints |
+| Segments were dropped without a trace | `segments.results` in `/compaction-status`, `4ca7ae6` and `bfb6715` |
+| A replay round forced `/compact` after Pi had just compacted, compacting about 4,000 tokens for up to 110 s | A compaction at the round's closing step or the one before stands as its checkpoint, `19ac458` |
+| After a checkpoint, both models wrote every later segment as the whole note again, citing earlier entries in all six sections; every such segment was refused at the range check and the breaker paused segments | The writer keeps a segment to its range, `9b8161f` |
+
+Runs before each fix are kept out of the tables below; they used the same budget.
+
+### U5: the segments' level (Luna at `max`, 200k route, settled pace, build `stock-preview+src.71a4e0f1bef85414`)
+
+| Segments at | Segment calls | Linked | Refused or failed | Boundaries served | Gold answers cited, current and carried | Segment cache share |
+| --- | ---: | ---: | --- | --- | --- | ---: |
+| `max`, the session's | 7 | 1 | 3 past the 120 s deadline | 1 of 3 | 22 of 27, 45 of 49 | 100% |
+| `low` | 5 | 3, 2 kept to their range | 2 `CONTEXT_NOTE_INVALID` | 1 of 3; `ambiguous-supersede` once | 26 of 27, 45 of 49 | 0% |
+| `off` | 6 | 1 | 5 `CONTEXT_NOTE_INVALID` | 1 of 3 | 22 of 27, 44 of 49 | 0% |
+
+By the rule the maintainer set, `low` and `off` show a refusal class the session's level does not, so the session's
+level stays the default. Two facts weigh against that rule's outcome: at `max` a segment over P5's ranges takes longer
+than the 120 s deadline, and below the session's level Luna's segments read nothing from the session's cache. Why the
+lower levels miss the cache was not traced. DeepSeek at `high`
+and `off` both linked their first segments and lost round 2 to the overflow below.
+
+### The gate: immediate pace, with probes
+
+| Model and session level | Route | Arm | Committed boundaries, by path | Refused attempts | Chain | Pause P50 / P95 over committed boundaries | Probes passed (wrong, blocked) |
+| --- | --- | --- | --- | ---: | --- | --- | --- |
+| DeepSeek, `high` | 200k | control | sync 3 | 0 | complete | 17.3 s / 18.1 s | 29 of 30 (0, 0) |
+| DeepSeek, `high` | 200k | segments | segments 1, after a 7.2 s wait | 3 | stopped at cut 3 | 7.3 s / 7.3 s | 9 of 30 (0, 21) |
+| DeepSeek, `high` | 272k | control | sync 2 | 1 | complete | 10.2 s / 13.3 s | 19 of 19 (0, 0) |
+| DeepSeek, `high` | 272k | segments | segments 1, after a 9.4 s wait | 3 | stopped at cut 4 | 9.5 s / 9.5 s | 9 of 19 (0, 10) |
+| Luna, `max` | 200k | control | sync 3 | 0 | complete | 141.0 s / 181.6 s | 26 of 30 (0, 0) |
+| Luna, `max` | 200k | segments | sync 3, each after a 15 s wait for a segment past its deadline | 0 | complete | 124.6 s / 152.1 s | 26 of 30 (0, 0) |
+| Luna, `medium` | 200k | control | sync 3 | 0 | complete | 19.8 s / 22.3 s | 30 of 30 (0, 0) |
+| Luna, `medium` | 200k | segments | segments 1 after a 9.2 s wait; sync 2, one after a 15 s wait | 3 | complete on the third retry | 19.3 s / 43.5 s | 26 of 30 (0, 1) |
+| Luna, `medium` | 272k | control | sync 1 | 6 | stopped at cut 4 | 19.5 s / 19.5 s | 9 of 19 (0, 10) |
+| Luna, `medium` | 272k | segments | segments 2, after waits of 11.6 and 0.3 s | 1 | complete | 0.4 s / 11.7 s | 10 of 19 (0, 0), 9 invalid answers |
+
+Segments ran at the session's level, as U5's rule leaves it. A refused attempt is a compaction the user retries; the
+bench retries up to `--chain-attempts`, two for DeepSeek and four for Luna, and a chain that stays refused blocks
+every later probe. The two DeepSeek segments chains stopped where the overflow below blocked the session: the request
+past the window, then the writer, failed. Luna's `medium` segments chain hit the same overflow and recovered on its
+third retry, after two writer answers the note schema refused for its structure rather than missing sources; its
+control at the same level had also needed retries in an earlier run, two refusals of the same kind, then committed
+every round on the first attempt in the run above. One Luna `medium` probe hung on its request for 15 minutes and
+was ended, as the unit limit would have ended it; it is counted as blocked. On the 272k route the control's own writer
+was refused six times in seven attempts, for the reason in the next section, and its chain stopped at cut 4; the
+segments arm completed there, but its answers broke the probe contract nine times.
+
+### Why, by weight
+
+1. **The run that crosses the trigger is never a segment.** A range closes only where the agent settles, and the
+   compaction comes at that same settled turn, before the segment it would start. P5's first round ends with a
+   70,000-token run; at DeepSeek's token counts Pi compacts one step before the gold checkpoint, and that run stays
+   verbatim under the prefix path's half-threshold bound.
+2. **The kept tail leaves too little room for the next large input.** The next interval starts at about 75,000 tokens
+   instead of a note's few thousand, reaches 130,000, and P5's 86,000-token paste then takes the request past the
+   window. Pi compacts on the overflow, the session writer has no room left in the window, and the compaction fails:
+   the session is blocked where the control, which kept no tail, compacted normally. This is the most serious result.
+3. **At Luna's daily level, segments overrun their deadline.** All three gate segments at `max` passed 120 s; each
+   boundary waited the full 15 s for them and then ran the writer, so segments made every pause 15 s longer.
+4. **Refusals.** After the range fix, segment notes still failed the note schema at `low` and `off` on Luna; the
+   segment path does not yet report which schema check, which the bench now records for compactions.
+
+U12's condition is not met: no merge was refused for the note schema or the budget, so WP6 does not start. Segments
+stay off by default (U13).
+
+### The writer's source limit, found on the controls
+
+Luna at `medium`, Pi's default level, refused its own synchronous notes on P5: twice on the 200k route in a first run,
+and six times in seven attempts on the 272k route, where the session blocked. The bench recorded a schema fault other
+than missing sources, and a local dump of three refused answers, kept out of the repository, showed the same one each
+time: a `state` fact citing 21, 28 or 33 entries, where the note schema allows 20. The limit was stated only in the
+JSON schema attached to the request. The writer's rules now say it: cite at most 20 IDs in one item, choosing the
+most direct ones or splitting the fact. Two reruns of the 272k control with that rule were refused once in five
+attempts, and every round committed. This writer is the one v0.7.5 ships, so the fix matters with segments off; one
+model and one fixture are the evidence.
+
+### Not covered
+
+P5 only. One chain per arm for most cells, so P95 over three to five boundaries is the slowest one. Luna at `max` on the
+272k route was not run: its minutes went to the source limit above. Which schema check refused Luna's segment notes at
+`off` and `low` was not captured; the source limit is the likely cause, not a verified one.
+
+## 0.8.0 offline release gates, with segments off and on, 2026-11-03 UTC
+
+The offline gates of the [0.8.0 plan](v0.8.0-plan.md#release-gates), run before WP5's first provider request. No
+model service was called.
+
+| Gate | Segments off | Segments on |
+| --- | --- | --- |
+| Stock-Pi acceptance, official Pi 1.4.0 with 1.3.0, 1.2.0 and 1.1.0 as compatible hosts | 42 of 42 | 42 of 42 |
+| Stock-Pi acceptance on Pi 1.3.0, 1.2.0 and 1.1.0 | 36 of 36 each | 36 of 36 each |
+| Scenarios under the strict profile, Pi 1.4.0 with 1.0.4 as the other host | 157 passed | 157 passed |
+| Overhead per model request at 10 and 20 checkpoints (2.9 and 5.9 MB) | 1 and 3 ms | 1 and 4 ms |
+
+Segments off is `node scripts/context-memory-ops.mjs preview` at `63d9694`, release checks and the release preparation
+included. Segments on is `scripts/context-memory-preview-acceptance.mjs --segments on` and
+`scripts/context-memory-preview-scenarios.mjs --segments on --acceptance-profile strict` at `9fed624`, package
+`stock-preview+src.ddfacc18976ad9cf`; acceptance on 1.4.0 with segments off passed again there, 36 of 36.
+
+The first pass with segments on failed twice, and both findings were fixed in `9fed624`:
+
+- **Overhead.** With segments on, 20 checkpoints cost 135 ms a request against the 50 ms target, and 10 cost 48 ms.
+  `segment()` ran the session check (about 13 ms at 10 checkpoints), the failure store's inspection (about 35 ms) and
+  the submission's projection, cut, hashes and branch copy on every settled turn before asking whether a range was due.
+  It now asks first, from the branch as it stands; a regression test checks that a turn with no range due builds no
+  projection.
+- **Acceptance.** The two pressure cases count arm A's prepared writer calls, and a segment written in the same band
+  made it two. They now count arm A's calls apart, and every case refuses a segment request when segments are off.
+  The two reopen cases had failed only because they reuse those fixtures.
+
+Checkpoints reopen across versions, each with one request and one `context_history` read of a covered entry through a
+loopback provider on official Pi 1.4.0:
+
+| Checkpoints written by | Reopened by | Result |
+| --- | --- | --- |
+| This build, three on the segments path (P5's 200k route, loopback replay) | `slice-pi@0.7.5` from npm (`stock-preview+src.b0f389ab614f8cf3`) | ready on the latest, read back, no error |
+| `extension-v0.4.3`, two, written on Pi 1.3.0 | This build | ready, read back, no error |
+| `extension-v0.5.3`, two, written on Pi 1.3.0 | This build | ready, read back, no error |
+
+The lifecycle fuzz's gate of 200 seeds was met in WP4 with 1,000.
+
+All of it again on the final 0.8.0 code, `6b08fa2`, package `stock-preview+src.72c8ba45c5791e42`, after WP5's fixes
+to the segment range and the writer's rules: acceptance passed 42, 36, 36 and 36 assertions on Pi 1.4.0, 1.3.0, 1.2.0
+and 1.1.0 with segments off and the same with segments on; the strict scenarios passed 157 both ways; overhead per
+request was 0 ms at 10 and 20 checkpoints with segments off and 3 ms with them on; release checks and release
+preparation passed.
+
+## 0.8.0 WP4: the lifecycle fuzz, 2026-11-03 UTC
+
+`packages/coding-agent/test/context-memory-preview-fuzz.test.ts` at the commit that adds this entry, run from
+`packages/coding-agent` with `CONTEXT_MEMORY_FUZZ_SEEDS=1000 npx vitest run test/context-memory-preview-fuzz.test.ts`.
+Seeds 1 to 1,000, 48 operations each, passed every invariant in 397 s; the release gate asks for 200. CI runs seeds 1
+to 40. The harness stands in for Pi, with a scripted writer and no provider.
+
+What the 1,000 seeds reached, from `CONTEXT_MEMORY_FUZZ_REPORT`:
+
+| Event | Count |
+| --- | --- |
+| Committed boundaries: segments / synchronous writer | 427 / 2,659 |
+| Failed compactions, each followed by a blocked request check | 657 |
+| Segment fallbacks: `no-segments` / `custom-focus` / `unfinished-turn` / `in-flight` / `instruction-superseded` | 2,277 / 258 / 98 / 16 / 10 |
+| Merges that replaced a ruling (amended U6) | 218 |
+| Merges after U8's wait for the segment in flight | 79 |
+| Writer faults on segments: refusal / tool call / exhausted output / error / hang | 559 / 573 / 555 / 529 / 258 |
+| Writer faults on compactions: refusal / tool call / exhausted output / error / hang | 128 / 124 / 145 / 135 / 125 |
+| Breaker opened | 706 |
+| `/tree` to before a checkpoint | 687 |
+| Restarts that dropped ready segments | 267 |
+
+Most `no-segments` fallbacks are `/compact` below half the trigger, where U3 has not started a segment.
+
+Two faults found and fixed, both in `makeRoom` and both present before 0.8.0. In each, every `/compact` failed with
+`CONTEXT_WRITER_CAPACITY` until the writer was changed, which the final-recovery invariant reported:
+
+- Seeds 12 and 34: `makeRoom` starts a compaction at most once per checkpoint interval. `/tree` back before a
+  checkpoint returned to an interval it had already served on the other branch, so it stayed silent while the
+  context grew from 86k to 120k tokens.
+- Seeds 49 and 128: `/tree` to a point at 103k tokens. `makeRoom` checked only after a turn, and the next 17k-token
+  turn took the context past the room the session writer's handover needs.
+
+`/tree` now clears the latch and checks the room at once; `context-memory-preview.test.ts` has the regression.
+
+Each invariant fires on a deliberate fault, seeds 1 to 40:
+
+| Fault | Seeds failing | Invariant that fired |
+| --- | --- | --- |
+| The prefix path keeps one entry too few | 2 | Final recovery: the product's own readback refuses the gap first, and the session stays blocked |
+| A commit keeps the old chain | 13 | The kept chain is contiguous on the branch |
+| Segment calls bypass the journal | 36 | Every writer request has a journal record |
+| The request guard skips the sticky failure and the failure store | 7 | A failed compaction blocks the next request |
+| `/tree` neither clears `makeRoom`'s latch nor checks the room | 2 | Final recovery |
+| The checkpoint names only the first merged link | 6 | A merged chain ends at the checkpoint's coverage |
+
+Three faults survived, each because a second check already holds the line: removing `compactionFailed`'s own
+failure record (the durable pending marker written at the start of `compact` still blocks), and removing only the
+sticky failure or only the failure store from the request guard.
+
+Not covered: a real provider or Pi itself (the stock-Pi acceptance covers the host), an unwritable journal, a crash
+between Pi saving a checkpoint and the extension seeing it, session switches and concurrent processes.
+
+## 0.8.0 U6 amended: the loopback A/B rerun, 2026-11-03 UTC
+
+The [WP3 run](#080-wp3-segments-on-the-loopback-ab-2026-11-03-utc) repeated after the maintainer amended U6, so
+that a ruling from the user retires the instruction it replaces. Same script, settings and command; the preview
+package built from this change; no provider called. Every arm exited 0.
+
+| Cycles, pace | Arm | Paths | Pause P50 / P95, ms | P95 without a foreground writer, ms | Fallbacks | Writer calls (segment) | Probes |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 2, settled | sync | sync ×2 | 1,085 / 1,101 | | | 2 | 8/8 |
+| 2, settled | A | prefix ×2 | 47 / 69 | 69 | none | 2 | 8/8 |
+| 2, settled | segments | segments ×2 | 39 / 72 | 72 | none | 2 (2) | 8/8 |
+| 6, settled | sync | sync ×6 | 1,129 / 1,270 | | | 6 | 12/12 |
+| 6, settled | A | prefix ×6 | 113 / 247 | 247 | none | 6 | 12/12 |
+| 6, settled | segments | segments ×6 | 109 / 177 | 177 | none | 6 (6) | 12/12 |
+| 6, immediate | sync | sync ×6 | 1,152 / 1,265 | | | 6 | 12/12 |
+| 6, immediate | A | prefix, sync, prefix ×4 | 132 / 1,139 | 182 | `in-flight` once | 7 | 12/12 |
+| 6, immediate | segments | segments ×6 | 150 / 296 | 296 | none | 6 (6) | 12/12 |
+
+- Every boundary merged at both paces, and the four `instruction-superseded` fallbacks are gone. Each segment
+  after the second retired the previous port with an instruction cited to the user's message. The last note holds
+  the same three instructions as the synchronous writer's: no deployment, the retry and timeout values, and port
+  4326.
+- Writer calls fell from 10 to 6, all of them segments and none discarded. Writer spend is now 1.4% below sync's
+  in synthetic dollars (1.942 against 1.971), where it was 22% above. The scripted segment answers carry only
+  what their range changes, 554 output tokens against sync's 1,327; a provider's answers may differ.
+- Pauses grow with each cycle in both arms that skip the writer: 37 to 177 ms for segments, 42 to 247 ms for A,
+  settled. At the immediate pace A fell back once while its preparation was still running (1,139 ms); segments
+  served all six boundaries. The report does not record which boundaries waited under U8.
+
+Not covered: a message that states several rulings, of which a later one changes only some. `supersedes` names
+entries, so that change still goes to the writer as `instruction-superseded` or `ambiguous-supersede`, until
+U12's fact identities. The script's first message is such a message, but its port is not one of the scripted
+facts, so this run never exercises it. Also not covered, as before: a provider's cache and latencies other than
+one second.
+
+## 0.8.0 WP3: segments on the loopback A/B, 2026-11-03 UTC
+
+The first measurement of segments, with the arm WP3 adds to the runner, on the same script and settings as the
+[WP0 baseline](#080-wp0-the-loopback-ab-baseline-over-chains-2026-11-03-utc): official Pi 1.4.0, the preview
+package built from the commit that adds this entry, `--latency-ms 1000 --arms sync,a,segments`, scripted writer,
+no provider called. Every arm exited 0. The scripted writer answers a segment request with the facts whose
+sources lie in the named range, and retires an overturned port ruling with `supersedes` as it does for a whole
+note.
+
+| Cycles, pace | Arm | Paths | Pause P50 / P95, ms | P95 without a foreground writer, ms | Fallbacks | Writer calls (segment) | Probes |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 2, settled | sync | sync ×2 | 1,084 / 1,114 | | | 2 | 8/8 |
+| 2, settled | A | prefix ×2 | 38 / 69 | 69 | none | 2 | 8/8 |
+| 2, settled | segments | segments ×2 | 37 / 74 | 74 | none | 2 (2) | 8/8 |
+| 6, settled | sync | sync ×6 | 1,144 / 1,247 | | | 6 | 12/12 |
+| 6, settled | A | prefix ×6 | 89 / 196 | 196 | none | 6 | 12/12 |
+| 6, settled | segments | segments ×2, sync ×4 | 1,150 / 1,283 | 71 | `instruction-superseded` ×4 | 10 (6) | 12/12 |
+| 6, immediate | sync | sync ×6 | 1,142 / 1,340 | | | 6 | 12/12 |
+| 6, immediate | A | prefix, sync, prefix ×4 | 119 / 1,153 | 199 | `in-flight` once | 7 | 12/12 |
+| 6, immediate | segments | segments ×2, sync ×4 | 1,191 / 1,304 | 115 | `instruction-superseded` ×4 | 10 (6) | 12/12 |
+
+- Where segments serve, they pause like A: 37 and 74 ms over two cycles against A's 38 and 69, and the second
+  boundary grows by about the same 35 ms.
+- From the third cycle on, every boundary fell back on `instruction-superseded`. The script moves the port each
+  cycle, the previous checkpoint carries the old port as an instruction, and the segment that records the new
+  ruling names the old one's source in `supersedes`. U6 sends any such segment to the writer, even though here
+  the source supports that one instruction and the segment gives exactly one in its place. The four segment
+  calls behind those links were discarded, so this arm made 10 writer calls against sync's 6 and cost about 22%
+  more in synthetic dollars. The first port ruling is not one of the script's facts, which is why the second
+  cycle still merged.
+- At the immediate pace, A's preparation was still running at the second boundary and A fell back (1,153 ms).
+  The segment covering that cycle was also still running; U8's bounded wait let it finish, and the boundary
+  merged in 115 ms. This is the one place the run exercises U8.
+- Turn time per request beyond the latency was 60 to 91 ms with segments against 23 to 68 for the others; it
+  includes the runner polling `/compaction-status` while a segment runs and is not the package's request overhead.
+
+Not covered: a provider's cache, whose hit on the segment's prefix is U4's premise; a script whose rulings do not
+change; latencies other than one second. The U6 result went to the maintainer, who amended the rule in the
+[plan](v0.8.0-plan.md#wp3-assembly-at-the-boundary); the [rerun](#080-u6-amended-the-loopback-ab-rerun-2026-11-03-utc)
+is above.
+
+## 0.8.0 WP0: the loopback A/B baseline over chains, 2026-11-03 UTC
+
+The first measurement for the [v0.8.0 plan](v0.8.0-plan.md#wp0-measurement-first), taken before any segment
+code exists so that segments have a control to beat. Scripted runs on official Pi 1.4.0 with the preview package
+built from the commit that adds this entry; no provider was called. Each run used
+`node scripts/context-memory-preview-ab.mjs --package-dir .artifacts/context-memory-preview-package --stock-root .artifacts/context-memory-preview-stock --output-dir <dir> --latency-ms 1000 --arms sync,a`
+with the cycles and pace below; every arm exited 0. A cycle is a ruling, a pasted log of about 97k tokens and a
+follow-up, then `/compact`; cycles after the first move the port, so the probes check a value overturned up to
+five times. `settled` waits for A's preparation before the next input, A's best case; `immediate` sends it at once.
+
+| Cycles, pace | Arm | Paths | Pause P50 / P95, ms | P95 without a foreground writer, ms | Fallbacks | Turn time per request beyond the latency, ms | Probes |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 2, settled | sync | sync ×2 | 1,080 / 1,120 | | | 48 | 8/8 |
+| 2, settled | A | prefix ×2 | 42 / 79 | 79 | none | 51 | 8/8 |
+| 6, settled | sync | sync ×6 | 1,151 / 1,257 | | | 23 | 12/12 |
+| 6, settled | A | prefix ×6 | 101 / 182 | 182 | none | 49 | 12/12 |
+| 6, immediate | sync | sync ×6 | 1,169 / 1,288 | | | 28 | 12/12 |
+| 6, immediate | A | prefix, sync, prefix ×4 | 143 / 1,140 | 208 | `in-flight` once | 70 | 12/12 |
+
+- Two settled cycles reproduce the October result: about 1.1 s synchronously, under 0.1 s from a prepared prefix.
+- Along six boundaries A's prepared pause grows from 58 to 183 ms, and the synchronous pause from 1,097 to
+  1,258 ms. The prefix path validates and reads back more history at each checkpoint; WP3's merge should be
+  measured for the same growth.
+- At the immediate pace, preparation was still running at the second boundary. The compaction cancelled it and
+  wrote synchronously in 1,141 ms, and the cancelled call is the run's one discarded call and its one call with
+  unknown usage. With six boundaries the P95 is the slowest one, so a single fallback sets the all-boundary
+  P95 at the synchronous pause. The gate on all boundaries is therefore a gate on how often segments fall short,
+  which is what U8's bounded wait for a segment in flight addresses.
+- Turn time per request includes Pi's own processing and the scripted model, so it is not the package's request
+  overhead, which the stock overhead report measures.
+
+Not covered: segments, which get an arm when WP3 adds their switch; a provider's cache; latencies other than
+one second. Two script defects found on the way were fixed before these runs: the scripted writer kept every
+overturned port ruling, which failed the stale-port probe on six cycles in both arms, and a preparation request
+still in flight at a boundary was counted as a foreground call.
+
+## Codex 0.166.0 native compaction on GPT-6 Luna, a small probe, 2026-11-03 UTC
+
+A real-provider run on another host, recorded for the [v0.8.0 plan](v0.8.0-plan.md) as an external pause
+reference and as evidence for 0.9.0's host review. No Slice code ran. Official Codex CLI 0.166.0 from npm, an
+isolated `CODEX_HOME`, `openai/gpt-6-luna` on OpenAI's API through the proxy secret
+([openai-api.md](openai-api.md)), read-only sandbox. An invented fixture of exporter logs, about 9,000 tokens a
+message, was pasted turn by turn with `codex exec` and `codex exec resume`; it stated a port, a config path and a
+standing rule in the first message, corrected the port in the third, and hid three exact values in the logs. Seven
+questions followed. `model_auto_compact_token_limit` was lowered so that compaction ran at 31,000 to 82,000 tokens.
+The pause is the time from the turn's start to the `compacted` record in the rollout; Codex compacted before the
+turn's request each time.
+
+| Run | Path | Compactions at | Pause | Summary request read from cache | Kept after compaction | Questions |
+| --- | --- | ---: | ---: | ---: | --- | ---: |
+| 1, `medium` | Local summary (custom provider) | 37,161, 46,289, 52,585 | 9.1, 5.6, 4.4 s | 99.7 to 99.8% | An 0.8 to 0.9 KB summary and recent user messages up to Codex's 20,000-token allowance | 6 of 7 |
+| 2, `medium` | Remote (built-in provider) | 30,558, 39,754, 48,688, 57,620 | 8.6, 8.3, 5.1, 5.4 s | Not reported | A 3.0 to 4.4 KB encrypted `compaction` item and every user message | 7 of 7 |
+| 3, `high` | Local summary | 81,927 | 7.3 s | 99.9% | A 1.3 KB summary and the user messages that fit the allowance, the oldest one cut short | 6 of 7 |
+
+No answer was wrong. Both misses were `unknown` for a request ID that appeared only in the first message's log,
+which the local path's allowance no longer held; the remote path kept that message and answered it. The corrected
+port and the withdrawn one were answered right in every run.
+
+**The remote path cannot be checked or costed.** Its summary is an encrypted item, the persisted text is empty, and
+Codex reported no usage for the four compaction requests. Its pauses include one to three seconds of WebSocket
+retries that the session's proxy forced before Codex fell back to HTTPS; the local runs used an HTTPS-only provider
+and had none.
+
+**What the pauses mean.** Codex's local summarizer read nearly all of its input from the cache and wrote 275 to
+624 output tokens, 62 to 400 of them reasoning. Slice's writer on Pi also reads 95 to 97% from the cache but writes
+7 to 11 KB notes with a citation on every fact, at `max` in the maintainer's runs. The rows are therefore not a
+target for Slice's synchronous pause; they show what a boundary costs when the summary is short and unchecked.
+
+**Spend.** 39 model requests in about 13 minutes, against a limit of 40 requests, 20 minutes and $1 set for this
+review. About 1.0 million Luna input tokens, 475,000 of them cached, beside the unreported remote compactions. One
+run went out without its settings: an isolated home, the model and the compaction limit were lost when the previous
+command was refused, so 11 requests ran on Codex's default `gpt-6.1-sol` with 730,000 input tokens, 627,000 cached,
+and never compacted. Its results are not used above.
+
+One run each, on invented fixtures, at small contexts; the facts sat in user messages, which Codex keeps verbatim,
+rather than in tool output, which it drops. Codex's hooks were not exercised; their semantics come from the source
+at `rust-v0.166.0` and are summarized in the plan.
+
 ## v0.7.5 on npm: publication, then installation by name from npm on official hosts, 2026-11-02 UTC
 
 The published 0.7.5 packages, fetched from npm itself. No model was called: the host sessions below used the

@@ -1,20 +1,21 @@
 # DSH and OpenCode retrieval previews
 
 These packages, `slice-opencode` and `slice-dsh`, add one `context_history` tool to each host.
-They search or read original stored text in the current session, with bounded
-results and continuation cursors. They do not generate Slice checkpoints,
-replace native compaction, or protect subsequent model requests. Neither
-package is a `Checked` or `Gated` compaction adapter.
+Their default entries search or read original stored text in the current session,
+with bounded results and continuation cursors. `slice-opencode` remains
+retrieval-only. `slice-dsh/compaction` is a separate opt-in manual writing preview:
+it validates and reads back Slice checkpoints and gates later requests after a
+failed or unconfirmed attempt.
 
 The scope and writing prerequisites are in
-[the adapter design](dsh-opencode-adapter-design.md). This implementation stops
-at its explicit DSH persistence gate; it contains no dormant writer or second
-transaction engine. OpenCode V2 is not included.
+[the adapter design](dsh-opencode-adapter-design.md). The default installation is
+retrieval-only; DSH writing is enabled as described under [DSH writing](#dsh-writing). OpenCode
+V2, released as `@opencode/cli` 2.x, is not included.
 
 Native compaction settings for a given route, such as 200k with a 32k output
 cap, and the three-cycle pressure fixtures for both hosts are in
 [capacity profiles](context-pressure.md). They leave both adapters
-retrieval-only.
+retrieval-only unless the DSH writing entry is explicitly enabled.
 
 ## Build, publish and load
 
@@ -165,19 +166,67 @@ ceiling; it inherits no provider credentials. Interactive UI, real providers,
 other OpenCode versions and other operating systems remain untested. This
 optional binary fixture is separate from the ordinary `verify` gate.
 
-## Why DSH writing is deferred
+## DSH writing
 
 The pinned [Session README](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.1-rc.3/packages/core/session/README.md#write-experimental-plugin-records)
-restricts `appendPluginRecord` to its own experimental packages and explicitly
-excludes external plugins. Its best-effort, ignorable records also cannot carry
-Slice's required checkpoint semantics. A TypeScript `SessionEventMap` merge
-does not update the installed persistence event catalog: the official
+restricts `appendPluginRecord` to DSH's own experimental packages and excludes
+external plugins, and its best-effort, ignorable records cannot carry Slice's
+required checkpoint semantics. A TypeScript `SessionEventMap` merge does not
+update the installed persistence event catalog: the official
 `validateStoredEvents` rejects an unknown required `slice/checkpoint` event.
 The adapter regression reproduces that refusal against the installed release.
+None of this changed through 0.2.1-rc.5 or 0.2.2-alpha.3.
 
-The minimum prerequisite is a public external log-record registration contract
-that survives flush, reopen and removal with defined required-record semantics.
-Once available, implement the design's manual transaction and separately prove
-request admission, durable blocking and recovery. Do not mutate
-`KNOWN_SESSION_EVENT_TYPES`, copy the private compaction engine, encode
-checkpoint JSON in summary text, or treat `rawOutput` as plugin state.
+A review on 2026-11-03 found that the rest of a Gated adapter needs no such
+record. A plugin may replace `compaction-basic` with its own
+`CompactionEngine`. An `agent/pre-step` listener may return `reject`, which
+ends the turn before any request is sent. Continuing a turn after a failed
+summary is `compaction-basic`'s own policy, not the host's. What remains is a
+place for the structured checkpoint that survives reopen, and among the native
+events only `compaction/summary` offers one. That event is log-only: the model
+reads the replacement `user/message` that follows it, which carries the
+rendered note alone.
+
+By the maintainer's decision of 2026-11-03, U11 of the
+[v0.8.0 plan](v0.8.0-plan.md), a DSH writing preview stores the structured
+checkpoint in that event, says in its status output and README that it relies
+on a field DSH owns, and runs a reopen test on every listed DSH version. A
+declared backend field on `compaction/summary` is requested from DSH at the
+same time, and the adapter moves to it once DSH ships one. Do not mutate
+`KNOWN_SESSION_EVENT_TYPES`, copy the private compaction engine, or put
+checkpoint JSON in the replacement message the model reads. The preview's
+design, which puts the checkpoint in `rawOutput`, is in
+[DSH writing preview](dsh-writing.md). The default entry remains retrieval-only.
+
+Stage 1 adds `slice-dsh/compaction` as a separate entry. After installing the
+package, opt in with these profile patch rows:
+
+```yaml
+- id: compaction-basic
+  disabled: true
+- insert:
+    - id: slice-compaction
+      name: slice-dsh/compaction
+```
+
+`/compact` uses the session's routed model and reasoning setting, writes the
+native four-event transaction and validates the durable readback with JCS.
+`/compaction-status` shows the gate state and the reliance on DSH's `rawOutput`.
+A failed attempt blocks the next request; DSH discards that rejected input, so
+the notice asks the user to run `/compact` successfully and resend it. A failure
+after the clean end writes no further event: that process remains blocked, and
+a cold process confirms or rejects the checkpoint by reading the log again.
+
+There is no automatic compaction in stage 1. A session that outgrows its window
+fails at the provider until `/compact` is run. Seeded sessions, forks, logs with
+another engine's compactions and region compaction are refused. Removing the
+opt-in rows restores `compaction-basic`, which can open and compact a session
+Slice wrote. The package's bundle patch continues to insert only `slice-history`.
+
+The existing installation acceptance runner runs the native lifecycle probes
+and the writing regressions against the official DSH components it installs,
+then installs the built archive by name. On the newest DSH release in its matrix
+it runs P5 through two manual Slice compactions, a forced writer failure and
+blocked step, recovery, CLI reopen and original-history retrieval. It also
+checks the two-engine conflict and removal of the opt-in patch. These are
+loopback checks, not evidence of writer quality on a real provider.

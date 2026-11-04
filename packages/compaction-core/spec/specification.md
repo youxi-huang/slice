@@ -250,9 +250,12 @@ The checkpoint record also carries, outside `details`:
 
 An extended checkpoint (`contracts.ts` `PreviewCheckpoint`) may add
 observational **preparation metadata** — `preparation: {version: 1, path:
-"complete" | "prefix" | "notes" | "sync", candidateId?, callIds?, noteIds?,
-notesFallback?}` — linking the checkpoint to the prepared candidate and the
-journaled calls that produced it, and `userMessages`, the IDs of the user
+"complete" | "prefix" | "notes" | "segments" | "sync", candidateId?, callIds?,
+noteIds?, segmentIds?, notesFallback?, preparationFallback?,
+segmentsFallback?, segmentsWaitMs?}` — linking the checkpoint to the prepared candidate or the
+merged segments and the journaled calls that produced them, recording why
+work notes, preparation or segments did not serve it, and how long the boundary
+waited for a segment in flight; and `userMessages`, the IDs of the user
 messages a notes-path checkpoint renders verbatim. Neither field extends the
 checkpoint's source scope; checkpoints without them remain valid. An adapter
 for a host other than the reference host additionally identifies the host and
@@ -291,7 +294,70 @@ same commit checks without a format change (rule K11):
    prefix, oldest first (`notes.ts` `validateMemoryCheckpoints`).
 5. A future boundary that merges validated segments must produce a checkpoint
    satisfying rules 1–4 under the full commit checks; nothing in this format
-   changes for it.
+   changes for it. [Segments](#segments) states the chain such a boundary
+   merges.
+
+### Segments
+
+A segment (`segments.ts`) is a preparation candidate over a closed range of
+the branch. Beyond the candidate's snapshot it names the first record of its
+range, `coveredThrough` being the last, and the hash of the validated segments
+before it. Its note cites only records inside the range; `supersedes` may name
+earlier ones. A note that cites outside the range is refused with
+`CONTEXT_NOTE_SCOPE`.
+
+A chain starts at the record after the base checkpoint's `coveredThrough`, or
+at the branch's first record when there is no checkpoint. Each link starts at
+the record after the previous link's last and names the chain before it. The
+boundary merges the longest prefix of valid links. A link ends the chain when
+it is not contiguous, names another chain, no longer classifies as a valid
+candidate, or was written by a writer that missed a user message in its range;
+no link after it is merged out of order. A base checkpoint without a
+`coveredThrough` starts no chain.
+
+The core chooses each range (`segments.ts` `nextSegmentRange`). A range ends at
+the branch's last record, which must close a settled turn: an assistant
+message that stopped, with every tool call in the range answered. A range that
+cannot close defers and the chain does not advance. The first link of an
+interval waits until the context reaches half the trigger and then covers
+everything uncovered, so a session that never nears compaction pays for no
+segment. Each later link waits for `segmentRangeTokens` of new history, 15 % of
+the trigger between 8,192 and 32,000 tokens, measured as compacted sources are.
+These are starting values that 0.8.0's evaluation measures.
+
+The segment writer is the session writer (`writer.ts` `WriteMemoryOptions`
+`segment`): the session's request through the range's last record, closed by
+one instruction that names the range, attaches the current merged note as
+`previousNote` and asks for what the range adds or changes, citing only the
+range. A fixed writer writes no segment. Writers often restate the previous
+note, so before the range check the writer keeps a segment note to its range
+(`scope-diagnostics.ts` `withinSegmentRange`): a fact that cites only earlier
+records is dropped, since the merge carries the previous note; a fact that also
+cites the range keeps those sources alone; a plan with a step that rests only
+on earlier records is dropped whole, so the previous plan stands; `supersedes`
+stays as written. Nothing is added, and the note is validated again, so a
+segment left without a state fact of its own is still refused.
+
+The merge (`work-notes.ts` `mergeNotes`) adds each note's instructions and facts
+in order, drops earlier items whose sources a later item supersedes, and keeps
+the newest nonempty plan and the newest listed gaps; a segment lists gaps only
+when it names some. A carried instruction is retired only by a ruling: a later
+instruction that supersedes its source and cites a user message in the note's
+own range, since only the user changes a ruling. A work note has no
+instructions and so retires none. The merge refuses, and the synchronous
+writer compacts instead, when a superseded source supports more carried
+instructions than rulings replace (`instruction-superseded`), when it supports
+more earlier items in all than the note gives in their place
+(`ambiguous-supersede`), or when the result exceeds the note schema (`schema`).
+A merged note is committed under the full commit checks, as rule 5 requires.
+The reference adapter commits it for its prefix only when the originals that
+would stay verbatim after the chain hold at most `segmentRangeTokens` of the
+trigger; a longer tail is history the chain did not cover, and the synchronous
+writer compacts instead (`tail`).
+
+**Coverage invariant.** After every boundary, each original after the base
+checkpoint's coverage is covered by a committed checkpoint, by a merged
+segment, or is still in context verbatim, and never by none of them.
 
 ## The source hash, by its properties
 
@@ -659,9 +725,9 @@ than folded into zero.
 - **Phases** (`events.ts` `WriterCallRecord`): `generate` or `repair` —
   which step of one compaction a call served.
 - **Purposes** (`call-journal.ts` `CallPurpose`): `compaction` (the
-  synchronous writer at the boundary) or `preparation` (optional background
-  work). The separation is load-bearing: 0.8.0's interval caps and breaker
-  read it.
+  synchronous writer at the boundary), `preparation` (optional background
+  work) or `segment` (a segment's calls). The separation is load-bearing:
+  0.8.0's interval caps and breaker read it.
 
 The journal contract (`call-journal.ts` `CallJournal`): one append-only,
 content-free record per call — identity, purpose, interval, model, effort,
@@ -669,7 +735,12 @@ phase, outcome, elapsed time and usage; never request or response text. The
 start line is durable before the request is sent and the settlement follows,
 so after a crash a start without a settlement stays visible as unknown
 usage. Optional preparation never sends an unrecorded request and stops at 8
-calls per attempt (`PREPARATION_CALLS_PER_ATTEMPT`); a formal compaction
+calls per attempt (`PREPARATION_CALLS_PER_ATTEMPT`). Segments stop at 8 calls
+per checkpoint interval, repairs included (`SEGMENT_CALLS_PER_INTERVAL`),
+counted from the journal so a restart does not reset them, and at a spending
+cap (`segmentBudgetLeft`): the interval's segment calls may spend as many
+uncached tokens (input, cache writes and output) as the trigger holds, and a
+dispatched call with unknown usage spends all of it. A formal compaction
 proceeds if its record cannot be written, and the gap is shown in status. A
 journal summary (`CallSummary`) reports calls by purpose, unsettled calls,
 calls with unknown usage and calls with only partial usage, beside the sum.

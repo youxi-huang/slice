@@ -21,10 +21,35 @@ export interface PreviewSwitch {
 	error?: "invalid-config";
 }
 
-const settingsCache = new Map<
-	string,
-	PreviewSwitch & { notes: PreviewSwitch; reduction: PreviewSwitch; rendering: RenderingSwitch }
->();
+/** The thinking level segments are written at: the session's own, or a fixed level (U5). */
+export type SegmentEffort = "session" | "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+const SEGMENT_EFFORTS: readonly string[] = ["session", "off", "minimal", "low", "medium", "high", "xhigh", "max"];
+
+export interface SegmentsSwitch extends PreviewSwitch {
+	effort: SegmentEffort;
+}
+
+type PreparationSettings = PreviewSwitch & {
+	notes: PreviewSwitch;
+	reduction: PreviewSwitch;
+	rendering: RenderingSwitch;
+	segments: SegmentsSwitch;
+};
+
+const settingsCache = new Map<string, PreparationSettings>();
+
+function isSegmentEffort(value: unknown): value is SegmentEffort {
+	return typeof value === "string" && SEGMENT_EFFORTS.includes(value);
+}
+
+/** `previewSegments`: the switch, and `effort`, the session's level unless set; an unknown level turns segments off. */
+export function segmentsSwitch(section: unknown): SegmentsSwitch {
+	const base = previewSwitch(section);
+	const effort = isRecord(section) ? section.effort : undefined;
+	if (effort !== undefined && !isSegmentEffort(effort))
+		return { enabled: false, error: "invalid-config", effort: "session" };
+	return { ...base, effort: effort ?? "session" };
+}
 
 export function previewSwitch(section: unknown): PreviewSwitch {
 	if (section === undefined) return { enabled: false };
@@ -35,17 +60,15 @@ export function previewSwitch(section: unknown): PreviewSwitch {
 
 /**
  * `previewPreparation.enabled` (arm A), `previewWorkNotes.enabled` (arm B), `previewReduction.enabled`
- * (WP2) and `previewRendering` with its candidate names (WP3) in pi-context-memory.json, latched for the
- * process like the other settings. Keys from the earlier experiment (call, token and cost budgets) are
+ * (WP2), `previewRendering` with its candidate names (WP3) and 0.8.0's `previewSegments` with its effort in
+ * pi-context-memory.json, latched for the process like the other settings. Keys from the earlier experiment (call, token and cost budgets) are
  * ignored; an invalid value disables its switch without touching requests or the failure contract.
  */
-export function readPreparationSettings(
-	agentDir: string,
-): PreviewSwitch & { notes: PreviewSwitch; reduction: PreviewSwitch; rendering: RenderingSwitch } {
+export function readPreparationSettings(agentDir: string): PreparationSettings {
 	const path = join(agentDir, "pi-context-memory.json");
 	const cached = settingsCache.get(path);
 	if (cached) return cached;
-	let result: PreviewSwitch & { notes: PreviewSwitch; reduction: PreviewSwitch; rendering: RenderingSwitch };
+	let result: PreparationSettings;
 	try {
 		const value: unknown = JSON.parse(readBoundedFile(path, 64 * 1024, "preparation-config").toString("utf8"));
 		const record = isRecord(value) ? value : {};
@@ -54,6 +77,7 @@ export function readPreparationSettings(
 			notes: previewSwitch(record.previewWorkNotes),
 			reduction: previewSwitch(record.previewReduction),
 			rendering: renderingSwitch(record.previewRendering),
+			segments: segmentsSwitch(record.previewSegments),
 		};
 	} catch (error) {
 		const off: PreviewSwitch = missing(error) ? { enabled: false } : { enabled: false, error: "invalid-config" };
@@ -62,6 +86,7 @@ export function readPreparationSettings(
 			notes: off,
 			reduction: off,
 			rendering: { ...RENDERING_OFF, ...(off.error ? { error: off.error } : {}) },
+			segments: { ...off, effort: "session" },
 		};
 	}
 	settingsCache.set(path, result);
@@ -95,6 +120,7 @@ export class PreviewPreparation {
 	private disposed = false;
 	private state: "idle" | "failed" | "cancelled" = "idle";
 	private reason?: string;
+	private dropped = false;
 
 	constructor(options: { enabled: boolean; settingsError?: string; journal: CallJournal }) {
 		this.enabled = options.enabled && !options.settingsError;
@@ -190,13 +216,21 @@ export class PreviewPreparation {
 	take(
 		submission: PreparationSubmission,
 	): (Armed & { classification: Exclude<CandidateClassification, { status: "invalid" }> }) | undefined {
+		this.dropped = false;
 		if (!this.armed || this.disposed || !this.enabled) return undefined;
 		const classification = classifyPreparation(this.armed.candidate, submission);
 		if (classification.status === "invalid") {
 			this.armed = undefined;
+			this.dropped = true;
 			return undefined;
 		}
 		return { ...this.armed, classification };
+	}
+
+	/** Why the last `take` had nothing to give, for the checkpoint's record. */
+	missed(): "invalid" | "failed" | "cancelled" | "none" {
+		if (this.dropped) return "invalid";
+		return this.state === "idle" ? "none" : this.state;
 	}
 
 	/** A staged checkpoint owns its candidate until commit or explicit recovery. */

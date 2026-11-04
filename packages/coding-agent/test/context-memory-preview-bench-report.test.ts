@@ -248,6 +248,32 @@ describe("preview bench token-overhead report", () => {
 		expect(usageMissing).toEqual({ count: 1, phases: { repair: 1 }, purposes: { compaction: 1 } });
 	});
 
+	it("reads segment calls with their IDs for the replay report, and leaves the overhead columns unchanged", () => {
+		const usage = { input: 100, output: 10, cacheRead: 900, cacheWrite: 0 };
+		const journal = parseCallJournal(
+			journalText([
+				{ v: 1, call: "s1", purpose: "segment", interval: "none", step: "generate" },
+				{ v: 1, call: "s1", outcome: "success", dispatched: true, complete: true, ms: 9, usage },
+				{ v: 1, call: "w1", purpose: "compaction", interval: "none", step: "generate" },
+				{ v: 1, call: "w1", outcome: "success", dispatched: true, complete: true, ms: 9, usage },
+			]),
+		);
+		expect(journal.map((item) => [item.id, item.purpose, item.dispatched])).toEqual([
+			["s1", "segment", true],
+			["w1", "compaction", true],
+		]);
+		const ok = attempt({ ok: true, path: "segments", calls: [], journal, note: { bytes: 300, contextBytes: 3000 } });
+		const without = attempt({
+			ok: true,
+			path: "segments",
+			calls: [],
+			journal: journal.filter((item) => item.purpose !== "segment"),
+			note: { bytes: 300, contextBytes: 3000 },
+		});
+		// Segment calls are the replay report's to count: the overhead report reads compaction and preparation calls only.
+		expect(overheadReport({ attempts: [ok] })).toEqual(overheadReport({ attempts: [without] }));
+	});
+
 	it("charges page-backs and excerpts against the checkpoints' saving in one net column", () => {
 		const checkpoint = attempt({
 			ok: true,

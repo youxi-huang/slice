@@ -8,8 +8,8 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { inspectOfficialPi } from "./context-memory-preview-stock-install.mjs";
 
-// Bounded A/B comparison of the preview's compaction paths on official Pi: sync (both switches off), A
-// (previewPreparation) and B (previewWorkNotes). Every arm runs the same scripted conversation and settings
+// Bounded A/B comparison of the preview's compaction paths on official Pi: sync (every switch off), A
+// (previewPreparation), B (previewWorkNotes) and 0.8.0's segments (previewSegments). Every arm runs the same scripted conversation and settings
 // against a loopback provider, which never contacts a model service. By default a faithful script writes the
 // notes. With --bridge, the writer's requests and B's note decisions are written to files and the run waits for
 // an answer from outside, such as a model run by hand; nothing else changes. Prices and latency are synthetic.
@@ -20,7 +20,7 @@ function argument(name, fallback) {
 	const index = args.indexOf(name);
 	if (index >= 0 && args[index + 1] !== undefined) return args[index + 1];
 	if (fallback !== undefined) return fallback;
-	throw new Error(`Missing ${name}. Usage: node ${script} --package-dir <package> --stock-root <official Pi> --output-dir <dir> [--window 128000] [--latency-ms 0] [--arms sync,a,b] [--logs user|model] [--bridge <dir>]`);
+	throw new Error(`Missing ${name}. Usage: node ${script} --package-dir <package> --stock-root <official Pi> --output-dir <dir> [--window 128000] [--latency-ms 0] [--arms sync,a,b,segments] [--cycles 2] [--pace settled|immediate] [--logs user|model] [--bridge <dir>]`);
 }
 const packageDir = resolve(argument("--package-dir"));
 const stockRoot = resolve(argument("--stock-root"));
@@ -30,6 +30,10 @@ const WINDOW = Number(argument("--window", "128000"));
 const bridgeArgument = argument("--bridge", "");
 const bridge = bridgeArgument ? resolve(bridgeArgument) : "";
 const ARMS = argument("--arms", "sync,a,b").split(",");
+// Compactions per arm: each cycle is a ruling, a long log and a follow-up, then /compact.
+const CYCLES = Number(argument("--cycles", "2"));
+// settled waits for A's preparation before the next input, A's best case; immediate sends it at once, as a user does.
+const PACE = argument("--pace", "settled");
 const workerArm = argument("--arm", "");
 /** Provider requests one arm may make; the run stops beyond it. */
 const MAX_REQUESTS = 80;
@@ -37,7 +41,10 @@ const MAX_REQUESTS = 80;
 const BRIDGE_WAIT_MS = 900_000;
 if (!Number.isInteger(latencyMs) || latencyMs < 0 || latencyMs > 5000) throw new Error("--latency-ms must be an integer from 0 to 5000");
 if (!Number.isInteger(WINDOW) || WINDOW < 32_000 || WINDOW > 1_000_000) throw new Error("--window must be an integer from 32000 to 1000000");
-if (!ARMS.length || ARMS.some((arm) => !["sync", "a", "b"].includes(arm))) throw new Error("--arms takes sync, a and b");
+if (!ARMS.length || ARMS.some((arm) => !["sync", "a", "b", "segments"].includes(arm)))
+	throw new Error("--arms takes sync, a, b and segments");
+if (!Number.isInteger(CYCLES) || CYCLES < 1 || CYCLES > 8) throw new Error("--cycles must be an integer from 1 to 8");
+if (!["settled", "immediate"].includes(PACE)) throw new Error("--pace takes settled or immediate");
 
 const WORK_NOTE_GUIDELINE = "Call context_note after a decision";
 /** The note request of 0.5.3 and later, then that of v0.5.2 and earlier, which the quotation repair still carries. */
@@ -58,13 +65,17 @@ const RULES = "Use port 4317. Do not deploy this synthetic service. Keep the set
 const LOGS = argument("--logs", "user");
 if (!["user", "model"].includes(LOGS)) throw new Error("--logs takes user or model");
 const logNotes = (cycle) => [{ section: "state", marker: `build ${6 + cycle} green` }, ...(cycle === 1 ? [{ section: "files", marker: "config/service.json" }] : [])];
-const TURNS = [1, 2].map((cycle) => {
+// Cycle 1 rules port 4317 and records 4319 failing; each later cycle moves to a new port, skipping 4319.
+const port = (cycle) => (cycle === 1 ? 4317 : cycle === 2 ? 4318 : 4320 + cycle);
+const CURRENT_PORT = String(port(CYCLES));
+const TURNS = Array.from({ length: CYCLES }, (_, index) => {
+	const cycle = index + 1;
 	const follow =
 		cycle === 1
 			? { text: "Port 4319 failed: address in use. Stay on the agreed port.", notes: [{ section: "failedPaths", marker: "Port 4319 failed: address in use." }] }
 			: { text: "Continue checking.", notes: [] };
 	return [
-		{ text: cycle === 1 ? RULES : "Use port 4318 now; 4317 no longer applies.", notes: [] },
+		{ text: cycle === 1 ? RULES : `Use port ${port(cycle)} now; ${port(cycle - 1)} no longer applies.`, notes: [] },
 		LOGS === "user" ? { text: log(cycle), notes: logNotes(cycle) } : { text: "Run the local check and show its log.", reply: log(cycle), notes: [] },
 		LOGS === "user" ? follow : { ...follow, notes: [...logNotes(cycle), ...follow.notes] },
 	];
@@ -75,26 +86,34 @@ const FACTS = [
 	{ marker: "Set the retry limit to 7 and the request timeout to 2,500 ms.", kind: "instructions" },
 	{ marker: "config/service.json", kind: "files" },
 	{ marker: "Port 4319 failed: address in use.", kind: "failedPaths" },
-	{ marker: "build 7 green", kind: "state" },
-	{ marker: "Use port 4318 now", kind: "instructions" },
-	{ marker: "build 8 green", kind: "state" },
+	...TURNS.flatMap((_, index) => [
+		{ marker: `build ${7 + index} green`, kind: "state" },
+		...(index + 1 < CYCLES ? [{ marker: `Use port ${port(index + 2)} now`, kind: "instructions" }] : []),
+	]),
 ];
+const STALE_PORTS = TURNS.slice(0, -1).map((_, index) => String(port(index + 1)));
 // Recovery probes on what the model sees after a restart. The last two look for restatement errors: exact
-// numbers changed, or the overturned port stated as current.
+// numbers changed, or an overturned port stated as current.
 const PROBES = {
 	"no deployment": (payload) => /do not deploy|not (be )?deploy|deployment (is )?(not|un)authori[sz]ed|no deploy/i.test(payload),
 	"settings file": (payload) => payload.includes("config/service.json"),
 	"failed port": (payload) => /4319[^\n]{0,120}(fail|in use)|(fail|in use)[^\n]{0,120}4319/i.test(payload),
-	"build 7": (payload) => /build 7\b[^\n]{0,20}(green|pass)/i.test(payload),
-	"current port": (payload) => payload.includes("4318"),
-	"build 8": (payload) => /build 8\b[^\n]{0,20}(green|pass)/i.test(payload),
+	...Object.fromEntries(
+		TURNS.map((_, index) => [`build ${7 + index}`, (payload) => new RegExp(`build ${7 + index}\\b[^\\n]{0,20}(green|pass)`, "i").test(payload)]),
+	),
+	"current port": (payload) => payload.includes(CURRENT_PORT),
 	"exact numbers": (payload) => /retr(y|ies)[^\n]{0,60}\b7\b/i.test(payload) && /2,?500 ?ms|2\.5 ?s(econds)?\b/i.test(payload),
 	"no stale port": (_payload, note) =>
 		Object.values(note ?? {})
 			.flat()
 			.every((item) => {
 				const text = typeof item === "string" ? item : item.text;
-				return !text.includes("4317") || text.includes("4318") || (item.supersedes?.length ?? 0) > 0 || /no longer|replac|supersed|previous|earlier|former|instead|was /i.test(text);
+				return (
+					!STALE_PORTS.some((stale) => text.includes(stale)) ||
+					text.includes(CURRENT_PORT) ||
+					(item.supersedes?.length ?? 0) > 0 ||
+					/no longer|replac|supersed|previous|earlier|former|instead|was /i.test(text)
+				);
 			}),
 };
 
@@ -152,13 +171,35 @@ async function worker() {
 	let lastMainPayload = "";
 	let asked = 0;
 	const branchText = (marker) => manager.getBranch().filter((entry) => entry.type === "message" && JSON.stringify(entry.message.content ?? "").includes(marker));
-	/** A faithful writer: every fact whose marker it can see, cited to the original that contains it. */
+	/**
+	 * A faithful writer: every fact whose marker it can see, cited to the original that contains it. For a segment it
+	 * keeps only facts whose sources lie in the named range; `supersedes` may still name earlier entries.
+	 */
 	function writerNote(serialized) {
+		const segment = serialized.match(/Write a segment note for entries (\S+) through (\S+) only/);
+		if (segment) {
+			const branch = manager.getBranch();
+			const range = branch.slice(branch.findIndex((entry) => entry.id === segment[1]), branch.findIndex((entry) => entry.id === segment[2]) + 1);
+			const ids = new Set(range.map((entry) => entry.id));
+			const whole = fullNote(serialized);
+			const note = Object.fromEntries(Object.entries(whole).map(([section, items]) => [section, section === "gaps" ? [] : items.filter((item) => item.sources.every((id) => ids.has(id)))]));
+			if (!note.state.length) note.state.push({ text: "The local service check continues.", sources: [range.find((entry) => entry.type === "message" && entry.message.role === "user").id] });
+			return note;
+		}
+		return fullNote(serialized);
+	}
+	function fullNote(serialized) {
 		const note = { instructions: [], failedPaths: [], reasons: [], state: [], nextSteps: [], files: [], gaps: [] };
 		for (const fact of FACTS) {
 			if (!serialized.includes(fact.marker)) continue;
 			const source = branchText(fact.marker)[0];
 			if (source) note[fact.kind].push({ text: fact.marker, sources: [source.id], ...(fact.kind === "instructions" ? { quote: fact.marker } : {}) });
+		}
+		// A faithful writer also retires an overturned ruling: only the newest port it sees stays, naming those it replaces.
+		const ports = note.instructions.filter((item) => item.text.startsWith("Use port "));
+		if (ports.length > 1) {
+			note.instructions = note.instructions.filter((item) => !ports.includes(item) || item === ports.at(-1));
+			ports.at(-1).supersedes = ports.slice(0, -1).flatMap((item) => item.sources);
 		}
 		if (!note.state.length) note.state.push({ text: "The local service check continues.", sources: [manager.getBranch().find((entry) => entry.type === "message" && entry.message.role === "user").id] });
 		return note;
@@ -206,9 +247,11 @@ async function worker() {
 		const serialized = JSON.stringify(payload.messages ?? []);
 		const payloadTokens = tokens(JSON.stringify({ messages: payload.messages, tools: payload.tools }));
 		if (requests.length >= MAX_REQUESTS) return fail(response, "synthetic request budget exhausted");
+		const writing = WRITER_REQUESTS.some((marker) => serialized.includes(marker));
+		// Counted on arrival, so a request in flight when a compaction starts is not charged to that compaction.
+		requests.push({ kind: writing ? "writer" : "main", inputTokens: payloadTokens });
 		if (latencyMs) await new Promise((done) => setTimeout(done, latencyMs));
-		if (WRITER_REQUESTS.some((marker) => serialized.includes(marker))) {
-			requests.push({ kind: "writer", inputTokens: payloadTokens });
+		if (writing) {
 			if (!bridge) return respond(response, payload.model, payloadTokens, { text: JSON.stringify(writerNote(serialized)) });
 			const answer = await ask(
 				"writer",
@@ -219,7 +262,6 @@ async function worker() {
 			return text ? respond(response, payload.model, payloadTokens, { text }) : fail(response, "no bridged answer");
 		}
 		lastMainPayload = serialized;
-		requests.push({ kind: "main", inputTokens: payloadTokens });
 		// With B's guideline in its system prompt, the model may note what a turn established: one search for entry
 		// IDs, then the note. Without the guideline it writes no notes.
 		const guided = serialized.includes(WORK_NOTE_GUIDELINE);
@@ -274,7 +316,7 @@ async function worker() {
 		compat: { supportsDeveloperRole: false, supportsUsageInStreaming: true },
 	};
 	writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ packages: [packageDir], cacheWarming: "off", defaultTools: [], compaction: { enabled: false, keepRecentTokens: 0 } }));
-	writeFileSync(join(agentDir, "pi-context-memory.json"), JSON.stringify({ previewPreparation: { enabled: arm === "a" }, previewWorkNotes: { enabled: arm === "b" } }));
+	writeFileSync(join(agentDir, "pi-context-memory.json"), JSON.stringify({ previewPreparation: { enabled: arm === "a" }, previewWorkNotes: { enabled: arm === "b" }, previewSegments: { enabled: arm === "segments" } }));
 	let session;
 	async function open(sessionManager) {
 		session?.dispose();
@@ -297,17 +339,20 @@ async function worker() {
 			commandOutput = undefined;
 		}
 	}
-	// Optional preparation runs after the turn. The script lets it finish so every arm submits the same next turn.
-	// Pi starts it from agent_settled, just after the prompt returns, so A first waits a moment for it to begin.
+	// Optional preparation and segments run after the turn. The script lets them finish so every arm submits the same
+	// next turn. Pi starts them from agent_settled, just after the prompt returns, so A and segments first wait a moment
+	// for a run to begin; a segment starts only when its range closes, so most turns start none.
+	const busy = (current) => current.preparation?.state === "preparing" || current.segments?.state === "preparing";
 	const settle = async () => {
-		if (arm === "a") {
-			for (const until = Date.now() + (bridge ? 3_000 : 1_000); Date.now() < until && (await status()).preparation?.state !== "preparing"; )
+		if (PACE === "immediate") return;
+		if (arm === "a" || arm === "segments") {
+			for (const until = Date.now() + (bridge ? 3_000 : 1_000); Date.now() < until && !busy(await status()); )
 				await new Promise((done) => setTimeout(done, 50));
 		}
-		for (const deadline = Date.now() + (bridge ? BRIDGE_WAIT_MS : 5_000); Date.now() < deadline && (await status()).preparation?.state === "preparing"; )
+		for (const deadline = Date.now() + (bridge ? BRIDGE_WAIT_MS : 5_000); Date.now() < deadline && busy(await status()); )
 			await new Promise((done) => setTimeout(done, bridge ? 500 : 25));
 	};
-	const result = { arm, turnMs: 0, compactions: [], errors: [] };
+	const result = { arm, turnMs: 0, turnRequests: 0, compactions: [], errors: [] };
 	try {
 		mkdirSync(caseDir, { recursive: true });
 		await open(stock.SessionManager.create(caseDir, join(caseDir, "sessions")));
@@ -315,8 +360,10 @@ async function worker() {
 			for (const scripted of turns) {
 				turn = { notes: [...scripted.notes], reply: scripted.reply };
 				const started = performance.now();
+				const sent = requests.filter((r) => r.kind === "main").length;
 				await session.prompt(scripted.text);
 				result.turnMs += Math.round(performance.now() - started);
+				result.turnRequests += requests.filter((r) => r.kind === "main").length - sent;
 				await settle();
 			}
 			const before = requests.length;
@@ -344,6 +391,9 @@ async function worker() {
 				userMessagesCarried: checkpoint?.details?.userMessages?.length ?? 0,
 				noteFacts: checkpoint ? Object.values(checkpoint.details.note).reduce((sum, items) => sum + items.length, 0) : 0,
 				...(checkpoint?.details?.preparation?.notesFallback ? { notesFallback: checkpoint.details.preparation.notesFallback } : {}),
+				...(checkpoint?.details?.preparation?.preparationFallback ? { preparationFallback: checkpoint.details.preparation.preparationFallback } : {}),
+				...(checkpoint?.details?.preparation?.segmentsFallback ? { segmentsFallback: checkpoint.details.preparation.segmentsFallback } : {}),
+				...(checkpoint?.details?.preparation?.segmentIds ? { segmentsMerged: checkpoint.details.preparation.segmentIds.length } : {}),
 				state: after.state,
 				...(after.code ? { code: after.code } : {}),
 			});
@@ -369,7 +419,8 @@ async function worker() {
 		result.writer = { ...final.calls, usage: { ...final.calls.usage, cost: Number(final.calls.usage.cost.toFixed(6)) } };
 		result.workNotes = { saved: notes.length, refused: refused.length };
 		result.requests = requests.map((r) => `${r.kind}:${r.inputTokens}`);
-		result.discardedPreparationCalls = Math.max(0, (final.calls?.preparationCalls ?? 0) - usedCalls.size);
+		// Calls whose result no checkpoint used: A's and segments' calls are counted apart, and only one runs per arm.
+		result.discardedPreparationCalls = Math.max(0, (final.calls?.preparationCalls ?? 0) + (final.calls?.segmentCalls ?? 0) - usedCalls.size);
 		result.total = {
 			tokens: result.main.inputTokens + result.main.outputTokens + (final.calls?.usage?.totalTokens ?? 0),
 			cost: Number((result.main.cost + (final.calls?.usage?.cost ?? 0)).toFixed(6)),
@@ -380,6 +431,20 @@ async function worker() {
 			probes: Object.fromEntries(Object.entries(PROBES).map(([name, probe]) => [name, probe(lastMainPayload, latest?.details?.note)])),
 		};
 		result.latestNote = latest?.details?.note ?? null;
+		// Every boundary counts, covered and fallback alike; a covered one is any that spent no foreground writer call.
+		const pauses = result.compactions.map((c) => c.pauseMs ?? c.wallMs);
+		const covered = result.compactions.filter((c) => c.path !== "sync").map((c) => c.pauseMs ?? c.wallMs);
+		const causes = result.compactions.flatMap((c) => [c.preparationFallback, c.notesFallback, c.segmentsFallback].filter(Boolean));
+		result.pause = {
+			p50: percentile(pauses, 0.5),
+			p95: percentile(pauses, 0.95),
+			coveredP95: percentile(covered, 0.95),
+			covered: covered.length,
+			boundaries: pauses.length,
+			fallbacks: Object.fromEntries([...new Set(causes)].map((cause) => [cause, causes.filter((c) => c === cause).length])),
+		};
+		// Turn time beyond the simulated provider latency, per main request: the package's own cost on the request path.
+		result.turnOverheadMs = result.turnRequests ? Math.round((result.turnMs - latencyMs * result.turnRequests) / result.turnRequests) : null;
 	} catch (error) {
 		result.errors.push(String(error?.stack ?? error).slice(0, 800));
 	} finally {
@@ -392,6 +457,13 @@ async function worker() {
 }
 
 // The package's host imports must reach the Pi under test, so a copy outside any Node project is loaded.
+/** Nearest-rank percentile; null for no values. */
+function percentile(values, share) {
+	if (!values.length) return null;
+	const sorted = [...values].sort((a, b) => a - b);
+	return sorted[Math.min(sorted.length - 1, Math.ceil(share * sorted.length) - 1)];
+}
+
 function assertNoShadowingHost(directory) {
 	for (let current = directory; ; current = dirname(current)) {
 		for (const name of ["@earendil-works/pi-coding-agent", "@earendil-works/pi-ai", "typebox"]) {
@@ -414,7 +486,7 @@ async function parent() {
 		runnerSha256: createHash("sha256").update(readFileSync(script)).digest("hex"),
 		package: { build: build.build, sourceCommit: build.sourceCommit, sourceHash: build.sourceHash },
 		host: inspectOfficialPi(stockRoot, hostVersion),
-		settings: { cycles: TURNS.length, window: WINDOW, logLines: LOG_LINES, logs: LOGS, latencyMs, maxRequestsPerArm: MAX_REQUESTS, bridge: Boolean(bridge), syntheticPricePerMillion: { input: 3, output: 15 } },
+		settings: { cycles: TURNS.length, pace: PACE, window: WINDOW, logLines: LOG_LINES, logs: LOGS, latencyMs, maxRequestsPerArm: MAX_REQUESTS, bridge: Boolean(bridge), syntheticPricePerMillion: { input: 3, output: 15 } },
 		arms: [],
 	};
 	try {
@@ -423,7 +495,7 @@ async function parent() {
 			const agentDir = join(outputDir, "arms", arm, "agent");
 			rmSync(join(outputDir, "arms", arm), { recursive: true, force: true });
 			mkdirSync(agentDir, { recursive: true });
-			const child = spawn(process.execPath, [script, "--package-dir", candidate, "--stock-root", stockRoot, "--output-dir", outputDir, "--latency-ms", String(latencyMs), "--window", String(WINDOW), "--logs", LOGS, ...(bridge ? ["--bridge", bridge] : []), "--arm", arm], { cwd: outputDir, env: environment(agentDir), stdio: ["ignore", "ignore", "pipe"] });
+			const child = spawn(process.execPath, [script, "--package-dir", candidate, "--stock-root", stockRoot, "--output-dir", outputDir, "--latency-ms", String(latencyMs), "--window", String(WINDOW), "--cycles", String(CYCLES), "--pace", PACE, "--logs", LOGS, ...(bridge ? ["--bridge", bridge] : []), "--arm", arm], { cwd: outputDir, env: environment(agentDir), stdio: ["ignore", "ignore", "pipe"] });
 			let stderr = "";
 			child.stderr.on("data", (data) => {
 				stderr = (stderr + data).slice(-2000);
@@ -449,6 +521,9 @@ async function parent() {
 			r.turnMs,
 			c.map((x) => x.path + (x.error ? "!" : "")).join("/"),
 			c.map((x) => x.wallMs).join("/"),
+			`${r.pause?.p50 ?? "-"}/${r.pause?.p95 ?? "-"}`,
+			r.pause?.coveredP95 ?? "-",
+			Object.entries(r.pause?.fallbacks ?? {}).map(([cause, count]) => `${cause} ${count}`).join(", ") || "-",
 			c.map((x) => x.foregroundWriterCalls).join("/"),
 			c.map((x) => x.contextTokensAfter).join("/"),
 			r.main?.requests,
@@ -458,11 +533,12 @@ async function parent() {
 			r.arm === "b" ? `${c.filter((x) => x.notesFallback).length}/${c.length}${c.some((x) => x.notesFallback) ? ` (${c.flatMap((x) => (x.notesFallback ? [x.notesFallback] : [])).join(", ")})` : ""}` : "-",
 			r.discardedPreparationCalls,
 			r.total?.unknownWriterUsage,
+			r.turnOverheadMs ?? "-",
 			`${probes.filter(([, passed]) => passed).length}/${probes.length}${probes.some(([, passed]) => !passed) ? ` (failed: ${probes.filter(([, passed]) => !passed).map(([name]) => name).join(", ")})` : ""}`,
 			r.errors?.length ? "error" : "ok",
 		].join(" | ");
 	});
-	process.stdout.write(`arm | turn ms | paths | pause ms | fg writer calls | context after | main requests | writer calls | total tokens | synthetic cost | B fallbacks | discarded prep | unknown usage | probes | run\n${rows.join("\n")}\n`);
+	process.stdout.write(`arm | turn ms | paths | pause ms | pause p50/p95 | covered p95 | fallback causes | fg writer calls | context after | main requests | writer calls | total tokens | synthetic cost | B fallbacks | discarded optional calls | unknown usage | overhead ms/request | probes | run\n${rows.join("\n")}\n`);
 	if (report.arms.some((r) => r.errors?.length)) process.exitCode = 1;
 }
 

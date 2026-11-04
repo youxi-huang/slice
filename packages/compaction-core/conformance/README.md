@@ -1,12 +1,13 @@
 # Core conformance vectors
 
-`0.7-conformance.1` implements the vectors half of WP3 from
-[the specification](../spec/specification.md). Every record and sentence is
-invented. These vectors exercise the core directly. The Pi adapter path
-(`eval/preview/conformance-adapter.test.ts`) replays them through the fixture
-converter and the workspace host's session manager: 31 of the 34 agree by
-error class there, and the three zero-record vectors stay core-only, since the
-converter rightly rejects an empty records file.
+`0.8-conformance.1` adds WP1's segment contract to the vectors half of 0.7.0's
+WP3 from [the specification](../spec/specification.md). Every record and sentence
+is invented. These vectors exercise the core directly. The Pi adapter path
+(`eval/preview/conformance-adapter.test.ts`) replays `vectors.json` through the
+fixture converter and the workspace host's session manager: 31 of its 34 agree
+by error class there, and the three zero-record vectors stay core-only, since
+the converter rightly rejects an empty records file. `segments.json` stays
+core-only: no adapter uses segments yet.
 
 `manifest.json` maps each data filename to SHA-256 of its exact UTF-8 file bytes,
 including the final newline, like the preview fixture manifest. The test rejects
@@ -49,6 +50,47 @@ each envelope and its extra-key near miss, exact hard-limit/one-byte-over notes
 on both sides of every source-tier transition, protected repair loss, a complete/
 unpaired tool batch, a present/missing continuation rendering, and changed cited
 content under both source serializations. No vector combines independent faults.
+
+Each object in `segments.json` also has a unique `id`, `stage` and ordered
+`records`. Its 26 vectors pin the settled 0.8.0 contract with three stages:
+
+- `segment`: `link` names `firstId`, `lastId` and its `note`.
+  `freezeSegmentInput` freezes its input and `finalizeSegment` checks its note.
+  `expected` is the same commit or project-code refusal as above. A citation
+  outside the range refuses even when it is readable in the dispatch prefix;
+  `supersedes` may name an earlier record.
+- `segment-chain`: `links` are frozen and finalized in order, then
+  `classifyChain` checks them at the boundary. `expected.links` is the number
+  of valid links; `coveredThrough` is absent when none is valid, and `stop`
+  is either the first rejected link's zero-based `{index, reason}` or absent.
+  The vectors cover every `ChainStop`, retention of the prefix before a fault,
+  a chain starting after a base checkpoint's coverage (including the checkpoint
+  record when it is next), and a last link written before later turns arrived.
+- `segment-merge`: optional `previous` is the previous note. Each link must
+  finalize and the whole chain must classify before `mergeChain` merges it.
+  `expected` is `{"note": ...}` or `{"refusal": ...}` with a `MergeRefusal`.
+  The vectors cover all three refusals, carried and added instructions, an
+  unambiguous correction, a ruling that a later user message replaces and one
+  that only an assistant record would retire, the newest nonempty plan and the
+  newest nonempty gaps; empty segment gaps keep earlier ones. The schema
+  refusal adds one fact to a valid previous note with 40 state facts. Neither
+  input is invalid alone.
+
+Each link is dispatched on the vector's `records` through its own `lastId`.
+Its writer has seen every user record through that ID, and its chain hash is
+`chainHash` of the links before it. Only the fault vectors override
+`processedUserEntryIds` or `chainHash`. Dispatch uses `synthetic-session`,
+epoch 1, the fixed `synthetic/segment` writer at `low`, and
+`selectNoteBudget({}, 64_000, 100)`; the remaining synthetic writer identity
+and provenance fields are in `runner.ts`. No note or expected result is generated.
+
+The chain and merge stages submit against the full vector's `records` with the
+same session, epoch, writer and budget by default. Optional `boundary.records`
+replaces that branch; `session`, `epoch` and `customInstructions` override
+those submission fields, while `writer` and `noteBudget` override only their
+listed fields. The budget vector lowers the boundary allowance to 500 tokens
+for a note that passed its frozen allowance. Each fault is isolated from the
+others, and no error message text is compared.
 
 `src/canonical.ts` implements RFC 8785 over JSON values. The normalized record
 contains every structural field from `records.ts`; host-only record/message keys
