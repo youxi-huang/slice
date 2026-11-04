@@ -1649,10 +1649,13 @@ export class PreviewMemoryController {
 						segmentsFallback === "cut" ||
 						segmentsFallback === "tail"
 					) {
-						const waiting = performance.now();
-						const settled = await segments.settle(segments.waitMs, event.signal);
-						segmentsWaitMs = Math.round(performance.now() - waiting);
-						if (settled) segmentsFallback = assemble();
+						if (segments.skipWait(segments.waitMs)) segmentsFallback = "in-flight";
+						else {
+							const waiting = performance.now();
+							const settled = await segments.settle(segments.waitMs, event.signal);
+							segmentsWaitMs = Math.round(performance.now() - waiting);
+							if (settled) segmentsFallback = assemble();
+						}
 					}
 					if (!segmentsFallback) path = "segments";
 				}
@@ -1717,6 +1720,7 @@ export class PreviewMemoryController {
 					writerCallDetails: [],
 				});
 			} else {
+				const hooks = this.journal?.hooks(attempt.sessionId, "compaction", attempt.lastCheckpointId ?? "none");
 				written = await writeMemory({
 					config: this.config,
 					registry: ctx.modelRegistry,
@@ -1731,7 +1735,7 @@ export class PreviewMemoryController {
 					baseNoteTokens: policy.baseTokens,
 					signal: event.signal,
 					customInstructions: event.customInstructions,
-					callHooks: this.journal?.hooks(attempt.sessionId, "compaction", attempt.lastCheckpointId ?? "none"),
+					callHooks: hooks && this.segments ? this.segments.observeCalls(attempt.sessionId, hooks) : hooks,
 					onProgress: (progress) => {
 						this.lastProgress.set(attempt.sessionId, progress);
 					},

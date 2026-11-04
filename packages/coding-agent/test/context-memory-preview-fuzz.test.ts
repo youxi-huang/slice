@@ -337,7 +337,7 @@ class Harness {
 			coalesceMs: 0,
 			enabled: true,
 			journal: this.journal,
-			waitMs: 30,
+			waitMs: 3,
 			deadlineMs: 60,
 		});
 		this.controller = new PreviewMemoryController({
@@ -416,7 +416,8 @@ class Harness {
 		if (outcome === "refusal")
 			note.state.push({ text: "Synthetic fabricated fact.", sources: [records[0].id], quote: "Never said here." });
 		const body = JSON.stringify(note);
-		queueMicrotask(() =>
+		const schedule = this.random() < 0.3 ? (finish: () => void) => setTimeout(finish, 8) : queueMicrotask;
+		schedule(() =>
 			done(
 				reply(outcome === "length" ? "length" : "stop", [
 					{ type: "text", text: outcome === "length" ? body.slice(0, body.length >> 1) : body },
@@ -524,7 +525,6 @@ class Harness {
 		// Pi finds nothing to compact without messages after the latest checkpoint and runs no hook.
 		if (!before.slice(base ? before.indexOf(base) + 1 : 0).some((entry) => entry.type === "message")) return;
 		if (reason === "threshold" && !this.controller.thresholdReady(this.ctx)) return;
-		const waited = this.segments.status().state === "preparing";
 		const abort = new AbortController();
 		this.compacting = abort;
 		const event = {
@@ -575,8 +575,10 @@ class Harness {
 		this.note(`path ${preparation?.path ?? "sync"}`);
 		this.note(`${origin} compaction`);
 		if (preparation?.segmentsFallback) this.note(`fallback ${preparation.segmentsFallback}`);
+		if (preparation?.segmentsFallback === "in-flight" && preparation.segmentsWaitMs === undefined)
+			this.note("skipped segment wait");
 		if (preparation?.path === "segments") {
-			if (waited) this.note("merged after waiting for a segment");
+			if (preparation.segmentsWaitMs !== undefined) this.note("merged after waiting for a segment");
 			if (value.details?.note.instructions.some((item) => item.supersedes?.length))
 				this.note("ruling replaced by merge");
 		}
@@ -825,6 +827,7 @@ describe("segments lifecycle fuzz (0.8.0 WP4)", () => {
 			"compaction failed",
 			"ruling replaced by merge",
 			"merged after waiting for a segment",
+			"skipped segment wait",
 			"fallback custom-focus",
 			"fallback tail",
 			"hang:segment",

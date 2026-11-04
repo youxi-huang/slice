@@ -3850,6 +3850,42 @@ describe("preview segments at settled turns (0.8.0 WP2)", () => {
 		});
 	});
 
+	it.each([
+		{ age: 1_000, skip: true },
+		{ age: 14_000, skip: false },
+	])("uses the last completed foreground call for U8 at $age ms (skip=$skip)", async ({ age, skip }) => {
+		let clock = 0;
+		vi.spyOn(performance, "now").mockImplementation(() => clock);
+		hold = true;
+		const initial = controller.compact(event(), ctx);
+		await vi.waitFor(() => expect(requests).toHaveLength(1));
+		clock = 28_000;
+		held?.release();
+		commit(await initial);
+		turn(2, long("The synthetic build is green."));
+		outputs.push(fact(2, "The synthetic build is green."));
+		controller.segment(ctx);
+		await vi.waitFor(() => expect(requests).toHaveLength(2));
+		clock += age;
+		expect(segments.skipWait(segments.waitMs)).toBe(skip);
+		hold = false;
+		const pending = controller.compact(event(), ctx);
+		if (!skip) {
+			clock += 28_000 - age;
+			held?.release();
+		}
+		const value = await pending;
+		if (skip) {
+			expect(value.details?.preparation).toMatchObject({ path: "sync", segmentsFallback: "in-flight" });
+			expect(value.details?.preparation?.segmentsWaitMs).toBeUndefined();
+			expect(held?.signal?.aborted).toBe(false);
+			held?.release();
+		} else {
+			expect(value.details?.preparation?.path).toBe("segments");
+			expect(value.details?.preparation?.segmentsWaitMs).toBe(14_000);
+		}
+	});
+
 	it("waits for the segment in flight that the boundary needs, and never past U8's bound", async () => {
 		turn(2, long("The synthetic build is green."));
 		hold = true;

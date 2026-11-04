@@ -97,6 +97,7 @@ export class PreviewSegments {
 	readonly effort: SegmentEffort;
 	private readonly deadlineMs: number;
 	private readonly coalesceMs: number;
+	private lastCallMs?: number;
 	private readonly settingsError?: string;
 	private readonly journal: CallJournal;
 	private sessionId?: string;
@@ -108,6 +109,7 @@ export class PreviewSegments {
 		input: SegmentSnapshot;
 		coalesce: boolean;
 		dispatched: boolean;
+		dispatchedAt?: number;
 	};
 	private streak?: { kind: SegmentFailure; count: number };
 	private results = noResults();
@@ -148,7 +150,26 @@ export class PreviewSegments {
 		this.streak = undefined;
 		this.broken = undefined;
 		this.results = noResults();
+		this.lastCallMs = undefined;
 		this.sessionId = sessionId;
+	}
+
+	/** U8 learns completed calls in this session, including the foreground writer, without reading persisted timing. */
+	observeCalls(sessionId: string, hooks: WriterCallHooks): WriterCallHooks {
+		this.activate(sessionId);
+		return {
+			beforeDispatch: hooks.beforeDispatch,
+			afterDispatch: (result) => {
+				if (this.sessionId === sessionId && result.dispatched && result.outcome !== "cancelled")
+					this.lastCallMs = result.elapsedMs;
+				return hooks.afterDispatch(result);
+			},
+		};
+	}
+
+	skipWait(ms: number): boolean {
+		const start = this.running?.dispatchedAt;
+		return start !== undefined && this.lastCallMs !== undefined && this.lastCallMs - (performance.now() - start) > ms;
 	}
 
 	/** Keeps the chain's longest valid prefix and cancels a run whose input no longer matches the session. */
@@ -196,6 +217,7 @@ export class PreviewSegments {
 			input,
 			coalesce: job.coalesce === true,
 			dispatched: false,
+			dispatchedAt: undefined as number | undefined,
 		};
 		this.running = task;
 		let late = false;
@@ -204,16 +226,23 @@ export class PreviewSegments {
 			abort.abort();
 		}, this.deadlineMs);
 		timer.unref();
-		const journal = this.journal.hooks(input.preparation.sessionId, "segment", interval);
+		const journal = this.observeCalls(
+			input.preparation.sessionId,
+			this.journal.hooks(input.preparation.sessionId, "segment", interval),
+		);
 		const callIds: string[] = [];
 		const hooks: WriterCallHooks = {
 			beforeDispatch: async (call) => {
 				task.dispatched = true;
 				const id = await journal.beforeDispatch(call);
+				task.dispatchedAt = performance.now();
 				callIds.push(id);
 				return id;
 			},
-			afterDispatch: journal.afterDispatch,
+			afterDispatch: (result) => {
+				task.dispatchedAt = undefined;
+				return journal.afterDispatch(result);
+			},
 		};
 		const current = () =>
 			!this.disposed && input.preparation.epoch === this.epoch && this.sessionId === input.preparation.sessionId;

@@ -324,11 +324,7 @@ carried context reaches it first, and covers everything uncovered. Each later
 link waits for `segmentRangeTokens` of new history, 15 % of the trigger between
 8,192 and 32,000 tokens, measured as compacted sources are. Earlier starts can
 pay for segments even when a session never approaches its trigger.
-These are starting values that 0.8.0's evaluation measures. The preview coalesces
-an interval’s first link for one second before dispatch. A newer complete
-range replaces that snapshot while it is still queued, restarting that delay.
-A dispatched request is not cancelled for fresher history: its unknown usage
-would stop further starts under U9.
+These are starting values that 0.8.0's evaluation measures.
 
 The segment writer is the session writer (`writer.ts` `WriteMemoryOptions`
 `segment`): the session's request through the range's last record, closed by
@@ -359,6 +355,15 @@ The reference adapter commits it for its prefix only when the originals that
 would stay verbatim after the chain hold at most `segmentRangeTokens` of the
 trigger; a longer tail is history the chain did not cover, and the synchronous
 writer compacts instead (`tail`).
+
+At a boundary that needs more coverage, U8 allows a wait of at most 15 seconds
+for the active segment call. The most recent completed writer or segment call
+in the current session supplies its duration estimate. Subtract the active
+call's time since dispatch; wait only if the estimate fits the remaining wait.
+With no completed call, retain the existing wait. A skipped wait falls back as
+`in-flight` and records no `segmentsWaitMs`. The estimate remains in memory
+across checkpoints and is never persisted or reconstructed from a journal.
+Skipping a wait does not abort the segment or relax any commit check.
 
 **Coverage invariant.** After every boundary, each original after the base
 checkpoint's coverage is covered by a committed checkpoint, by a merged
