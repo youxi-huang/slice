@@ -17,7 +17,7 @@ Changes under **Unreleased** are not included in an existing release tag or its 
 
 ### Changed
 
-- Experimental segments can start after one range of new history, before half the trigger, and close between complete tool batches inside a long run. A covered batch can leave context while later batches stay verbatim, under the existing tail and fit bounds. These scheduling proposals remain off by default pending the maintainer's decision and a new provider comparison.
+- Experimental segments can start after one range of new history, before half the trigger, and close between complete tool batches inside a long run. A covered batch can leave context while later batches stay verbatim, under the existing tail and fit bounds. Scheduling uses the read-only start of the next model turn, preserving cache-warming state on older Pi hosts. These scheduling proposals remain off by default pending the maintainer's decision and a new provider comparison.
 
 ### Fixed
 
