@@ -21,11 +21,13 @@ function scratch(t) {
 
 const settingsFile = (agentDir) => join(agentDir, "pi-context-memory.json");
 
-test("loopback writer latency covers Luna's measured range and refuses provider runs before dispatch", () => {
-	for (const ms of [0, 13_000, 28_000, 52_000, 133_000, 180_000]) assert.equal(loopbackLatencyMs(String(ms), "loopback"), ms);
-	for (const value of ["-1", "0.5", "Infinity", "NaN", "180001"]) assert.throws(() => loopbackLatencyMs(value, "loopback"), /--latency-ms takes/);
-	assert.throws(() => loopbackLatencyMs("13000", "openai"), /needs --provider loopback/);
-	assert.equal(loopbackLatencyMs("0", "openai"), 0);
+test("loopback writer and task latency share bounds and reject provider runs before dispatch", () => {
+	for (const flag of ["--latency-ms", "--turn-latency-ms"]) {
+		for (const ms of [0, 2_000, 5_000, 10_000, 13_000, 28_000, 52_000, 133_000, 180_000]) assert.equal(loopbackLatencyMs(String(ms), "loopback", flag), ms);
+		for (const value of ["-1", "0.5", "Infinity", "NaN", "180001"]) assert.throws(() => loopbackLatencyMs(value, "loopback", flag), { message: `${flag} takes an integer from 0 to 180000` });
+		assert.throws(() => loopbackLatencyMs("2000", "openai", flag), { message: `${flag} needs --provider loopback` });
+		assert.equal(loopbackLatencyMs("0", "openai", flag), 0);
+	}
 });
 
 test("a unit's pi-context-memory.json carries each named switch in the shape the preview reads", (t) => {
@@ -151,6 +153,8 @@ test("--provider openai is a provider run on the official API, and the long-rout
 	// Each is refused before the package, the host or the run directory is read, so no request can follow.
 	for (const [flags, message] of [
 		[["--mode", "probes", "--provider", "openai", "--latency-ms", "13000"], /--latency-ms needs --provider loopback/],
+		[["--mode", "probes", "--provider", "openai", "--turn-latency-ms", "2000"], /--turn-latency-ms needs --provider loopback/],
+		[["--mode", "probes", "--turn-latency-ms", "180001"], /--turn-latency-ms takes an integer/],
 		[["--mode", "probes", "--latency-ms", "180001"], /--latency-ms takes an integer/],
 		[["--mode", "smoke", "--provider", "openai"], /Missing --max-requests/],
 		[["--mode", "smoke", "--provider", "openai", "--max-requests", "1", "--max-minutes", "1", "--max-cost-usd", "0"], /--max-costUsd must be positive for a provider run/],
