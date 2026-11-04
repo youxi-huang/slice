@@ -370,8 +370,8 @@ evidence in bounded chunks. The choice is made before the first writer request,
 never after a failure, so a writer that fails still blocks the session. Each
 chunk carries the note so far with the original IDs and offsets, and all chunks
 share the frozen note budget, the checks and the one repair. The price is more
-calls and no prefix cache: on GPT-6 Luna a chunked compaction took 143 s where
-a handover that fits took about 20 s. A larger `compaction.reserveTokens` in
+calls and no prefix cache: on GPT-6 Luna a chunked compaction took 143 and 155 s
+where a handover that fits took about 20 s. A larger `compaction.reserveTokens` in
 Pi's settings makes it rarer. Segment requests and the tail a segments
 checkpoint keeps are unchanged.
 

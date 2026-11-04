@@ -10,7 +10,8 @@ carried since `1bf62be`, and D's gate holds for every variant. The provider repl
 and on the 200k route a boundary segments did not serve left the session writer no room: the chain stopped with
 `CONTEXT_WRITER_CAPACITY`. The cause is the reserve, not segments. Merged from `codex/segments-p5-capacity`, the
 writer now reads the evidence in bounded chunks when no handover fits. Rerun for US$0.46, every chain completed, but
-the chunked compaction took 143 s after one refused attempt. The final checks pass on the final source.
+the chunked compaction took 143 s after one refused attempt. A small recovery check on Luna, for US$0.62, found no
+wrong answer: both arms passed 47 of 49 of P5's probes. The final checks pass on the final source.
 
 ### Cache semantics and recorded provider evidence
 
@@ -356,6 +357,33 @@ request's input, and a manual retry was refused as `CONTEXT_NOTE_SCOPE`. Neither
   merge nor the segments, so the difference comes from what Luna wrote in each run.
 - **The controls** paused 17.5 to 26.7 s per compaction, every writer reading from the cache: 60.4 s in all on 200k
   (51.4 s before) and 49.7 s on 272k (37.5 s before).
+
+### Recovery on Luna with V2: a small check
+
+On 2026-11-04 the maintainer chose to ship 0.8.0 with segments off by default and asked first for a small recovery
+check on Luna, within US$5: the rerun's four chains with P5's probes, each answered on its own copy of the chain at
+its checkpoint with only `context_history` active (`--probe-conditions history --chain-attempts 4 --unit-minutes
+30`), each chain at most 250 requests, 45 minutes, US$1.20 and 270,000 input tokens per request. They used 614
+requests, 80.2 minutes and US$0.62, with no 4xx and no rate-limit error. The final checks ran on the same machine
+during the first chain, so its pauses are not timing evidence. Raw metrics: `luna-p5/luna-probes-*` on
+`claude/confident-thompson-3k0e8p` at `2e15513`.
+
+| Route | Segments | Boundaries | Paths | Total pause (s) | Probes passed (wrong, blocked, invalid) | Superseded values | Requests | Cost (US$) |
+| --- | --- | --- | --- | ---: | --- | --- | ---: | ---: |
+| 200k | on | 3/3 | segments 1, sync 2 | 178.129 | 28 of 30 (0, 0, 2) | 3 of 3 | 185 | 0.2527 |
+| 200k | off | 3/3 | sync 3 | 58.729 | 29 of 30 (0, 0, 1) | 3 of 3 | 169 | 0.1198 |
+| 272k | on | 2/2 | sync 2 | 40.782 | 19 of 19 (0, 0, 0) | 2 of 2 | 137 | 0.1305 |
+| 272k | off | 2/2 | sync 2 | 52.095 | 18 of 19 (0, 0, 1) | 2 of 2 | 123 | 0.1139 |
+
+**The gate's recovery criterion holds on this sample.** Both arms passed 47 of 49 probes with no wrong answer, no
+blocked probe and no fabrication, and every superseded value and every answer whose source crossed a checkpoint was
+right. Segments answered 43 from the records and 4 as correct unknowns, the controls 42 and 5; the misses are
+replies without a valid answer object. WP5's rerun found no wrong answer either. One chain per cell cannot show a
+difference of a probe or two.
+
+**The chunked path committed at the first attempt this time**, at Pi's own trigger on the 200k route again: seven
+chunks in 154.7 s, 18.1 to 26.7 s per call, none from the cache. Over the two runs it has committed twice and been
+refused once. Segments served one boundary of five; the others went to the writer after `ambiguous-supersede`.
 
 ### Final checks
 
