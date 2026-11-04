@@ -2,11 +2,13 @@
 // transport: the core's sequencing runs here with no host at all. The preview's writer tests keep
 // running against the Pi transport untouched; this file imports nothing from Pi.
 import { describe, expect, it } from "vitest";
-import type { MemoryNote } from "../src/notes.ts";
+import { textTokens } from "../src/config.ts";
+import { type MemoryNote, sourceText } from "../src/notes.ts";
 import type { SessionRecord } from "../src/records.ts";
 import { withinSegmentRange, withoutOutOfScope } from "../src/scope-diagnostics.ts";
 import {
 	quotableOriginals,
+	sessionHandoverTokens,
 	sumMemoryUsage,
 	TOOL_CALL_DECLINED,
 	type WriteMemoryOptions,
@@ -65,7 +67,9 @@ interface Sent {
 
 function scripted(
 	responses: Scripted[],
-	facts: Partial<Pick<WriterTransport<Sent, Scripted>, "role" | "prefixTokens" | "effort">> = {},
+	facts: Partial<
+		Pick<WriterTransport<Sent, Scripted>, "role" | "prefixTokens" | "effort" | "contextWindow" | "maxOutputTokens">
+	> = {},
 ) {
 	const sent: Sent[] = [];
 	let opened = 0;
@@ -75,8 +79,8 @@ function scripted(
 			model: "test/writer",
 			effort: facts.effort ?? "medium",
 			role: facts.role ?? "fixed",
-			contextWindow: 128_000,
-			maxOutputTokens: 8192,
+			contextWindow: facts.contextWindow ?? 128_000,
+			maxOutputTokens: facts.maxOutputTokens ?? 8192,
 			...(facts.prefixTokens ? { prefixTokens: facts.prefixTokens } : {}),
 			request: (request) => ({ request, declined: 0 }),
 			declineToolCalls: (request) => ({ ...request, declined: request.declined + 1 }),
@@ -154,6 +158,84 @@ describe("compaction core: writer contract", () => {
 
 		const twice = scripted([toolCall(), toolCall()], { role: "session", prefixTokens: () => 100 });
 		await expect(writeMemory(options(), twice.open)).rejects.toThrow("CONTEXT_WRITER_FAILED: toolUse");
+	});
+
+	it("keeps a handover that fits, including exactly at its minimum headroom", async () => {
+		const opts = options();
+		const needed = sessionHandoverTokens({ ...opts, maxOutputTokens: 8192 });
+		const transport = scripted([answer(note())], { role: "session", prefixTokens: () => 128_000 - needed });
+		const result = await writeMemory(opts, transport.open);
+		expect(transport.sent.map(({ request }) => request.kind)).toEqual(["handover"]);
+		expect(result.chunkCount).toBe(1);
+	});
+
+	it("uses the same session writer for bounded, lossless evidence chunks only when the handover cannot fit", async () => {
+		const sources = [user("new-1", "Synthetic evidence. ".repeat(16_000)), user("new-2", "界🙂 ".repeat(12_000))];
+		const opts = options({ previous: note(), branch: [...branch, ...sources], uncovered: sources, noteTokens: 5000 });
+		const transport = scripted(
+			Array.from({ length: 40 }, () => answer(note())),
+			{
+				role: "session",
+				prefixTokens: () => 232_353,
+				contextWindow: 240_000,
+				maxOutputTokens: 32_000,
+			},
+		);
+		const reserved: string[] = [];
+		const settled: string[] = [];
+		opts.callHooks = {
+			beforeDispatch: (call) => {
+				reserved.push(call.model);
+				return `call-${reserved.length}`;
+			},
+			afterDispatch: (call) => {
+				settled.push(call.callId);
+			},
+		};
+		const result = await writeMemory(opts, transport.open);
+		expect(transport.opened()).toBe(1);
+		expect(result).toMatchObject({
+			writerModel: "test/writer",
+			writerEffort: "medium",
+			chunkCount: transport.sent.length,
+		});
+		expect(transport.sent.length).toBeGreaterThan(1);
+		expect(reserved).toEqual(Array(transport.sent.length).fill("test/writer"));
+		expect(settled).toHaveLength(reserved.length);
+		const recovered = new Map(sources.map((entry) => [entry.id, ""]));
+		for (const { request } of transport.sent) {
+			if (request.kind !== "chunk") throw new Error("Expected bounded evidence");
+			expect(request.reasoning).toBe("medium");
+			expect(request.maxTokens).toBe(10_000);
+			expect(textTokens(request.systemPrompt) + textTokens(request.prompt) + request.maxTokens).toBeLessThanOrEqual(
+				240_000,
+			);
+			const payload = JSON.parse(request.prompt) as {
+				previousNote: MemoryNote;
+				newSources: { entryId: string; offset: number; text: string }[];
+			};
+			expect(payload.previousNote).toEqual(note());
+			for (const part of payload.newSources) {
+				expect(part.offset).toBe(recovered.get(part.entryId)!.length);
+				recovered.set(part.entryId, recovered.get(part.entryId)! + part.text);
+			}
+		}
+		for (const source of sources) expect(recovered.get(source.id)).toBe(sourceText(source));
+	});
+
+	it("keeps segment capacity refusals and never changes path after a dispatched writer fails", async () => {
+		const segment = scripted([], { role: "session", prefixTokens: () => 128_000 });
+		await expect(writeMemory(options({ segment: { firstId: "u1", lastId: "u2" } }), segment.open)).rejects.toThrow(
+			"CONTEXT_WRITER_CAPACITY",
+		);
+		expect(segment.sent).toHaveLength(0);
+		const failing = scripted([{ ...answer(note()), stopReason: "error", errorMessage: "Synthetic refusal" }], {
+			role: "session",
+			prefixTokens: () => 128_000,
+		});
+		await expect(writeMemory(options(), failing.open)).rejects.toThrow("CONTEXT_WRITER_FAILED");
+		expect(failing.opened()).toBe(1);
+		expect(failing.sent.map(({ request }) => request.kind)).toEqual(["chunk"]);
 	});
 
 	it("needs the session prefix before any request", async () => {

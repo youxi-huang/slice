@@ -546,7 +546,14 @@ transport work); there must
 be uncovered original evidence, else `CONTEXT_NO_NEW_SOURCE` (`writeMemory`);
 the request, its evidence and its output reservation must fit the writer's
 window, else `CONTEXT_WRITER_CAPACITY` (`writeMemory`); budget arguments must
-be valid integer counts, else `CONTEXT_CONFIG`. The cut that selects what
+be valid integer counts, else `CONTEXT_CONFIG`. When a session handover cannot
+fit even its smallest instruction, a compaction uses bounded original-evidence
+chunks through the same already selected transport, model and effort. This is
+decided before dispatch, never in response to a writer failure. The frozen note
+budget, validation, single repair allowance and per-call accounting still apply.
+Every source part retains its original ID and offset. Optional segment calls
+keep their existing capacity refusal; segment scheduling and retained tails do
+not change. The cut that selects what
 leaves context must land on a turn start that follows the previous
 checkpoint, else `CONTEXT_NO_CUT` (`cuts.ts` `chooseCut`); a prefix
 commit uses the latest projected user-message turn start inside the covered

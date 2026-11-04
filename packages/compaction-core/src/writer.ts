@@ -888,7 +888,7 @@ export async function writeMemory<TRequest, TResponse extends WriterResponse>(
 	const result =
 		transport.role === "session"
 			? await writeWithSession(transport, options, complete, writerEffort, accept, declineToolCall)
-			: await writeWithFixedWriter(transport, options, complete, writerEffort, accept);
+			: await writeInChunks(transport, options, complete, writerEffort, accept);
 	if (options.activeRequests?.length && !result.note.nextSteps.some((step) => step.text.trim().length > 0))
 		throw new Error(
 			"CONTEXT_CONTINUATION_MISSING: an unfinished turn requires an explicit next step or final reporting step",
@@ -901,7 +901,7 @@ function continuationInstruction(options: WriteMemoryOptions): string {
 	return `This is an in-task handover after a completed tool batch, not task completion. Preserve progress against the active requests below. nextSteps must include at least one concrete remaining action, including reporting the result if tool work is already complete, and cite the active request it continues. Do not ask the user to restate an available request. These host-selected originals are also valid citation sources:\n${JSON.stringify(options.activeRequests.map((entry) => ({ entryId: entry.id, text: sourceText(entry) })))}`;
 }
 
-async function writeWithFixedWriter<TRequest, TResponse extends WriterResponse>(
+async function writeInChunks<TRequest, TResponse extends WriterResponse>(
 	transport: WriterTransport<TRequest, TResponse>,
 	options: WriteMemoryOptions,
 	complete: Complete<TRequest, TResponse>,
@@ -982,8 +982,14 @@ async function writeWithSession<TRequest, TResponse extends WriterResponse>(
 			break;
 		}
 	}
-	if (!instruction)
+	if (!instruction) {
+		// A tool batch can consume Pi's reserve before its trigger runs, even after a segments commit kept a
+		// bounded tail. Select bounded evidence requests before dispatch, using this very same transport/model,
+		// effort, frozen note budget, validator, repair allowance and call journal. Never retry a failed writer
+		// through another path. Optional segments still refuse: changing their requests would change scheduling.
+		if (!options.segment) return writeInChunks(transport, options, complete, effort, accept);
 		throw new Error("CONTEXT_WRITER_CAPACITY: the session context leaves no room for the handover request");
+	}
 	signal.throwIfAborted();
 	const request = transport.request({ kind: "handover", instruction, reasoning: effort, maxTokens });
 	const response = await declineToolCall(request, effort, await complete(request, effort));

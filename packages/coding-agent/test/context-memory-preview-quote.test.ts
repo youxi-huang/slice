@@ -709,8 +709,14 @@ describe("session writer quotable originals", () => {
 		expect(fits.instructions[0]).not.toContain("Quotable user messages");
 		const over = sessionHarness(128_000);
 		over.options.prefix = { ...over.options.prefix!, measuredTokens: 128_000 - handover + 1 };
-		await expect(writeMemory(over.options)).rejects.toThrow("CONTEXT_WRITER_CAPACITY");
-		expect(over.requests).not.toHaveBeenCalled();
+		const written = await writeMemory(over.options);
+		expect(written.writerModel).toBe(`${fits.options.sessionModel!.provider}/${fits.options.sessionModel!.id}`);
+		expect(over.requests).toHaveBeenCalledOnce();
+		const evidence = JSON.parse(over.instructions[0]) as { newSources: { entryId: string; text: string }[] };
+		expect(evidence.newSources.map((entry) => entry.entryId)).toEqual(sessionBranch.map((entry) => entry.id));
+		expect(evidence.newSources.at(-1)?.text).toBe(
+			long.type === "message" && long.message.role === "user" ? long.message.content : undefined,
+		);
 	});
 });
 
