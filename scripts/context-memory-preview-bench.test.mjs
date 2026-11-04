@@ -9,7 +9,7 @@ import { readMemoryConfig } from "../packages/coding-agent/src/extensions/contex
 import { readExcerptSettings } from "../packages/coding-agent/src/extensions/context-memory/preview/excerpts.ts";
 import { readPreparationSettings } from "../packages/coding-agent/src/extensions/context-memory/preview/preparation.ts";
 // Importing the bench starts no run: only its helpers are read here.
-import { loopbackLatencyMs, parseSessionSettings, percentile, replaySourceIds, requestOverlap, settledSteps, toolReplayReplies, writeUnitSettings } from "./context-memory-preview-bench.mjs";
+import { loopbackLatencyMs, loopbackPrefixCache, parseSessionSettings, percentile, replaySourceIds, requestOverlap, settledSteps, toolReplayReplies, writeUnitSettings } from "./context-memory-preview-bench.mjs";
 
 const script = fileURLToPath(new URL("./context-memory-preview-bench.mjs", import.meta.url));
 
@@ -20,6 +20,21 @@ function scratch(t) {
 }
 
 const settingsFile = (agentDir) => join(agentDir, "pi-context-memory.json");
+
+test("session prefix cache shares only whole messages with the same system prompt and tools across all request roles", () => {
+	const cached = loopbackPrefixCache();
+	const tools = [{ type: "function", function: { name: "read", parameters: { type: "object" } } }];
+	const messages = [{ role: "system", content: "Synthetic prompt" }, { role: "user", content: "Synthetic task" }];
+	const tokens = (parts, functions = tools) => Math.ceil(Buffer.byteLength(JSON.stringify(parts) + JSON.stringify(functions)) / 3);
+	assert.equal(cached({ messages, tools }), 0);
+	for (const content of ["Task reply", "Return ONLY the memory note itself", "Write a segment note for entries a through b only"])
+		assert.equal(cached({ messages: [...messages, { role: "user", content }], tools }), tokens(messages));
+	assert.equal(cached({ messages, tools }), tokens(messages));
+	assert.equal(cached({ messages: [messages[0], { role: "user", content: "Synthetic task changed" }], tools }), tokens(messages.slice(0, 1)));
+	assert.equal(cached({ messages, tools: [] }), 0);
+	assert.equal(cached({ messages: [{ ...messages[0], content: "Different prompt" }, messages[1]], tools }), 0);
+	assert.equal(loopbackPrefixCache()({ messages, tools }), 0);
+});
 
 test("loopback writer and task latency share bounds and reject provider runs before dispatch", () => {
 	for (const flag of ["--latency-ms", "--turn-latency-ms"]) {

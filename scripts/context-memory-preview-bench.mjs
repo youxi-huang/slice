@@ -79,7 +79,7 @@ import { inspectOfficialPi } from "./context-memory-preview-stock-install.mjs";
 // and rounds.jsonl, and summary.json gains `replay`.
 // --latency-ms delays loopback writers; --turn-latency-ms delays task replies independently.
 // --replay-tools (loopback, immediate only) lets official Pi execute each recorded batch, returning the fixture's
-// results without running its commands. P5 has no elapsed tool times; none are invented. Main replies are immediate.
+// results without running its commands. P5 has no elapsed tool times; reply delays are explicitly injected.
 
 const script = fileURLToPath(import.meta.url);
 const root = resolve(script, "../..");
@@ -147,6 +147,26 @@ export function loopbackLatencyMs(value, provider, flag = "--latency-ms") {
 		throw new Error(`${flag} takes an integer from 0 to 180000`);
 	if (ms && provider !== "loopback") throw new Error(`${flag} needs --provider loopback`);
 	return ms;
+}
+
+/** Whole-message prefix reuse with the same tools; scoped to one session, reusable at dispatch, without expiry. */
+export function loopbackPrefixCache() {
+	const requests = new Map();
+	return (payload) => {
+		const tools = JSON.stringify(payload.tools ?? []);
+		const messages = payload.messages ?? [];
+		const parts = messages.map((message) => JSON.stringify(message));
+		const previous = requests.get(tools) ?? [];
+		let shared = 0;
+		for (const earlier of previous) {
+			let count = 0;
+			while (count < parts.length && parts[count] === earlier[count]) count++;
+			shared = Math.max(shared, count);
+		}
+		previous.push(parts);
+		requests.set(tools, previous);
+		return shared ? Math.ceil(Buffer.byteLength(JSON.stringify(messages.slice(0, shared)) + tools) / 3) : 0;
+	};
 }
 /** The catalog model each provider measures; `deepseek-local` builds deepseek-flash's requests and answers them here. */
 const MEASURED = {
@@ -455,6 +475,7 @@ async function worker() {
 	const { gold } = fixture;
 	const taskReplies = [];
 	const transportCalls = [];
+	const cacheRead = action.provider === "loopback" && action.cache === "session" ? loopbackPrefixCache() : () => 0;
 	const repairSettings = [];
 	let forwarded = 0;
 	/** The catalog's address for the measured model, read before the bench moves it. */
@@ -465,6 +486,8 @@ async function worker() {
 		const payload = JSON.parse(raw);
 		const serialized = JSON.stringify(payload.messages ?? []);
 		const call = { kind: "main", start: performance.timeOrigin + performance.now(), input: Math.ceil(Buffer.byteLength(serialized + JSON.stringify(payload.tools ?? [])) / 3), end: Infinity };
+		const cached = cacheRead(payload);
+		if (action.toolReplay) call.cacheRead = cached;
 		if (action.toolReplay) {
 			transportCalls.push(call);
 			response.once("close", () => { call.end = performance.timeOrigin + performance.now(); });
@@ -506,11 +529,11 @@ async function worker() {
 				.filter((entry) => entry.type === "message")
 				.map((entry) => entry.id),
 		);
-		// Usage proportional to the request, so a smaller request reads as smaller offline. No cache is simulated.
+		// Pi subtracts cached_tokens from prompt_tokens to obtain uncached input for U9.
 		const usage = (answer) => {
 			const prompt = Math.ceil(Buffer.byteLength(serialized + JSON.stringify(payload.tools ?? [])) / 3);
 			const completion = Math.ceil(Buffer.byteLength(answer) / 3);
-			return { prompt_tokens: prompt, completion_tokens: completion, total_tokens: prompt + completion };
+			return { prompt_tokens: prompt, prompt_tokens_details: { cached_tokens: cached }, completion_tokens: completion, total_tokens: prompt + completion };
 		};
 		const chunk = (delta, finish, reported) =>
 			`data: ${JSON.stringify({ id: "bench", object: "chat.completion.chunk", created: 1, model: payload.model, choices: [{ index: 0, delta, finish_reason: finish }], ...(reported ? { usage: reported } : {}) })}\n\n`;
@@ -686,6 +709,7 @@ async function worker() {
 		const input = JSON.parse(readFileSync(action.stepsFile, "utf8"));
 		const chain = [];
 		const seenCalls = new Set();
+		let linkedAtBoundary = 0;
 		for (const round of action.toolReplay ? input : [{ cutIndex: action.cutIndex, steps: input }]) {
 			action.cutIndex = round.cutIndex;
 			const steps = round.steps;
@@ -734,6 +758,10 @@ async function worker() {
 				const path = committed ? (preparation.path ?? after.lastCompaction?.path ?? null) : null;
 				const writer = after.lastWriter ?? {};
 				const foreground = committed && path !== "segments" && path !== "complete" && path !== "prefix" && path !== "notes";
+				const segmentLinks = (after.segments?.results.linked ?? 0) - linkedAtBoundary;
+				linkedAtBoundary += segmentLinks;
+				const entries = sessionManager.getEntries();
+				const before = entry ? entries.findIndex((item) => item.id === entry.id) : entries.length;
 				return {
 					trigger,
 					step,
@@ -743,6 +771,7 @@ async function worker() {
 					segmentsFallback: preparation.segmentsFallback ?? null,
 					segmentsWaitMs: preparation.segmentsWaitMs ?? null,
 					segments: preparation.segmentIds?.length ?? 0,
+					...(action.toolReplay ? { segmentLinks, segmentInterval: entries.slice(0, before).findLast((item) => item.type === "compaction")?.id ?? "none" } : {}),
 					mergedCallIds: path === "segments" ? (preparation.callIds ?? []) : [],
 					pauseMs: committed ? (after.lastCompaction?.pauseMs ?? null) : null,
 					tokensBefore: entry?.tokensBefore ?? null,
@@ -838,7 +867,7 @@ async function worker() {
 						continue;
 					}
 					if (value?.v !== 1 || typeof value.call !== "string") continue;
-					if (value.purpose) journal.set(value.call, { id: value.call, purpose: value.purpose, phase: value.step ?? null, outcome: null, dispatched: null, usage: null, costUsd: 0 });
+					if (value.purpose) journal.set(value.call, { id: value.call, purpose: value.purpose, interval: value.interval, phase: value.step ?? null, outcome: null, dispatched: null, usage: null, costUsd: 0 });
 					else if (journal.has(value.call)) {
 						const call = journal.get(value.call);
 						call.outcome = value.outcome ?? null;
@@ -1115,7 +1144,7 @@ async function parent() {
 		// prefix after a few hundred tokens; a warm run shares one directory, as one user's session does.
 		const cwd = join(runDir, "cwd", cache === "cold" ? id : "shared");
 		writeUnitSettings(agentDir, action.type === "probe" && action.condition !== "session" ? probeSettings : unitSettings);
-		const encoded = Buffer.from(JSON.stringify({ ...action, arm, cwd, ...(latencyMs ? { latencyMs } : {}), ...(turnLatencyMs ? { turnLatencyMs } : {}), ...(window ? { window } : {}), ...(reserve ? { reserve } : {}), ...(action.provider === "relay" ? { baseUrl, relay } : {}), ...(equivalenceOut ? { equivalence: true } : {}) })).toString("base64url");
+		const encoded = Buffer.from(JSON.stringify({ ...action, arm, cwd, cache, ...(latencyMs ? { latencyMs } : {}), ...(turnLatencyMs ? { turnLatencyMs } : {}), ...(window ? { window } : {}), ...(reserve ? { reserve } : {}), ...(action.provider === "relay" ? { baseUrl, relay } : {}), ...(equivalenceOut ? { equivalence: true } : {}) })).toString("base64url");
 		const isolated = toolReplay ? mkdtempSync(join(tmpdir(), "pi-preview-tool-replay-")) : undefined;
 		if (isolated) {
 			for (let directory = isolated; ; directory = dirname(directory)) {
@@ -1286,6 +1315,9 @@ async function parent() {
 			result = await run({ type: "round", provider, fixture: fixture.gold.id, cutIndex: k, sessionFile: file, stepsFile, pace, chainAttempts, prompt: "Reply with the single word OK.", thinking, ...(toolReplay ? { toolReplay } : {}) });
 			rmSync(stepsFile, { force: true });
 			if (toolReplay && !result.crashed) {
+				const settled = new Map(result.journal.map((call) => [call.id, call]));
+				for (const round of result.chain)
+					for (const call of round.journalCalls) Object.assign(call, settled.get(call.id));
 				toolRounds.set(fixture.gold.id, new Map(result.chain.map((round) => [round.cutIndex, { ...round, diagnostics: result.diagnostics }])));
 				result = toolRounds.get(fixture.gold.id).get(k);
 			}
@@ -1380,7 +1412,8 @@ async function parent() {
 	const report = { label, mode, provider, model: provider === "loopback" ? LOOPBACK.id : relay ? `${relay.model.provider}/${relay.id}` : `${MEASURED[provider].provider}/${MEASURED[provider].id}`, ...(relay && relay.id !== relay.model.id ? { catalogModel: `${relay.model.provider}/${relay.model.id}` } : {}), ...(baseUrl ? { endpoint: new URL(baseUrl).host } : provider === "openai" ? { endpoint: OPENAI_HOST } : {}), thinking, cache, arm, ...(cuts ? { cuts } : {}), ...(mode === "probes" ? { probeConditions, compactionsOnly } : {}), ...(mode === "writer" || mode === "repair" ? { attempts } : {}), ...(mode === "probes" ? { chainAttempts } : {}), concurrency, build: build.buildId ?? build.build ?? null, piVersion: hostVersion, fixtures, sessionSettings, ...(segmentEffort ? { segmentEffort } : {}), unitSettings: Object.keys(unitSettings).length ? unitSettings : null, control, limits: { ...shown, inputTokensPerRequest: Number.isFinite(maxInputTokens) ? maxInputTokens : "unlimited" } };
 	if (latencyMs) report.latencyMs = latencyMs;
 	if (turnLatencyMs) report.turnLatencyMs = turnLatencyMs;
-	if (toolReplay) Object.assign(report, { toolReplay: { host: inspectOfficialPi(stockRoot, hostVersion), tools: "recorded content, no commands executed or invented delays", mainLatencyMs: turnLatencyMs, adjacentAssistants: "coalesced until the next recorded tool batch or user", writerCache: "not simulated" } });
+	if (provider === "loopback") report.loopbackCache = cache === "session" ? "simulated whole-message prefix, same tools, reusable at dispatch, no expiry within a session" : "no cache";
+	if (toolReplay) Object.assign(report, { toolReplay: { host: inspectOfficialPi(stockRoot, hostVersion), tools: "recorded content, no commands executed or invented delays", mainLatencyMs: turnLatencyMs, adjacentAssistants: "coalesced until the next recorded tool batch or user", writerCache: report.loopbackCache } });
 
 	if (mode === "smoke") {
 		// One small request through the history conversion: the opening turn of P1 and a one-word reply.
@@ -1650,10 +1683,21 @@ async function parent() {
 			return { calls: list.length, usageMissing: list.filter((call) => !call.usage).length, input, cacheRead: read, cacheWrite: total("cacheWrite"), output: total("output"), cacheReadShare: read + input ? Number((read / (read + input)).toFixed(4)) : null, costUsd: Number(list.reduce((sum, call) => sum + (call.costUsd ?? 0), 0).toFixed(4)) };
 		};
 		const segmentCalls = calls.filter((call) => call.purpose === "segment");
+		const intervals = new Map();
+		for (const row of boundaryRows) {
+			const key = `${row.fixture}:${row.segmentInterval}`;
+			const interval = intervals.get(key) ?? { fixture: row.fixture, cut: row.cut, id: row.segmentInterval, links: 0 };
+			interval.links += row.segmentLinks ?? 0;
+			intervals.set(key, interval);
+		}
 		const warm = roundRows.reduce((sum, round) => ({ rounds: sum.rounds + (round.rounds ?? 0), input: sum.input + (round.usage?.input ?? 0), cacheRead: sum.cacheRead + (round.usage?.cacheRead ?? 0), cacheWrite: sum.cacheWrite + (round.usage?.cacheWrite ?? 0), output: sum.output + (round.usage?.output ?? 0), costUsd: sum.costUsd + (round.usage?.cost ?? 0) }), { rounds: 0, input: 0, cacheRead: 0, cacheWrite: 0, output: 0, costUsd: 0 });
 		return {
 			window,
 			...(toolReplay ? { overlap: requestOverlap(roundRows.flatMap((round) => round.transportCalls ?? [])), rateLimitErrors: roundRows.reduce((sum, round) => sum + (round.rateLimitErrors ?? 0), 0) } : {}),
+			...(toolReplay ? { intervals: [...intervals.values()].map((interval) => {
+				const work = segmentCalls.filter((call) => call.interval === interval.id);
+				return { ...interval, calls: work.length, uncachedSpend: work.reduce((sum, call) => sum + (call.usage?.input ?? 0) + (call.usage?.cacheWrite ?? 0) + (call.usage?.output ?? 0), 0), unknown: work.some((call) => !call.usage) };
+			}) } : {}),
 			reserve,
 			pace,
 			segments: unitSettings.previewSegments?.enabled === true ? (segmentEffort || "session") : "off",
