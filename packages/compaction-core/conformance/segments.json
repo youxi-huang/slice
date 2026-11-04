@@ -3335,15 +3335,11 @@
 			"contextTokens": 9000
 		},
 		"expected": {
-			"range": {
-				"firstId": "u1",
-				"lastId": "a1",
-				"tokens": 8208
-			}
+			"defer": "below-start"
 		}
 	},
 	{
-		"id": "range-first-below-both-starts",
+		"id": "range-first-below-half",
 		"stage": "segment-range",
 		"records": [
 			{

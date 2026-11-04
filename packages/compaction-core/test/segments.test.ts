@@ -345,9 +345,12 @@ describe("choosing the next range (0.8.0 WP2, U3)", () => {
 		});
 	});
 
-	it("starts a full range before half the trigger so its writer has the intervening turns to finish", () => {
+	it("defers even a full first range below half the trigger, then covers it at half", () => {
 		const records = [...branch(), long("u4", "a3"), reply("a4", "u4")];
-		expect(nextSegmentRange(records, { triggerTokens: trigger, contextTokens: 30_000 })).toMatchObject({
+		expect(nextSegmentRange(records, { triggerTokens: trigger, contextTokens: 30_000 })).toEqual({
+			defer: "below-start",
+		});
+		expect(nextSegmentRange(records, { triggerTokens: trigger, contextTokens: 75_000 })).toMatchObject({
 			range: { firstId: "u1", lastId: "a4" },
 		});
 		const first = segment(records, "u1", "a4", [], note({ state: [fact("u1")] }));

@@ -319,11 +319,10 @@ The core chooses each range (`segments.ts` `nextSegmentRange`). A range ends at
 the branch's last record: a stopped assistant message or the last result of a
 complete tool batch. Every tool call in the range must have its result; a
 partial parallel batch defers without advancing the chain. The first link of
-an interval starts after one range of new history, or at half the trigger when
-carried context reaches it first, and covers everything uncovered. Each later
-link waits for `segmentRangeTokens` of new history, 15 % of the trigger between
-8,192 and 32,000 tokens, measured as compacted sources are. Earlier starts can
-pay for segments even when a session never approaches its trigger.
+an interval waits for half the trigger and covers everything uncovered, so a
+session that never nears compaction pays for no segment. Each later link waits
+for `segmentRangeTokens` of new history, 15 % of the trigger between 8,192 and
+32,000 tokens, measured as compacted sources are.
 These are starting values that 0.8.0's evaluation measures.
 
 The segment writer is the session writer (`writer.ts` `WriteMemoryOptions`

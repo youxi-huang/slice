@@ -1,6 +1,6 @@
 # Core conformance vectors
 
-`0.8-conformance.2` adds WP1's segment contract to the vectors half of 0.7.0's
+`0.8-conformance.3` adds WP1's segment contract to the vectors half of 0.7.0's
 WP3 from [the specification](../spec/specification.md). Every record and sentence
 is invented. These vectors exercise the core directly. The Pi adapter path
 (`eval/preview/conformance-adapter.test.ts`) replays `vectors.json` through the
@@ -105,10 +105,11 @@ Run `node scripts/context-memory-core-check.mjs` from the repository root for th
 import gate, in-place vectors, isolated build and isolated vectors. The required
 repository acceptance is `node scripts/context-memory-ops.mjs verify`.
 
-`0.8-conformance.2` amends U3 and the segments prefix cut. `segment-range`
+`0.8-conformance.3` amends U3 and the segments prefix cut. `segment-range`
 passes `options` to `nextSegmentRange` and pins its range or deferral. The
-first-start vectors distinguish a full range below half the trigger, a short
-range below both lines and carried context at half. Complete and partial
+first-start vectors defer both full and short ranges below half the trigger,
+and start with carried context at half. The earlier one-range first start was
+withdrawn after the simulated-cache ablation chose V2 over V3. Complete and partial
 parallel batches pin the new range end. `segment-cut` supplies `coveredIndex`,
 `cut` and `path` (`segments` or the unchanged `prefix`); it pins the selected
 index or refusal. It covers the assistant cut, the user-only control, the
