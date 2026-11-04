@@ -1,5 +1,124 @@
 # Validation record
 
+## 0.8.0 WP5 rerun: GPT-6 Luna with the bounded tail, 2026-11-04 UTC
+
+A real-provider run, recorded apart from the offline evidence below. Official Pi 1.4.0 with the independent preview at
+`1a2468c`, package `stock-preview+src.ef16bf86bac1ed9b`, and fixture P5 replayed as WP5 replayed it: `--replay
+--cache session --pace immediate`, the 200k route (cuts 1, 3 and 5, a 180,000-token window) and the 272k route (cuts
+2 and 4, 240,000), Pi's reserve at 30,000, probes with `context_history` only. GPT-6 Luna ran on OpenAI's API, with no
+DeepSeek run, as the maintainer asked. The maintainer approved 1,000 requests, 240 minutes and $5. The ten runs used
+984 requests, 99.9 minutes and $1.05 at catalog prices, and the largest request was 230,299 input tokens; each run was
+given only what the earlier ones had left.
+
+**No session was blocked, and the pause gate is not met.** Every segments chain completed. In WP5, Luna's `medium`
+segments chain on the 200k route overflowed and recovered only on its third retry, and both DeepSeek segments chains
+stopped. But segments served none of the 12 boundaries the segments arms committed, and every segments arm paused
+longer than its control.
+
+| Session level | Route | Arm | Committed, all by the writer | Refused attempts | Chain | Pause P50 / P95 | Segments fallbacks, after U8's wait | Probes passed (wrong, blocked, invalid) |
+| --- | --- | --- | --- | ---: | --- | --- | --- | --- |
+| `medium` | 200k | control | 3 | 0 | complete | 16.5 s / 19.5 s | | 28 of 30 (0, 0, 2) |
+| `medium` | 200k | segments | 3 | 0 | complete | 36.1 s / 38.0 s | cut 1 `tail` after 6.0 s; cuts 3 and 5 `in-flight` after 15 s | 29 of 30 (0, 0, 1) |
+| `medium` | 200k | control, second chain | 3 | 2 | complete | 20.0 s / 27.7 s | | 28 of 30 (0, 2, 0) |
+| `medium` | 200k | segments, second chain | 3 | 0 | complete | 30.6 s / 32.7 s | cut 1 `tail` after 10.5 s; cut 3 `in-flight` after 15 s; cut 5 `ambiguous-supersede` after 15 s | 28 of 30 (0, 1, 1) |
+| `medium` | 272k | control | 2 | 1 | complete | 19.9 s / 20.2 s | | 18 of 19 (0, 1, 0) |
+| `medium` | 272k | segments | 2, cut 2 at Pi's own trigger | 0 | complete | 30.5 s / 40.8 s | cut 2 `tail` after 12.3 s; cut 4 `in-flight` after 15 s | 18 of 19 (0, 0, 1) |
+| `medium` | 272k | control, second chain | 2, cut 2 at Pi's own trigger | 0 | complete | 17.8 s / 19.9 s | | 18 of 19 (0, 0, 1) |
+| `medium` | 272k | segments, second chain | 2 | 1 | complete | 18.5 s / 35.8 s | cut 2 `tail`, nothing in flight; cut 4 `in-flight` after 15 s | 19 of 19 (0, 0, 0) |
+| `max` | 272k | control | 2 | 0 | complete | 85.7 s / 121.1 s | | 17 of 19 (0, 0, 2) |
+| `max` | 272k | segments | 2 | 0 | complete | 125.1 s / 147.8 s | cuts 2 and 4 `in-flight` after 15 s | 17 of 19 (0, 0, 2) |
+
+What the segments boundaries met:
+
+- **`tail`, 4 of 12**, each at a route's first boundary, the round whose history holds P5's 70,000-token run. More
+  than one range of history followed the chain, so the writer ran. Before the bound, that history would have stayed
+  verbatim, the case that overflowed in WP5.
+- **`in-flight`, 7 of 12**: no segment was ready, and the one in flight did not finish within U8's 15 s. Each round's
+  segment was the first of its interval, covering everything since half the trigger. At `max` both went on to fail at
+  their 120 s deadline (`CONTEXT_SEGMENT_DEADLINE`), as on the 200k route in WP5.
+- **`ambiguous-supersede`, 1 of 12**: the segment settled within the wait, and the merge left the boundary to the
+  writer.
+
+The 14 segment calls were all discarded. They read every input token from the session's cache and cost $0.03 in all.
+The writers' work was about equal in the two arms: 14 calls, 2.45 million input tokens and $0.068 with segments, against 15,
+2.55 million and $0.069 without. The writer's own `CONTEXT_NOTE_INVALID` refused 4 of 28 attempts, 3 on the controls,
+and each chain committed on the next attempt. Luna at `max` on the 272k route, not run in WP5, committed both rounds at
+the first attempt. Four probe requests, in three runs, made no progress for 9 to 18 minutes and were ended, as the
+unit limit would have ended them; they count as blocked. No answer was wrong in any run.
+
+Not covered: P5 and Luna only, one or two chains per cell, and `max` on the 200k route, whose WP5 result the bound
+does not change.
+
+## 0.8.0 WP5 follow-up: a bound on the verbatim tail, offline, 2026-11-04 UTC
+
+No model service was called. The maintainer chose to fix WP5's overflow before 0.8.0 ships: a segments boundary now
+keeps at most one range verbatim after the chain, `segmentRangeTokens` of Pi's trigger, and a longer tail goes to the
+writer as `tail`. The change is `1a2468c`; U7's amendment is in the [plan](v0.8.0-plan.md#wp5-provider-acceptance).
+
+| Route | Pi's trigger | The bound now: one range, on the tail | The bound before: half the preview's threshold, on note, system prompt and tail together |
+| --- | ---: | ---: | ---: |
+| P5 200k (`--window 180000 --reserve 30000`) | 150,000 | 22,500 | 72,000 |
+| P5 272k (`--window 240000 --reserve 30000`) | 210,000 | 31,500 | 96,000 |
+
+The tail is counted as the context estimate counts the retained originals. The half-threshold check still applies
+after it.
+
+**Regressions**, in `context-memory-preview.test.ts`:
+
+- About 28,500 tokens after the chain, past one range of 16,742 and under half the threshold: the boundary records
+  `tail` and the writer runs. Before the change it committed through segments with no writer call, the first run of
+  the test failing on 2 requests where 3 were expected.
+- The same tail with the segment in flight that covers it: the boundary waits, then merges without the writer. With
+  `tail` taken out of U8's wait set, the test fails.
+
+**Lifecycle fuzz.** Seeds 1 to 1,000 passed every invariant in 273 s, with
+`CONTEXT_MEMORY_FUZZ_SEEDS=1000 CONTEXT_MEMORY_FUZZ_REPORT=<file>`:
+
+| Event | Before the change (`b99714c`'s controller) | After |
+| --- | ---: | ---: |
+| Committed boundaries: segments / synchronous writer | 427 / 2,659 | 112 / 2,933 |
+| Segment fallbacks: `tail` | none | 276 |
+| Merges after U8's wait | 79 | 12 |
+| Merges that replaced a ruling | 218 | 59 |
+| Failed compactions | 657 | 687 |
+
+The column before the change reproduces WP4's counts exactly.
+
+The bound costs the fuzz three boundaries in four that segments served. Its long turn is about 17,100 tokens, just past
+the 16,742-token range at its trigger, and a compaction that comes before the segment covering such a turn, as the
+room check's does, now goes to the writer: WP5's first reason, met here at the scale of one turn. Seeds 1 to 40, CI's set until now, no longer reach a
+merge after U8's wait: seed 31's one left a 17,134-token turn after the chain. CI runs seeds 1 to 100, which reach 3,
+the same in two runs side by side; `fallback tail` joins the paths a run must reach.
+
+**Offline gates on `1a2468c`**, package ``stock-preview+src.ef16bf86bac1ed9b``:
+
+| Gate | Segments off | Segments on |
+| --- | --- | --- |
+| Stock-Pi acceptance, official Pi 1.4.0 with 1.3.0, 1.2.0 and 1.1.0 as compatible hosts | 42 of 42 | 42 of 42 |
+| Stock-Pi acceptance on Pi 1.3.0, 1.2.0 and 1.1.0 | 36 of 36 each | 36 of 36 each |
+| Scenarios under the strict profile, Pi 1.4.0 with 1.0.4 as the other host | 157 passed | 157 passed |
+| Overhead per model request at 10 and 20 checkpoints (2.9 and 5.9 MB) | 1 and 1 ms | 0 and 0 ms |
+
+Segments off is `node scripts/context-memory-ops.mjs preview` at `b7aef09`, exit 0, release checks (37 of 37) and
+release preparation included. Segments on is `scripts/context-memory-preview-acceptance.mjs --segments on` on each host
+and `scripts/context-memory-preview-scenarios.mjs --segments on --acceptance-profile strict`, the same package.
+`node scripts/context-memory-ops.mjs verify` exited 0 on the same code before it was committed: the context-memory check
+passed 722 tests in 15 files, the 100-seed fuzz among them, and the security regression check passed. The core's own
+tests passed 210 of 210.
+
+**P5 through the loopback provider**, `--replay --pace immediate` on both routes, with WP5's package
+(`stock-preview+src.72c8ba45c5791e42`, built from `b99714c`) and this one:
+
+| Route | Control | Segments before the change | Segments after |
+| --- | --- | --- | --- |
+| 200k, cuts 1, 3 and 5 | 3 committed by the writer | 3 of 3 on the segments path | 3 of 3 on the segments path |
+| 272k, cuts 2 and 4 | 2 committed by the writer | 2 of 2 on the segments path | 2 of 2 on the segments path |
+
+Every round compacted at its gold checkpoint, and each segments boundary covered everything through its last entry,
+so no tail was kept and the bound did not act. The loopback does not reproduce WP5's overflow: its writer answers at
+once, and its token counts never take Pi past the trigger before a gold checkpoint. Whether the bound removes the
+overflow on real token counts is the provider rerun's question.
+
 ## 0.8.0 WP5: segments on GPT-6 Luna and DeepSeek V4.1 Flash, 2026-11-03 UTC
 
 A real-provider run, recorded apart from the synthetic evidence below. Official Pi 1.4.0 with the independent preview,

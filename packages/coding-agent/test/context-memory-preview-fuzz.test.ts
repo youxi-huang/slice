@@ -10,7 +10,7 @@
 // sources; every writer request has a journal record of its purpose and every record settles; a failed compaction
 // blocks the next request until a checkpoint commits; and at the end an explicit /compact always recovers.
 //
-// CONTEXT_MEMORY_FUZZ_SEEDS sets how many seeds run (default 40), CONTEXT_MEMORY_FUZZ_SEED reruns one with its
+// CONTEXT_MEMORY_FUZZ_SEEDS sets how many seeds run (default 100), CONTEXT_MEMORY_FUZZ_SEED reruns one with its
 // last CONTEXT_MEMORY_FUZZ_LOG operations (default 24) in the failure, and CONTEXT_MEMORY_FUZZ_REPORT names a file
 // for the count of each path the run reached. A segment's deadline and U8's wait are shortened to milliseconds so
 // timeouts happen; their timers can shift the interleaving on a loaded machine, and every invariant must hold under
@@ -47,7 +47,9 @@ import { PreviewSegments } from "../src/extensions/context-memory/preview/segmen
 /** A preview checkpoint's details, with the preparation record a plain memory checkpoint lacks. */
 type Details = NonNullable<PreviewCompaction["details"]>;
 
-const SEEDS = Number(process.env.CONTEXT_MEMORY_FUZZ_SEEDS ?? 40);
+// 100 since WP5's bound on the verbatim tail: a merge after U8's wait now needs the segment it waited for to leave at
+// most one range uncovered, and seeds 1 to 40 no longer reach one.
+const SEEDS = Number(process.env.CONTEXT_MEMORY_FUZZ_SEEDS ?? 100);
 const ONLY = process.env.CONTEXT_MEMORY_FUZZ_SEED;
 const REPORT = process.env.CONTEXT_MEMORY_FUZZ_REPORT;
 const OPERATIONS = 48;
@@ -818,6 +820,7 @@ describe("segments lifecycle fuzz (0.8.0 WP4)", () => {
 			"ruling replaced by merge",
 			"merged after waiting for a segment",
 			"fallback custom-focus",
+			"fallback tail",
 			"hang:segment",
 			"hang:compaction",
 			"breaker open",

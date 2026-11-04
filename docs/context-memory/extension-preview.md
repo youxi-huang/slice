@@ -695,8 +695,9 @@ changes an earlier ruling, the segment's new instruction replaces the old one,
 provided it cites the user's own message and names the old instruction's
 sources in `supersedes`. The merged note is
 committed through the prefix path, so the turns after the last segment stay
-verbatim, unless that would leave half the compaction threshold or more in
-context. A segment still being written is waited for at most 15 seconds when
+verbatim, unless they hold more than one segment range (15% of Pi's trigger,
+between 8,192 and 32,000 tokens) or the result would leave half the compaction
+threshold or more in context. A segment still being written is waited for at most 15 seconds when
 only it would let the merge commit, and `details.preparation.segmentsWaitMs`
 records the wait. `details.preparation.path` is then
 `segments`, with `segmentIds` and the `callIds` that wrote them.
@@ -704,19 +705,22 @@ records the wait. `details.preparation.path` is then
 The writer compacts synchronously instead, as before, when no segment is ready
 or valid, after an unfinished turn, with custom focus, when a segment would
 retire a carried instruction without a ruling from the user in its place, when
-the merge is ambiguous or exceeds the note schema or budget, or when the
-prefix conditions fail.
+the merge is ambiguous or exceeds the note schema or budget, when the turns
+after the last segment hold more than one range (`tail`), or when the prefix
+conditions fail.
 `details.preparation.segmentsFallback` records why.
 
 Segments are an experiment. On the 0.8.0 provider runs they did not shorten
-the pause over a whole session, and in one case they made it worse: when a
-compaction merges segments, the turns after the last one stay verbatim, up to
-half the threshold, and a very large paste or tool output soon after can then
-take the next request past the window, where the writer has no room to compact
-and the session blocks. Leave them off for sessions that paste or read tens of
-thousands of tokens at once, and at a `max` thinking level, where a segment can
-take longer than its two-minute deadline. The record is in
-[validation.md](validation.md#080-wp5-segments-on-gpt-6-luna-and-deepseek-v41-flash-2026-11-03-utc).
+the pause over a whole session, and in one case they made it worse: the turns
+after the last segment then stayed verbatim up to half the threshold, and a very
+large paste or tool output soon after took the next request past the window,
+where the writer had no room to compact and the session blocked. The tail is
+now bounded to one range. In a rerun on GPT-6 Luna no session blocked, but
+segments served no compaction, and waiting for one still being written made
+each pause up to 15 seconds longer. Leave segments off unless you are
+measuring them. At a `max` thinking level a segment can also take longer than
+its two-minute deadline. The records are in
+[validation.md](validation.md#080-wp5-rerun-gpt-6-luna-with-the-bounded-tail-2026-11-04-utc).
 
 Segments never block work themselves. They stop for the rest of a checkpoint interval
 after eight calls, or once their calls have spent as many uncached tokens as
