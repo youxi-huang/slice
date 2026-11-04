@@ -2,70 +2,172 @@
 
 ## 0.8.0 segment scheduling review: official-Pi P5 batch replay, offline, 2026-11-04 UTC
 
-No model provider was called. The amended budget gate **fails at 5 s turns / 13 s writers**: main serves
-3/3 and 2/2 boundaries; the branch serves 0/3 and 0/2. Its 200k chain also pauses longer than its own
-segments-off control. Both 28 s pause checks pass. **No Luna budget is proposed.** These loopback results are
-separate from the provider rerun below; they do not measure note quality or provider latency.
+**In progress: continuation-only cache and sequential ablation. No model provider was called. No variant is
+finally selected and no Luna budget is proposed.** The earlier shared-prefix simulation and concurrent ablation
+are superseded by the maintainer's addendum. Their provisional V2 choice in `1bf62be` is not evidence under the
+new rule. The branch currently contains that V2 candidate; re-evaluate it after the serial run. If none qualifies,
+the fallback is the original V3 runtime from `eea33a3`, not the provisional V2.
 
-### Rules and runner
+### Cache semantics and recorded provider evidence
 
-The accepted U3 and segments prefix-cut amendments remain: start after one range of new history or half the
-trigger when carried context reaches it first; close ranges after complete tool batches; let the core cut after
-a covered batch while keeping complete pairs on both sides. Notes and arm A retain the projected-user cut.
-The specification and `0.8-conformance.2` have 34 base + 35 segment vectors, including the nine accepted start,
-range and cut vectors. No source hash, checkpoint format, resident fingerprint or evaluation pin changed.
-Segments remain off by default (U13).
+With `--provider loopback --cache session`, a request reads the longest **complete earlier request** whose
+whole messages are a prefix of this request, with identical tools and system-prompt items. Sharing an opening
+without continuing a whole earlier request reads nothing. Exact repeats also satisfy the prefix predicate.
+Requests become reusable at dispatch. The cache has no expiry within one chain; this is a simulation limit.
+Input is estimated as UTF-8 request bytes / 3, including tools; cached input plus fresh input equals the same
+estimated total as before. Task, writer and segment requests use the same session cache. One SDK session spans
+all checkpoints. The writer's `--latency-ms` and task's `--turn-latency-ms` retain their bounds and defaults.
 
-The maintainer's 2026-11-04 U8 amendment is in the plan's Decisions table and the specification's wait rule.
-The boundary subtracts time since the active call's dispatch from this session's most recent completed writer
-or segment duration, and waits only if the estimate fits the existing wait. With no completed call, it waits
-as before. A skipped wait records `in-flight` without `segmentsWaitMs`; it does not abort the segment. The
-estimate survives checkpoints only in memory and resets with the session/restart; storage is unchanged.
-Focused regressions use a completed 28 s writer: a segment aged 1 s skips, one aged 14 s waits and serves.
-The existing no-estimate regression remains. Fuzz now requires a skipped wait as well as a merge after waiting.
+The continuation-only helper and its fork/continuation tests are committed in `d9e4513`: the existing bench test
+command passes **10/10, exit 0**. The frozen serial runner uses that commit. No adjustment was made to force its
+shares to match provider accounting. The requested segment effort is the session's; no reasoning or provider
+tokenisation is simulated.
 
-P5's roughly 70,000-token run contains **eight tool batches**, ending at `p5-00031`, `p5-00034`, `p5-00037`,
-`p5-00040`, `p5-00043`, `p5-00046`, `p5-00049` and `p5-00052`, rather than one indivisible result. Full P5
-has 46 tool results; the 272k route through cut 4 has 43. All fixture timestamps are the same synthetic instant.
-They supply no elapsed task or tool times.
+| Evidence | Segment cache-read share | Synchronous writer cache-read share |
+| --- | ---: | ---: |
+| Recorded Luna evidence: WP5's 14 segment calls / U5 session-level table | 100% | 95-97% |
+| Continuation simulation, V2 zero-delay diagnostic, 200k | 88.90% | 95.55% |
+| First serial 5 s / 13 s / 200k cell, main | 96.45% | 95.55% |
+| Same cell, V1 | 96.45% | 95.55% |
+| Same cell, V2 | 91.07% | 95.55% |
+| Same cell, V3 | 83.08% | 95.55% |
 
-`--replay-tools` drives the public SDK of official Pi through those batches. Adjacent assistant records join the
-next tool-call reply, preserving text, calls and arguments. Tools return the exact recorded content and error
-status without executing commands. Each round checks every call ID, name, content and error flag; evidence IDs
-map to native IDs for the writer. A chain now keeps **one SDK session/worker across all checkpoints**, rather
-than reopening at each cut, so the U8 estimate is tested as session state. Per-round journal/result deltas avoid
-double counting; request times share the chain's clock. This mode requires loopback, replay, immediate pace and
-session cache mode. The latter reproduces the request shape; cache reads are not simulated.
+The writer diagnostic agrees with the recorded range. Segment shares do not reproduce the recorded 100%; keep
+that discrepancy visible. These are estimates on recorded P5 batches, not a repeat of those provider requests.
+Later serial cells report their own shares below. The provider evidence remains in the WP5 entries below and
+[Prompt cache](openai-api.md#prompt-cache).
 
-`--turn-latency-ms` delays task replies, including the next tool-call batch, independently of the writer's
-`--latency-ms`. Both default to 0, accept integer milliseconds from 0 to 180000 and reject nonzero values on
-other providers before dispatch. The same bounds/CLI tests cover both. These are injected reply delays;
-tool execution remains immediate. Zero-turn-delay cells are retained as the **worst case for time to prepare**.
+### Serial protocol and provenance
 
-Main is `980658b` after #117, build `stock-preview+src.ef16bf86bac1ed9b`. The final runtime is `44d3f27`,
-build `stock-preview+src.82625e6ce0676ef9`; `084bf63` changes only fuzz timing/reach. Their bundle SHA-256 values:
+Official Pi 1.4.0, fixture P5, 5/10 s task replies, 13/28 s writers, both routes, segments on and off. Each
+variant and its own control run one after another on the otherwise idle machine, with a three-second quiet
+gap. No builds, tests or other benchmarks run during a measured chain. Main runs first, then V1, V2 and V3,
+each on immediately followed by its off control. There are 64 base commands. If any variant differs from main
+by exactly one served boundary, repeat the entire eight-arm cell once and report both runs. Never select the
+better repeat. The coordinator may park between arms for handoff/publication; no measured chain is suspended.
+P5's roughly 70k-token run has eight tool batches; the recording supplies no elapsed tool times. Each completed
+200k chain verifies 46/46 tool results and the 272k chain 43/43, including their error flags.
 
-- Main: `30ca900e401c13f1cacfd15667d9d5fdc5eb0ebefd1c452f966cc5944689676f`.
-- Branch: `6981bf175d9fb7b1702115327c2f649bb3dad81404a18df68125d4d341b2b413`.
+- Main: `980658b`, after #117.
+- V1: main plus U8 only: half-trigger first start, settled-turn ranges, user cut. Built as an uncommitted local variant.
+- V2: V1 plus complete-batch ranges and the core segments batch cut. Built as an uncommitted local variant from `eea33a3` by restoring the half-trigger guard.
+- V3: `eea33a3` runtime, with the earlier one-range first start as well as batch ranges/cut and U8.
 
-The matrix's pre-commit branch bundle and its clean committed rebuild are byte-identical, as is the
-operations-built bundle. Acceptance used the clean rebuild and its matching archive/report; that archive's
-SHA-256 is `9b9b87918b7e6f6fe39f60e10c388add58c0c0aa042f339e0f94b2e6e7de8029`.
-Each package loads from a copy outside Node projects, with ancestor-shadow and official-host provenance checks.
-All measured cells use official Pi 1.4.0, never this repository's patched host.
+To reconstruct V1, start from main, take `preview/segments.ts` from `eea33a3`, and apply only that commit's
+controller changes to the `segments.skipWait` branch and the compaction journal's `observeCalls` hook; leave
+`extension.ts` and the core at main. V2's runtime is also available in committed form at `1bf62be`. The digest
+table binds the uncommitted variants used for measurement, rather than a subsequently rebuilt package.
 
-### Paired matrix
+| Package | Preview source SHA-256 | Bundle SHA-256 | Archive SHA-256 |
+| --- | --- | --- | --- |
+| main | `ef16bf86bac1ed9b547b840828647ff7754293a1704e5e66d4cdf01d42b7866a` | `30ca900e401c13f1cacfd15667d9d5fdc5eb0ebefd1c452f966cc5944689676f` | `75cc33a0c1c1fbbe016f00574db52b458b73dc45f7653d46f97219bfdb885407` |
+| V1 | `653e1910b005317ab33d3c61dc90a1f1ca54d332dcaa1cf7bfec75308abe8521` | `be69b5ca6797600f2713d4fe0a083219544b819c7acadcac15a5d0530767bb12` | `ffc29def54a3b8ad6111ef6e8f4d9bc75265fda13b58debfb951de247dbb257d` |
+| V2 | `54b54e481662267f095a5855187de487894ea02142926eba9e3842ca9085ad1a` | `acc6da2caf014554f5d9a7ee90dd51824e21f07169efc28e2535e08813719415` | `168562c2deba96c58e74a0397908e357624413eb3c23970cbb420af160ecf6ea` |
+| V3 | `82625e6ce0676ef9337b6dcf01fa0d57db8f6e40cf7a556bea832d9218fdd16e` | `6981bf175d9fb7b1702115327c2f649bb3dad81404a18df68125d4d341b2b413` | `9b9b87918b7e6f6fe39f60e10c388add58c0c0aa042f339e0f94b2e6e7de8029` |
 
-Task delays 0, 2, 5 and 10 s × writer delays 13 and 28 s × both routes × main/branch × segments on/off:
-**64 cells, 160 committed boundaries**. The coalescing ablation adds 12 cells and 30 boundaries. All **76 commands
-exit 0**, every tool result matches, each chain uses one SDK session, and no boundary fails or session blocks.
-The 200k route has three boundaries (cuts 1/3/5); 272k has two (2/4). Each table row pairs on with the same
-package's off control. Off serves all boundaries synchronously, with no segments fallback or wait.
+The preview build ID is `stock-preview+src.` followed by the source hash's first 16 characters. The committed
+V2 build from `1bf62be` has byte-identical runtime code to the uncommitted V2 bundle; its matching clean archive
+SHA-256 is `240a7ac31d6f97c0d791fc161b8b3c65f2d9a7085cc442b5a300d00bdd0d1424`.
+Package copies load outside Node projects with official-host provenance and ancestor-shadow checks.
 
-All times below are seconds; totals are **per chain**, not sums of percentiles. Waits count recorded
-`segmentsWaitMs` fields, including zero; an estimated skip has no such field. P50/P95 use nearest rank over all
-committed boundaries, so with 2 or 3 boundaries P95 is the maximum. There is one chain per cell. Up to 24 commands
-shared the machine, so small timing differences and late timers are retained but are not provider-speed evidence.
+The 200k route uses cuts `1,3,5`, window `180000`; 272k uses `2,4`, window `240000`; both reserve `30000`.
+Build every checkout into its own output parent, since its archive/report are siblings of `package`.
+
+```sh
+node scripts/context-memory-preview-build.mjs --output-dir <build-root>/package
+node scripts/context-memory-preview-bench.mjs --package-dir <build-root>/package --stock-root <official-pi-1.4.0> --output-dir <scratch> --mode probes --provider loopback --fixtures P5 --cache session --replay --replay-tools --pace immediate --cuts <cuts> --window <window> --reserve 30000 --compactions-only --latency-ms <13000|28000> --turn-latency-ms <5000|10000> --thinking medium --session-settings previewSegments=<on|off> --chain-attempts 1 --unit-minutes 20 --label <run-cell-package-arm>
+```
+
+### Serial results (updated between completed cells)
+
+Times are seconds. Each arm is one chain with 3 or 2 committed boundaries; nearest-rank P95 is its maximum,
+not a population-tail estimate. Off is the same package's synchronous control. Wait counts include numeric zero
+fields; estimated skips have no numeric wait. Interval spend is input + cache writes + output, excluding cache
+reads; unknown usage is marked, not treated as free. Cache shares use calls with reported usage. Overlap input
+counts each intersecting task/segment request once; peak counts all inputs starting in each rolling 60 seconds.
+Calls T/S/W are task/segment/writer HTTP dispatches; all input includes cancelled calls as well as cache reads.
+Cold first wait is recorded only when no writer or segment had completed before the first boundary began.
+All input counts toward the real provider's limit. These remain synthetic input estimates.
+
+<!-- serial-continuation-results:start -->
+
+Serial collection: **14/64 commands verified**, 36 committed boundaries. Status: **running**. Choice and budget remain unevaluated.
+
+| Run | Turn / writer / route | Package / arm | Served | Fallbacks | Wait n; total (P50/P95) | Pause P50/P95; total | Overlap calls / summed input | Peak 60 s input | Calls T/S/W; all input | Cold first wait | Cut: links / uncached spend | Segment / writer cache % | Rate errors |
+| --- | --- | --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | ---: | ---: |
+| 1 | 5 / 13 / 200k | main / on | 3/3 | - | 2; 15.890 (7.922/7.968) | 8.023/8.052; 16.188 | 4 / 1,200,552 | 1,380,592 | 61/4/0; 4,765,989 | 7.968 | 1: 1/4,728; 3: 1/4,892; 5: 1/4,608 + unknown | 96.45 / - | 0 |
+| 1 | 5 / 13 / 200k | main / off | 0/3 | - | 0; 0.000 (-/-) | 13.117/13.167; 39.393 | 0 / 0 | 1,306,598 | 61/0/3; 4,674,261 | - | 1: 0/0; 3: 0/0; 5: 0/0 | - / 95.55 | 0 |
+| 1 | 5 / 13 / 200k | v1 / on | 3/3 | - | 2; 15.897 (7.930/7.967) | 8.021/8.026; 16.142 | 4 / 1,200,543 | 1,380,582 | 61/4/0; 4,765,942 | 7.967 | 1: 1/4,728; 3: 1/4,892; 5: 1/4,609 + unknown | 96.45 / - | 0 |
+| 1 | 5 / 13 / 200k | v1 / off | 0/3 | - | 0; 0.000 (-/-) | 13.139/13.210; 39.437 | 0 / 0 | 1,306,591 | 61/0/3; 4,674,217 | - | 1: 0/0; 3: 0/0; 5: 0/0 | - / 95.55 | 0 |
+| 1 | 5 / 13 / 200k | v2 / on | 3/3 | - | 0; 0.000 (-/-) | 0.118/0.237; 0.397 | 10 / 4,240,764 | 1,737,342 | 61/10/0; 6,135,448 | - | 1: 2/26,091 + unknown; 3: 3/18,394 + unknown; 5: 3/33,245 | 91.07 / - | 0 |
+| 1 | 5 / 13 / 200k | v2 / off | 0/3 | - | 0; 0.000 (-/-) | 13.116/13.900; 40.103 | 0 / 0 | 1,306,591 | 61/0/3; 4,674,217 | - | 1: 0/0; 3: 0/0; 5: 0/0 | - / 95.55 | 0 |
+| 1 | 5 / 13 / 200k | v3 / on | 3/3 | - | 0; 0.000 (-/-) | 0.116/0.155; 0.342 | 14 / 4,709,530 | 1,663,654 | 61/14/0; 5,914,622 | - | 1: 4/62,245; 3: 5/68,032; 5: 4/49,767 + unknown | 83.08 / - | 0 |
+| 1 | 5 / 13 / 200k | v3 / off | 0/3 | - | 0; 0.000 (-/-) | 13.084/13.131; 39.290 | 0 / 0 | 1,306,591 | 61/0/3; 4,674,217 | - | 1: 0/0; 3: 0/0; 5: 0/0 | - / 95.55 | 0 |
+| 1 | 5 / 13 / 272k | main / on | 2/2 | - | 2; 15.807 (7.863/7.944) | 7.984/8.023; 16.007 | 3 / 1,302,636 | 2,192,605 | 56/3/0; 5,733,164 | - | 2: 2/8,738; 4: 1/5,559 | 97.39 / - | 0 |
+| 1 | 5 / 13 / 272k | main / off | 0/2 | - | 0; 0.000 (-/-) | 13.142/13.240; 26.382 | 0 / 0 | 1,930,085 | 56/0/2; 5,595,892 | - | 2: 0/0; 4: 0/0 | - / 96.67 | 0 |
+| 1 | 5 / 13 / 272k | v1 / on | 2/2 | - | 2; 15.651 (7.740/7.911) | 7.831/7.963; 15.794 | 3 / 1,302,629 | 2,192,595 | 56/3/0; 5,733,122 | - | 2: 2/8,737; 4: 1/5,560 | 97.39 / - | 0 |
+| 1 | 5 / 13 / 272k | v1 / off | 0/2 | - | 0; 0.000 (-/-) | 13.147/13.407; 26.554 | 0 / 0 | 1,930,076 | 56/0/2; 5,595,855 | - | 2: 0/0; 4: 0/0 | - / 96.67 | 0 |
+| 1 | 5 / 13 / 272k | v2 / on | 2/2 | - | 0; 0.000 (-/-) | 0.060/0.129; 0.189 | 6 / 3,357,466 | 2,273,528 | 56/6/0; 7,053,648 | - | 2: 2/34,578 + unknown; 4: 3/37,203 | 90.50 / - | 0 |
+| 1 | 5 / 13 / 272k | v2 / off | 0/2 | - | 0; 0.000 (-/-) | 13.120/13.891; 27.011 | 0 / 0 | 1,930,076 | 56/0/2; 5,595,855 | - | 2: 0/0; 4: 0/0 | - / 96.67 | 0 |
+
+<!-- serial-continuation-results:end -->
+
+### Decision and budget rules still to apply
+
+Apply C to every observed run: each candidate must serve at least as many boundaries as main, and its total
+pause must not exceed its own control by more than 2 s plus a first-boundary U8 wait only when no call had
+completed to supply an estimate. Prefer V1, then V2, then V3; replace a simpler qualifying candidate only if the
+more complex one serves more in at least two distinct cells and fewer in none. No decision is final yet.
+
+D additionally requires raw total pause below the chosen candidate's control in both 5 s / 13 s cells. Only then
+build and prove the provider mode offline, using the existing `--replay-tools` and provider options, with no new
+configuration switch. Reuse the repair forward path: `configureHttpDispatcher()`, the measured catalog model's
+address moved to checked `127.0.0.1`, and the request's own Authorization header forwarded unchanged inline.
+The environment's proxy replaces the placeholder; never inspect, log or store that header. Local replies must
+speak the catalog API (Responses for Luna). Forward every task, writer and segment body unchanged; cap task
+output at the API minimum **before Pi serialises it**, discard its upstream reply, and release the recorded local
+reply only after both upstream completion and the turn delay. Thus the provider sees the session's own prefix,
+and all forwarded task tokens count toward rate and cost. Recorded calls omit `fc_` item IDs and reasoning items,
+as foreign history does. Abort upstream on Pi disconnect and time out every forwarded request. Prove this
+offline in both roles with a fake upstream checking byte-identical bodies and history without native item IDs.
+That new proof is **not run**; the earlier per-writer warm-up prototype is superseded and was not retained.
+
+A budget, if justified, starts with one smoke chain, prefers a turn delay whose offline peak is below 1,600,000
+input tokens/minute (80% of the 2,000,000 limit), counts all forwarded tasks/writers/segments and cache reads,
+and stops at the first 4xx or rate-limit error, including one inside HTTP 200. State each cell's expected service,
+pause, request/token counts, pacing and hard time/cost limits. Begin with only one smoke chain because locally
+answered history has never been sent to Luna in this form. No budget is proposed and no provider request is authorised.
+
+### Checks so far; final checks pending selection
+
+These checks cover the provisional V2 runtime, not a final selection or the new provider mode:
+
+| Command | Result / source | Exit |
+| --- | --- | ---: |
+| `node --test scripts/context-memory-preview-bench.test.mjs` | 10/10, continuation-only simulation, `d9e4513` | 0 |
+| `node node_modules/vitest/dist/cli.js run packages/compaction-core/test` | 221/221; 34 base + 35 segment vectors, conformance `.3`, `1bf62be` | 0 |
+| From coding-agent: `PI_OFFLINE=1 CONTEXT_MEMORY_FUZZ_SEEDS=200 CONTEXT_MEMORY_FUZZ_REPORT=<out>.json node ../../node_modules/vitest/dist/cli.js run test/context-memory-preview.test.ts test/context-memory-preview-fuzz.test.ts` | 445/445: 244 focused + 201 fuzz; 9,600 operations; all 13 reaches met, `1bf62be` | 0 |
+| `node scripts/context-memory-preview-acceptance.mjs --package-dir <build>/package --stock-root <pi> --segments on --output-dir <out>` | V2: Pi 1.4.0 42/42 with three compatibility roots; 1.3.0, 1.2.0, 1.1.0 36/36 each | 0 each |
+| `node scripts/context-memory-preview-scenarios.mjs --package-dir <build>/package --stock-root <pi-1.4.0> --other-stock-root <pi-1.0.4> --segments on --acceptance-profile strict --output-dir <out>` | V2: 157 passed; 0 failures/gaps/skips/performance exceptions; 50 ms / growth bounds met | 0 |
+
+Provisional V2's fuzz reaches: segments 18, synchronous 597, failed compaction 144, ruling replacement 11,
+merge after wait 1, skipped wait 8, custom-focus fallback 51, tail fallback 50, hanging segment 42,
+hanging compaction 25, breaker 141, branch move before checkpoint 128, restart dropping segments 42.
+
+Final `verify`, `preview`, stock-on checks, strict-on scenarios, 200-seed fuzz, core/conformance, P5 off-equivalence
+against main and `git diff --check` remain to be tied to the final chosen source. No resident fingerprint,
+evaluation pin, release version, commit guard, spending cap or checkpoint source hash was changed.
+
+### Labelled historical context: no cache, including zero-delay worst case
+
+The following is the earlier `eea33a3` evidence, **with no cache simulation and concurrent chains**. Zero-turn
+rows are the worst case for preparation time. These 64 no-cache arms are context, not selection evidence under
+the addendum. Each row pairs on with its own off control. Definitions and units match the serial table above;
+the original commands exited 0 with 160 committed boundaries. The coalescing ablations and retained diagnostics
+remain in this entry's Git history. No real-provider run was repeated.
+
+<details>
+<summary>No-cache pause and input tables</summary>
 
 | Turn / writer / route | Package | Served | Fallbacks | Waits: n; total (P50/P95) | On P50/P95; total | Off P50/P95; total |
 | --- | --- | ---: | --- | ---: | ---: | ---: |
@@ -102,12 +204,6 @@ shared the machine, so small timing differences and late timers are retained but
 | 10 / 28 / 272k | main | 0/2 | tail 1, in-flight 1 | 2; 30.05 (15.00/15.05) | 43.18/43.38; 86.56 | 28.25/28.29; 56.54 |
 | 10 / 28 / 272k | branch | 0/2 | tail 2 | 2; 0.00 (0.00/0.00) | 28.19/28.22; 56.41 | 28.31/28.34; 56.66 |
 
-Overlap calls count distinct segment HTTP calls intersecting a task request. Overlap summed input counts each
-intersecting segment/task request once, estimated as UTF-8 request bytes / 3 including tools. The peak is the
-sum of all task, segment and foreground-writer request inputs starting in each rolling 60 seconds. Off has
-zero overlapping segment calls/input; its peak is reported alongside on. Cache input would still count toward
-real TPM. All rate-limit-error counters are zero; no rate-limit error was injected.
-
 | Turn / writer / route | Package | Overlap calls | Overlap summed input | Peak 60 s input on / off | Rate errors on / off |
 | --- | --- | ---: | ---: | ---: | ---: |
 | 0 / 13 / 200k | main | 3 | 1,313,575 | 4,635,903 / 4,673,897 | 0 / 0 |
@@ -143,99 +239,7 @@ real TPM. All rate-limit-error counters are zero; no rate-limit error was inject
 | 10 / 28 / 272k | main | 3 | 1,302,703 | 1,231,733 / 1,078,977 | 0 / 0 |
 | 10 / 28 / 272k | branch | 6 | 1,938,679 | 1,078,980 / 1,078,981 | 0 / 0 |
 
-Some combined peaks exceed Luna's 2,000,000-token rolling-minute limit, including main's 5 s / 272k cells.
-These uncached loopback estimates supply neither a provider rate-limit test nor a safe provider cadence.
-
-### Coalescing, cut 5 and the budget gate
-
-The one-second first-link timer and re-entry through an old context were removed, together with their
-specification and CHANGELOG description. An ablation of U8 with that timer (`1e9cb6b`, build
-`0ed2e1ce0975dc09`) against the final runtime changed **no served count in 11/12** cells at turn delays of
-2 s or more. The remaining cell, 2 s / 28 s / 200k, served **0/3 with coalescing versus 1/3 without**.
-There was no measured service gain to retain as a maintainer proposal. The two timer-only tests were removed;
-the accepted partial-batch, uncovered-pair, readback, changed-source and segments-off tests remain folded into
-`SyntheticSession` in the existing preview test file.
-
-At **200k / 13 s, cut 5**:
-
-| Turn delay | Result | Segment calls in interval | Segment input | Last covered fixture result | U8 wait |
-| --- | --- | ---: | ---: | --- | ---: |
-| 0 s, worst case | `tail` | 1 | 35,761 | `p5-00123` | 7.88 s |
-| 2 s | served | 3 | 232,766 | `p5-00154` | none |
-| 5 s | `tail` | 3 | 180,044 | `p5-00141` | 0 ms |
-| 10 s | `tail` | 3 | 180,044 | range IDs not instrumented in this early worker | 0 ms |
-
-At zero delay the boundary outruns the first segment; finishing it still leaves too much tail. At 2 s, later
-snapshots capture more batches and the chain serves cut 5. At 5 and 10 s, three successful calls read inputs
-35,761 + 59,937 + 84,346 = 180,044 tokens; all finish before the boundary. U9 counts input + cache writes + output
-and refuses further starts once the interval spends its 150,000-token trigger. The 5 s last segment stops at
-`p5-00141`, before the final batches; the tail exceeds the 22,500-token range. The 10 s worker predates the
-range-ID diagnostic, but its inputs, three linked successes, exhausted spend and `tail` result agree. Thus the
-cut-5 tail **does not persist at every delay**, but persists at 5 and 10 s for a spending-limit reason.
-Slower 28 s writers can capture larger snapshots with fewer early calls. Limits and cache accounting were
-left unchanged; the loopback's zero cache reads differ from a provider session with cache hits. `limited`
-continues to mean scope-cropped notes, not a U9 refusal.
-
-The replacement gate is evaluated at 5 s turns, using raw milliseconds and matching boundaries by gold cut:
-
-| Writer / route | Branch served vs main | Branch total pause vs own off | Largest non-first boundary excess over own off | Gate |
-| --- | --- | --- | --- | --- |
-| 13 s / 200k | 0/3 vs 3/3 | 40,355 vs 39,653 ms | not the 13 s condition | fails service and total pause |
-| 13 s / 272k | 0/2 vs 2/2 | 26,407 vs 26,486 ms | not the 13 s condition | fails service |
-| 28 s / 200k | 2/3 vs 1/3 | 43,526 vs 85,002 ms | -174 ms (cut 3) | pause condition passes |
-| 28 s / 272k | 0/2 vs 0/2 | 56,339 vs 56,559 ms | +36 ms (cut 4) | pause condition passes |
-
-No 28 s boundary, including either first boundary, exceeds its control by 2 s. The 13 s failures decide the
-gate, so **no Luna budget or provider run is proposed**. Earlier real-provider results below are unchanged;
-the oracle here cannot test ambiguous supersedes or retrieval quality.
-
-### Reproduction and checks
-
-Build each checkout into its own output parent: the archive and package report are siblings of `package`.
-For each package, run both settings and the 16 turn/writer/route combinations. Use cuts `1,3,5`, window `180000`
-for 200k; cuts `2,4`, window `240000` for 272k, both with reserve `30000`. For the ablation, build `1e9cb6b`
-and run only on, turn delays 2/5/10 s. The updated bench script is used for every candidate package.
-
-```sh
-node scripts/context-memory-preview-build.mjs --output-dir <build-root>/package
-node scripts/context-memory-preview-bench.mjs --package-dir <build-root>/package --stock-root .artifacts/context-memory-preview-stock --output-dir <scratch> --mode probes --provider loopback --fixtures P5 --cache session --replay --replay-tools --pace immediate --cuts <cuts> --window <window> --reserve 30000 --compactions-only --latency-ms <13000|28000> --turn-latency-ms <0|2000|5000|10000> --session-settings previewSegments=<on|off> --chain-attempts 1 --unit-minutes 20 --label <unique-cell>
-```
-
-All checks below are offline and run on the final runtime. `<build-root>/package` means the committed branch
-rebuild with its matching report/archive. `<pi>` names each clean official root; output paths are scratch.
-The primary acceptance command also repeats `--compatible-stock-root` for 1.3.0, 1.2.0 and 1.1.0.
-
-| Command | Result | Exit |
-| --- | --- | ---: |
-| `node scripts/context-memory-ops.mjs verify` | 727 runtime tests / 15 files; 161 script tests; core 221 twice including isolation; 39 adapter tests; security 107 + 240 + 3 + 111 | 0 |
-| `node scripts/context-memory-ops.mjs preview` | segments off: Pi 1.4.0 42/42, older hosts 36/36 each; strict scenarios 157/157; release checks 37/37; local archive preparation | 0 |
-| `node scripts/context-memory-preview-acceptance.mjs --package-dir <build-root>/package --stock-root <pi> --segments on --output-dir <out>` | Pi 1.4.0: 42/42; 1.3.0, 1.2.0, 1.1.0: 36/36 each | 0 each |
-| `node scripts/context-memory-preview-scenarios.mjs --package-dir <build-root>/package --stock-root .artifacts/context-memory-preview-stock --other-stock-root .artifacts/context-memory-preview-stock-1.0.4 --segments on --acceptance-profile strict --output-dir <out>` | 157 passed; 0 failures, known gaps, skips or performance exceptions; 50 ms / growth bounds met | 0 |
-| From `packages/coding-agent`: `PI_OFFLINE=1 CONTEXT_MEMORY_FUZZ_SEEDS=200 CONTEXT_MEMORY_FUZZ_REPORT=<out>.json node ../../node_modules/vitest/dist/cli.js run test/context-memory-preview-fuzz.test.ts` | 201/201 tests, 200 seeds x 48 operations; every required reach met, including skipped wait | 0 |
-| `node node_modules/vitest/dist/cli.js run packages/compaction-core/test` | 221/221 / 10 files; 34 base + 35 segment vectors; manifest checked by `verify` | 0 |
-| `node --test scripts/context-memory-preview-bench.test.mjs` (also in `verify`) | 9/9, including both latency flags' shared bounds and local-only CLI guards | 0 |
-| `node scripts/context-memory-equivalence-compare.mjs <main.jsonl> <branch.jsonl>` | segments off on P5: 3 + 2 settled cases and 3 + 2 native-batch cases equal, 10 total | 0 x 4 |
-| `git diff --check` | clean | 0 |
-
-Equivalence uses the replay command with off, both delays zero and `--equivalence-out <file>`, both with and
-without `--replay-tools`. Notes/summary hashes, citations, coverage and error classes match. Only the existing
-top-level build-provenance exclusion and positional aliases for native random IDs apply; no field was removed.
-
-Fuzz reaches: segments 88, sync 519, compaction failure 95, ruling replacement 51, merge after wait 8,
-**skipped wait 9**, custom-focus fallback 41, tail fallback 86, hanging segment 96, hanging compaction 13,
-breaker 644, branch move before checkpoint 142 and restart dropping segments 313. These are all 13 required
-reach entries. It shortens wait/deadline to 3/60 ms and varies normal completion between a microtask and 24 ms.
-The first 8 ms variant passed all 100 seeds but missed the new skipped-wait reach: 100/101 tests, exit 1.
-Widening completion durations, while keeping that assertion, reaches both kept and skipped waits at the default
-100 seeds in `verify` and at 200 seeds above. This was a harness coverage failure, not an invariant failure.
-
-Earlier failures remain in the history of this entry: a 72/73 cut vector had an incorrect expected refusal;
-an early runner omitted batches and was discarded; cancelling a dispatched call exhausted U9 through unknown
-usage; shared sibling pack reports caused archive mismatches (33/36, primary 39/42); and stale-source release
-preparation correctly refused. An earlier 1.1.0 run hit the warming fixture's one-second observation race
-(35/36); an external delayed observation reproduced it on main and branch, and the unchanged full rerun passed.
-This follow-up's checks above pass without changing host code, acceptance assertions, source/manifest gates,
-cache accounting, spending limits or release versions. All nine CI checks passed on runtime/test head `084bf63`.
+</details>
 
 ## 0.8.0 WP5 rerun: GPT-6 Luna with the bounded tail, 2026-11-04 UTC
 

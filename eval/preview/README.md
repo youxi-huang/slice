@@ -111,7 +111,11 @@ node --experimental-strip-types scripts/context-memory-preview-bench.mjs \
 
 `--provider loopback`, the default, answers locally and never contacts a model service; it checks the harness.
 It reports usage proportional to each request, `ceil(bytes / 3)` of the messages and tools sent and of its answer,
-with no cache, and in the `context_history` condition it first reads the probe's first gold evidence entry once and
+with no cache by default. With `--cache session`, task, writer and segment requests read the longest complete
+earlier request whose whole messages are a prefix of this one, with identical tools and system-prompt items.
+A shared opening alone reads nothing; exact repeats qualify. Requests become reusable at dispatch, with no
+expiry within a chain, a simulation limit. Other cache modes remain labelled "no cache". In the
+`context_history` condition it first reads the probe's first gold evidence entry once and
 then answers unknown, as before, so every column of the token-overhead report has offline figures.
 In `repair` mode, `--provider deepseek-local` loads Pi's catalog model `deepseek/deepseek-flash` with its own
 compatibility settings and level map, moves only its address to the bench, and answers the repair with the case's
@@ -207,8 +211,11 @@ replies and `--turn-latency-ms` delays task replies, including the next tool-cal
 0 to 180000 milliseconds, default to zero and reject nonzero values for other providers. These are injected
 reply delays, not timings inferred from the fixture. Long delayed chains may need `--unit-minutes 20`.
 Round rows check every tool result and report HTTP request lifetimes; the replay summary adds overlapping
-segment calls, their summed input, peak rolling-minute input and rate-limit errors. These are loopback figures,
-with estimated input sizes and no simulated cache reads, separate from provider latency, cache and rate-limit evidence.
+segment calls, their summed input, peak rolling-minute input, each interval's linked segments and uncached
+spend, and rate-limit errors. With `--cache session` they include the continuation-cache simulation above;
+cached input still counts toward the peak. These estimates remain separate from provider latency, cache and
+rate-limit evidence. Run comparison variants sequentially on an otherwise idle machine. If any variant differs
+from main by exactly one served boundary, repeat that whole cell once and retain both runs.
 
 ### Token-overhead report
 
