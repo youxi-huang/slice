@@ -16,12 +16,14 @@ for pkg in ["main", "v1", "v2", "v3"]:
         kinds = {}
         for c in calls: kinds[c["kind"]] = kinds.get(c["kind"], 0) + 1
         allin = sum(c["input"] for c in calls)
-        bounds = sorted((json.loads(l) for l in open(f"{base}/boundaries.jsonl")), key=lambda x: x["startedAt"])
+        # Rows are appended in order; Pi's own (auto) compactions carry no startedAt.
+        bounds = [json.loads(l) for l in open(f"{base}/boundaries.jsonl")]
         first = bounds[0] if bounds else None
         cold = "-"
         if first and first.get("segmentsWaitMs") is not None:
-            done = [c for c in calls if c["kind"] != "main" and c.get("end", float("inf")) < first["startedAt"]]
-            if not done: cold = s(first["segmentsWaitMs"])
+            if first.get("startedAt") is None: cold = "?"
+            elif not [c for c in calls if c["kind"] != "main" and c.get("end", float("inf")) < first["startedAt"]]:
+                cold = s(first["segmentsWaitMs"])
         iv = "; ".join(f"{i['cut']}: {i['links']}/{n(i['uncachedSpend'])}" + (" + unknown" if i["unknown"] else "") for i in R.get("intervals", [])) or "-"
         def share(x): return "-" if not x or x.get("calls", 0) == 0 or x.get("cacheReadShare") is None else f"{x['cacheReadShare']*100:.2f}"
         seg = o["segmentCalls"] if arm == "on" else 0
