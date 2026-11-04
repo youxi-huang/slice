@@ -91,7 +91,7 @@ All input counts toward the real provider's limit. These remain synthetic input 
 
 <!-- serial-continuation-results:start -->
 
-Serial collection: **14/64 commands verified**, 36 committed boundaries. Status: **running**. Choice and budget remain unevaluated.
+Serial collection: **16/64 commands verified**, 40 committed boundaries. Status: **between cells**. Choice and budget remain unevaluated.
 
 | Run | Turn / writer / route | Package / arm | Served | Fallbacks | Wait n; total (P50/P95) | Pause P50/P95; total | Overlap calls / summed input | Peak 60 s input | Calls T/S/W; all input | Cold first wait | Cut: links / uncached spend | Segment / writer cache % | Rate errors |
 | --- | --- | --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | ---: | ---: |
@@ -109,6 +109,8 @@ Serial collection: **14/64 commands verified**, 36 committed boundaries. Status:
 | 1 | 5 / 13 / 272k | v1 / off | 0/2 | - | 0; 0.000 (-/-) | 13.147/13.407; 26.554 | 0 / 0 | 1,930,076 | 56/0/2; 5,595,855 | - | 2: 0/0; 4: 0/0 | - / 96.67 | 0 |
 | 1 | 5 / 13 / 272k | v2 / on | 2/2 | - | 0; 0.000 (-/-) | 0.060/0.129; 0.189 | 6 / 3,357,466 | 2,273,528 | 56/6/0; 7,053,648 | - | 2: 2/34,578 + unknown; 4: 3/37,203 | 90.50 / - | 0 |
 | 1 | 5 / 13 / 272k | v2 / off | 0/2 | - | 0; 0.000 (-/-) | 13.120/13.891; 27.011 | 0 / 0 | 1,930,076 | 56/0/2; 5,595,855 | - | 2: 0/0; 4: 0/0 | - / 96.67 | 0 |
+| 1 | 5 / 13 / 272k | v3 / on | 2/2 | - | 0; 0.000 (-/-) | 0.112/0.121; 0.233 | 10 / 4,427,519 | 2,383,905 | 56/10/0; 7,256,472 | - | 2: 4/56,815 + unknown; 4: 5/55,027 | 88.31 / - | 0 |
+| 1 | 5 / 13 / 272k | v3 / off | 0/2 | - | 0; 0.000 (-/-) | 13.101/13.114; 26.215 | 0 / 0 | 1,930,076 | 56/0/2; 5,595,855 | - | 2: 0/0; 4: 0/0 | - / 96.67 | 0 |
 
 <!-- serial-continuation-results:end -->
 
