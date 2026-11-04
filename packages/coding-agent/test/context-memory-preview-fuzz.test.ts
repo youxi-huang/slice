@@ -415,7 +415,7 @@ class Harness {
 		if (outcome === "refusal")
 			note.state.push({ text: "Synthetic fabricated fact.", sources: [records[0].id], quote: "Never said here." });
 		const body = JSON.stringify(note);
-		const schedule = this.random() < 0.3 ? (finish: () => void) => setTimeout(finish, 8) : queueMicrotask;
+		const schedule = this.random() < 0.3 ? (finish: () => void) => setTimeout(finish, 24) : queueMicrotask;
 		schedule(() =>
 			done(
 				reply(outcome === "length" ? "length" : "stop", [
