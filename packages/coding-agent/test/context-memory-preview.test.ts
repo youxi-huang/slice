@@ -24,6 +24,7 @@ import {
 	type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { memoryBudget, selectNoteBudget } from "../../compaction-core/src/config.ts";
 // The preview's validation walk now lives in the core copy (v0.7.0 WP2 step 3); the spy must target it.
 import * as memoryNotes from "../../compaction-core/src/notes.ts";
 import type { SessionRecord } from "../../compaction-core/src/records.ts";
@@ -32,7 +33,9 @@ import {
 	validateWorkNote,
 	WORK_NOTE_GUIDELINE,
 	workNotes,
+	writerSources,
 } from "../../compaction-core/src/work-notes.ts";
+import { sessionHandoverTokens } from "../../compaction-core/src/writer.ts";
 import { DEFAULT_MEMORY_CONFIG, SESSION_WRITER } from "../src/extensions/context-memory/config.ts";
 import { freezeHistory, queryHistory } from "../src/extensions/context-memory/history.ts";
 import {
@@ -53,6 +56,7 @@ import { CallJournal } from "../src/extensions/context-memory/preview/call-journ
 import type { PreviewCompaction, PreviewSession } from "../src/extensions/context-memory/preview/contracts.ts";
 import {
 	assertPreviewSession,
+	assertToolPairs,
 	chooseCut,
 	PreviewMemoryController,
 	piReserveTokens,
@@ -3316,6 +3320,7 @@ describe("preview segments at settled turns (0.8.0 WP2)", () => {
 	let root: string;
 	let session: SyntheticSession;
 	let journal: CallJournal;
+	let store: PreviewFailureStore;
 	let segments: PreviewSegments;
 	let controller: PreviewMemoryController;
 	let ctx: ExtensionContext;
@@ -3391,9 +3396,10 @@ describe("preview segments at settled turns (0.8.0 WP2)", () => {
 			ui: { notify: vi.fn() },
 			abort: vi.fn(),
 		} as unknown as ExtensionContext;
+		store = new PreviewFailureStore(join(root, "agent"));
 		controller = new PreviewMemoryController({
 			config: { ...DEFAULT_MEMORY_CONFIG, writerModel: SESSION_WRITER, noteRepair: false },
-			failureStore: new PreviewFailureStore(join(root, "agent")),
+			failureStore: store,
 			segments,
 			journal,
 		});
@@ -3453,6 +3459,211 @@ describe("preview segments at settled turns (0.8.0 WP2)", () => {
 		expect(instruction(requests[0])).toContain("Write a segment note for entries source-1 through reply-1 only");
 		expect(segments.status()).toMatchObject({ state: "idle", ready: 1, coveredThrough: "reply-1" });
 		expect(controller.status(ctx).calls).toMatchObject({ segmentCalls: 1, preparationCalls: 0, compactionCalls: 0 });
+	});
+
+	async function toolBatches(enabled = true, repeats = 4_000, reserveTokens?: number): Promise<PreviewCompaction> {
+		session.entries = [];
+		session.leafId = null;
+		session.persist();
+		if (!enabled) {
+			segments.dispose();
+			segments = new PreviewSegments({ enabled: false, journal });
+			controller = new PreviewMemoryController({
+				config: { ...DEFAULT_MEMORY_CONFIG, writerModel: SESSION_WRITER, noteRepair: false },
+				failureStore: store,
+				segments,
+				journal,
+				...(reserveTokens === undefined ? {} : { hostSettings: () => ({ compaction: { reserveTokens } }) }),
+			});
+		}
+		const append = (id: string, message: AgentMessage) =>
+			session.append({ type: "message", id, parentId: session.getLeafId(), timestamp, message });
+		append("u1", { role: "user", content: "Read the synthetic logs and continue.", timestamp: 1 });
+		controller.sessionStart(ctx);
+		for (const index of [1, 2, 3, 4]) {
+			const calls = [{ type: "toolCall" as const, id: `read-${index}`, name: "read", arguments: {} }];
+			if (index === 1) calls.push({ type: "toolCall", id: "parallel", name: "read", arguments: {} });
+			append(`a${index}`, { ...assistant(), content: calls, stopReason: "toolUse" });
+			if (index === 1) {
+				append("partial", {
+					role: "toolResult",
+					toolCallId: "parallel",
+					toolName: "read",
+					content: [{ type: "text", text: "First parallel result." }],
+					isError: false,
+					timestamp: 1,
+				});
+				controller.segment(ctx);
+				await segments.waitForIdle();
+				expect(requests).toHaveLength(0);
+			}
+			append(`r${index}`, {
+				role: "toolResult",
+				toolCallId: `read-${index}`,
+				toolName: "read",
+				content: [{ type: "text", text: index < 4 ? "Synthetic output. ".repeat(repeats) : "Done." }],
+				isError: false,
+				timestamp: 1,
+			});
+			if (enabled && index < 4)
+				outputs.push({
+					...fact(index, "Synthetic progress."),
+					state: [{ text: "Synthetic progress.", sources: [`r${index}`] }],
+				});
+			await settle();
+		}
+		append("done", assistant());
+		if (!enabled)
+			outputs.push({
+				...fact(1, "Synthetic progress."),
+				state: [{ text: "Synthetic progress.", sources: ["done"] }],
+			});
+		return controller.compact(event(), ctx);
+	}
+
+	it("commits tool chunks, keeps the uncovered batch paired and confirms disk readback", async () => {
+		const value = await toolBatches();
+		expect(value.details?.preparation?.path).toBe("segments");
+		expect(value.details?.preparation?.segmentIds).toHaveLength(3);
+		expect(requests).toHaveLength(3);
+		expect(value.details?.coveredThrough).toBe("r3");
+		expect(value.firstKeptEntryId).toBe("a4");
+		expect(value.details?.sourceHash).toBe(
+			hashEntries(session.entries.slice(0, session.entries.findIndex((entry) => entry.id === "r3") + 1)),
+		);
+		expect(store.inspect(session).state).toBe("pending");
+		commit(value);
+		expect(store.inspect(session).state).toBe("ready");
+		expect(controller.status(ctx).lastCompaction?.diskConfirmed).toBe(true);
+		expect(() => controller.assertReady(ctx)).not.toThrow();
+		expect(() => assertToolPairs(session.buildSessionProjection().messages)).not.toThrow();
+		expect(ctx.abort).not.toHaveBeenCalled();
+	});
+
+	it("keeps tool batches on the synchronous path with segments off", async () => {
+		const value = await toolBatches(false);
+		expect(requests).toHaveLength(1);
+		expect(value.details?.preparation).toBeUndefined();
+		expect(value.details?.coveredThrough).toBe("done");
+		expect(value.firstKeptEntryId).toBe(CONTEXT_KEEP_NONE);
+	});
+
+	it.each([
+		[180_000, false],
+		[180_000, true],
+		[240_000, false],
+		[240_000, true],
+	] as const)("compacts at Pi's trigger plus a P5 batch: window %i, segments %s", async (window, enabled) => {
+		const route = { ...model, contextWindow: window, maxTokens: 32_000 };
+		const reserve = 30_000;
+		ctx = {
+			...ctx,
+			model: route,
+			getContextUsage: () => ({ tokens: contextTokens, contextWindow: window, percent: null }),
+		};
+		contextTokens = window / 2;
+		controller = new PreviewMemoryController({
+			config: { ...DEFAULT_MEMORY_CONFIG, writerModel: SESSION_WRITER, noteRepair: false },
+			failureStore: store,
+			segments,
+			journal,
+			hostSettings: () => ({ compaction: { reserveTokens: reserve } }),
+		});
+		// Both checkpoints use this route. Complete batches exceed a segment range; the last short one stays raw.
+		const first = await toolBatches(enabled, 8_000, reserve);
+		if (enabled) {
+			expect(first.details?.preparation?.path).toBe("segments");
+			expect(first.firstKeptEntryId).toBe("a4");
+			expect(first.details?.coveredThrough).toBe("r3");
+		}
+		commit(first);
+		// P5's largest recorded tool batch has 67,059 ASCII bytes (22,353 bench tokens).
+		// The preceding request can sit immediately below Pi's trigger when that batch arrives.
+		const overshoot = 22_353;
+		contextTokens = window - reserve + overshoot;
+		ctx = {
+			...ctx,
+			model: route,
+			getContextUsage: () => ({ tokens: contextTokens, contextWindow: window, percent: null }),
+		};
+		turn(99, "Synthetic capacity evidence. ".repeat(16_000));
+		const branch = session.getBranch();
+		const previous = latestMemory(branch)!;
+		const active = new Set(
+			session
+				.buildSessionProjection()
+				.entries.filter((entry) => entry.messages.length)
+				.map((entry) => entry.sourceEntry.id),
+		);
+		const policy = selectNoteBudget(
+			DEFAULT_MEMORY_CONFIG,
+			memoryBudget(route).threshold,
+			memoryNotes.compactedSourceTokens(asRecords(branch.filter((entry) => active.has(entry.id)))),
+			Math.ceil(memoryNotes.noteBytes(previous.memory.note) / 3),
+		);
+		const output = Math.min(route.maxTokens, Math.max(4096, policy.hardTokens * 2));
+		const handover = sessionHandoverTokens({
+			maxOutputTokens: route.maxTokens,
+			previous: previous.memory.note,
+			increments: [],
+			uncovered: writerSources(asRecords(branch), previous),
+			branch: asRecords(branch),
+			noteTokens: policy.hardTokens,
+			baseNoteTokens: policy.baseTokens,
+		});
+		if (process.env.CONTEXT_MEMORY_CAPACITY_REPORT)
+			fs.appendFileSync(
+				process.env.CONTEXT_MEMORY_CAPACITY_REPORT,
+				`${JSON.stringify({
+					window,
+					enabled,
+					reserve,
+					overshoot,
+					prefix: contextTokens,
+					output,
+					instruction: handover - output,
+					required: handover + overshoot,
+					deficit: handover + overshoot - reserve,
+				})}\n`,
+			);
+		expect(handover + overshoot).toBeGreaterThan(reserve);
+		const start = requests.length;
+		for (let index = 0; index < 30; index++) outputs.push(fact(99, "Synthetic capacity progress."));
+		const value = await controller.compact({ ...event(), reason: "threshold" }, ctx);
+		expect(value.details?.writerModel).toBe("preview-test/preview-test");
+		expect(value.details?.coveredThrough).toBe("reply-99");
+		expect(value.details?.sourceHash).toBe(hashEntries(branch));
+		expect(value.firstKeptEntryId).toBe(CONTEXT_KEEP_NONE);
+		expect(requests.length - start).toBeGreaterThan(1);
+		for (const request of requests.slice(start)) {
+			expect(request.systemPrompt).toContain("You maintain a compact, evidence-backed memory");
+			expect(request.tools).toEqual([]);
+		}
+		const entry = { ...saved(session, value), id: "checkpoint-2" };
+		session.append(entry);
+		controller.committed(
+			{
+				type: "session_compact",
+				compactionEntry: entry,
+				fromExtension: true,
+				reason: "threshold",
+				willRetry: false,
+			},
+			ctx,
+		);
+		expect(store.inspect(session).state).toBe("ready");
+		expect(() => controller.assertReady(ctx)).not.toThrow();
+	});
+
+	it("blocks tool-chunk readback when a covered result changes under its ID", async () => {
+		const value = await toolBatches();
+		const result = session.getEntry("r1");
+		if (result?.type !== "message" || result.message.role !== "toolResult") throw new Error("Missing result");
+		result.message.content = [{ type: "text", text: "Changed synthetic output." }];
+		commit(value);
+		expect(store.inspect(session).state).toBe("blocked");
+		expect(() => controller.assertReady(ctx)).toThrow("CONTEXT_SOURCE_CHANGED");
+		expect(ctx.abort).toHaveBeenCalledOnce();
 	});
 
 	it("closes a later link only after a range's worth of new history, on top of the merged note", async () => {
@@ -3689,6 +3900,42 @@ describe("preview segments at settled turns (0.8.0 WP2)", () => {
 			const value = await changed({ ...fact(2, "unused"), instructions: [claimed], state: [moved] });
 			expect(value.details?.preparation).toMatchObject({ path: "sync", segmentsFallback: "instruction-superseded" });
 		});
+	});
+
+	it.each([
+		{ age: 1_000, skip: true },
+		{ age: 14_000, skip: false },
+	])("uses the last completed foreground call for U8 at $age ms (skip=$skip)", async ({ age, skip }) => {
+		let clock = 0;
+		vi.spyOn(performance, "now").mockImplementation(() => clock);
+		hold = true;
+		const initial = controller.compact(event(), ctx);
+		await vi.waitFor(() => expect(requests).toHaveLength(1));
+		clock = 28_000;
+		held?.release();
+		commit(await initial);
+		turn(2, long("The synthetic build is green."));
+		outputs.push(fact(2, "The synthetic build is green."));
+		controller.segment(ctx);
+		await vi.waitFor(() => expect(requests).toHaveLength(2));
+		clock += age;
+		expect(segments.skipWait(segments.waitMs)).toBe(skip);
+		hold = false;
+		const pending = controller.compact(event(), ctx);
+		if (!skip) {
+			clock += 28_000 - age;
+			held?.release();
+		}
+		const value = await pending;
+		if (skip) {
+			expect(value.details?.preparation).toMatchObject({ path: "sync", segmentsFallback: "in-flight" });
+			expect(value.details?.preparation?.segmentsWaitMs).toBeUndefined();
+			expect(held?.signal?.aborted).toBe(false);
+			held?.release();
+		} else {
+			expect(value.details?.preparation?.path).toBe("segments");
+			expect(value.details?.preparation?.segmentsWaitMs).toBe(14_000);
+		}
 	});
 
 	it("waits for the segment in flight that the boundary needs, and never past U8's bound", async () => {

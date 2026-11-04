@@ -358,10 +358,22 @@ session has already warmed: on DeepSeek, 95 to 97% of the writer's input over
 192 compactions. The closing message tells
 the model to call no tool. A tool call is never run: the first is answered as
 unavailable and the same request continues once. That continuation does not
-spend the compaction's one repair, so a compaction makes at most three writer
+spend the compaction's one repair, so a handover makes at most three writer
 calls. A second tool call, or one with `noteRepair` off, refuses the note with
 `CONTEXT_WRITER_FAILED`. On DeepSeek about one writer response in twenty called
 a tool.
+
+When a tool batch carries the session past Pi's compaction trigger and into
+its reserve, the full handover may not fit even with bare citation IDs. The
+same session model, at the same thinking level, then reads the original
+evidence in bounded chunks. The choice is made before the first writer request,
+never after a failure, so a writer that fails still blocks the session. Each
+chunk carries the note so far with the original IDs and offsets, and all chunks
+share the frozen note budget, the checks and the one repair. The price is more
+calls and no prefix cache: on GPT-6 Luna a chunked compaction took 143 and 155 s
+where a handover that fits took about 20 s. A larger `compaction.reserveTokens` in
+Pi's settings makes it rarer. Segment requests and the tail a segments
+checkpoint keeps are unchanged.
 
 Configuration is latched for the process; restart Pi after changing it. The
 preview uses the writer, note-budget, repair and retained-text settings from

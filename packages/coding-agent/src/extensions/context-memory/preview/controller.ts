@@ -22,6 +22,7 @@ import {
 	checkpointInterval as coreCheckpointInterval,
 	chooseCut as coreChooseCut,
 	prefixCut as corePrefixCut,
+	segmentPrefixCut,
 } from "../../../../../compaction-core/src/cuts.ts";
 import {
 	assertToolPairs,
@@ -710,7 +711,6 @@ export class PreviewMemoryController {
 			const branch = structuredClone(ctx.sessionManager.getBranch());
 			const records = asRecords(branch);
 			const interval = checkpointInterval(branch);
-			if (!this.segments.mayStart(sessionId, interval, trigger)) return;
 			const chain = this.segments.chain;
 			const choice = nextSegmentRange(records, {
 				chainEnd: chain.at(-1)?.snapshot.lastId,
@@ -718,6 +718,7 @@ export class PreviewMemoryController {
 				contextTokens: usage.tokens,
 			});
 			if (!("range" in choice)) return;
+			if (!this.segments.mayStart(sessionId, interval, trigger)) return;
 			// The current note: the base checkpoint's with the chain merged in. A chain that already leaves its
 			// boundary to the writer gains nothing from another link.
 			let current = latestMemory(records)?.memory.note;
@@ -1553,8 +1554,8 @@ export class PreviewMemoryController {
 				end: number,
 				share: number,
 				users: readonly SessionRecord[] = [],
+				start = prefixCut(branch, projection, end, cut),
 			): PrefixRefusal | undefined => {
-				const start = prefixCut(branch, projection, end, cut);
 				if (start === undefined) return "cut";
 				const retained = retainedFrom(start);
 				const retainedTokens = systemTokens + retained.reduce((sum, message) => sum + estimateTokens(message), 0);
@@ -1628,13 +1629,13 @@ export class PreviewMemoryController {
 						// A chain through the last entry covers everything, as a complete candidate does: the ordinary
 						// cut decides what stays. The prefix path would keep the covered last turn verbatim.
 						if (end === branch.length - 1) return undefined;
-						const start = prefixCut(branch, projection, end, cut);
+						const start = segmentPrefixCut(asRecords(branch), projection, end, cut);
 						if (
 							start !== undefined &&
 							retainedFrom(start).reduce((sum, message) => sum + estimateTokens(message), 0) > tailLimit
 						)
 							return "tail";
-						return commitPrefix(segmentsNote, end, 0.5);
+						return commitPrefix(segmentsNote, end, 0.5, [], start);
 					};
 					segmentsFallback = assemble();
 					if (
@@ -1643,10 +1644,13 @@ export class PreviewMemoryController {
 						segmentsFallback === "cut" ||
 						segmentsFallback === "tail"
 					) {
-						const waiting = performance.now();
-						const settled = await segments.settle(segments.waitMs, event.signal);
-						segmentsWaitMs = Math.round(performance.now() - waiting);
-						if (settled) segmentsFallback = assemble();
+						if (segments.skipWait(segments.waitMs)) segmentsFallback = "in-flight";
+						else {
+							const waiting = performance.now();
+							const settled = await segments.settle(segments.waitMs, event.signal);
+							segmentsWaitMs = Math.round(performance.now() - waiting);
+							if (settled) segmentsFallback = assemble();
+						}
 					}
 					if (!segmentsFallback) path = "segments";
 				}
@@ -1711,6 +1715,7 @@ export class PreviewMemoryController {
 					writerCallDetails: [],
 				});
 			} else {
+				const hooks = this.journal?.hooks(attempt.sessionId, "compaction", attempt.lastCheckpointId ?? "none");
 				written = await writeMemory({
 					config: this.config,
 					registry: ctx.modelRegistry,
@@ -1725,7 +1730,7 @@ export class PreviewMemoryController {
 					baseNoteTokens: policy.baseTokens,
 					signal: event.signal,
 					customInstructions: event.customInstructions,
-					callHooks: this.journal?.hooks(attempt.sessionId, "compaction", attempt.lastCheckpointId ?? "none"),
+					callHooks: hooks && this.segments ? this.segments.observeCalls(attempt.sessionId, hooks) : hooks,
 					onProgress: (progress) => {
 						this.lastProgress.set(attempt.sessionId, progress);
 					},

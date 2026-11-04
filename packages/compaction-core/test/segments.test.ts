@@ -345,6 +345,20 @@ describe("choosing the next range (0.8.0 WP2, U3)", () => {
 		});
 	});
 
+	it("defers even a full first range below half the trigger, then covers it at half", () => {
+		const records = [...branch(), long("u4", "a3"), reply("a4", "u4")];
+		expect(nextSegmentRange(records, { triggerTokens: trigger, contextTokens: 30_000 })).toEqual({
+			defer: "below-start",
+		});
+		expect(nextSegmentRange(records, { triggerTokens: trigger, contextTokens: 75_000 })).toMatchObject({
+			range: { firstId: "u1", lastId: "a4" },
+		});
+		const first = segment(records, "u1", "a4", [], note({ state: [fact("u1")] }));
+		const later = [...records, user("u5", "a4", "Continue checking."), reply("a5", "u5")];
+		expect(classifyChain([first], submission(later)).coveredThrough).toBe("a4");
+		expect(mergeChain(undefined, [first])).toEqual({ note: note({ state: [fact("u1")] }) });
+	});
+
 	it("closes a later link only after a range's worth of new history", () => {
 		const records = branch();
 		expect(nextSegmentRange(records, { chainEnd: "a1", triggerTokens: trigger, contextTokens: 0 })).toEqual({
@@ -394,6 +408,48 @@ describe("choosing the next range (0.8.0 WP2, U3)", () => {
 		expect(nextSegmentRange(answered, { chainEnd: "a3", triggerTokens: trigger, contextTokens: 0 })).toMatchObject({
 			range: { firstId: "u4", lastId: "a5" },
 		});
+	});
+
+	it("closes inside a long tool run only after every call in the batch has its result", () => {
+		const calls: SessionRecord = {
+			type: "message",
+			id: "calls",
+			parentId: "u4",
+			timestamp,
+			message: {
+				role: "assistant",
+				stopReason: "toolUse",
+				content: [
+					{ type: "toolCall", id: "read-1", name: "read", arguments: {} },
+					{ type: "toolCall", id: "read-2", name: "read", arguments: {} },
+				],
+			},
+		};
+		const first: SessionRecord = {
+			type: "message",
+			id: "r1",
+			parentId: "calls",
+			timestamp,
+			message: { role: "toolResult", toolCallId: "read-1", content: [{ type: "text", text: "x".repeat(75_000) }] },
+		};
+		const partial = [...branch(), user("u4", "a3", "Read the synthetic files."), calls, first];
+		expect(nextSegmentRange(partial, { chainEnd: "a3", triggerTokens: trigger, contextTokens: 80_000 })).toEqual({
+			defer: "unsettled",
+		});
+		const complete = [
+			...partial,
+			{
+				...first,
+				id: "r2",
+				parentId: "r1",
+				message: { role: "toolResult", toolCallId: "read-2", content: [{ type: "text", text: "Done." }] },
+			} satisfies SessionRecord,
+		];
+		expect(
+			nextSegmentRange(complete, { chainEnd: "a3", triggerTokens: trigger, contextTokens: 80_000 }),
+		).toMatchObject({ range: { firstId: "u4", lastId: "r2" } });
+		const link = segment(complete, "u1", "r2", [], note({ state: [{ text: "Both files read.", sources: ["r2"] }] }));
+		expect(classifyChain([link], submission(complete)).coveredThrough).toBe("r2");
 	});
 
 	it("starts after the base checkpoint's coverage, and refuses a chain end off the branch", () => {

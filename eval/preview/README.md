@@ -111,7 +111,11 @@ node --experimental-strip-types scripts/context-memory-preview-bench.mjs \
 
 `--provider loopback`, the default, answers locally and never contacts a model service; it checks the harness.
 It reports usage proportional to each request, `ceil(bytes / 3)` of the messages and tools sent and of its answer,
-with no cache, and in the `context_history` condition it first reads the probe's first gold evidence entry once and
+with no cache by default. With `--cache session`, task, writer and segment requests read the longest complete
+earlier request whose whole messages are a prefix of this one, with identical tools and system-prompt items.
+A shared opening alone reads nothing; exact repeats qualify. Requests become reusable at dispatch, with no
+expiry within a chain, a simulation limit. Other cache modes remain labelled "no cache". In the
+`context_history` condition it first reads the probe's first gold evidence entry once and
 then answers unknown, as before, so every column of the token-overhead report has offline figures.
 In `repair` mode, `--provider deepseek-local` loads Pi's catalog model `deepseek/deepseek-flash` with its own
 compatibility settings and level map, moves only its address to the bench, and answers the repair with the case's
@@ -191,12 +195,36 @@ than the default unit limit; give `--unit-minutes 30`.
 A replay run writes `boundaries.jsonl`, one content-free row per compaction attempt with its trigger (`auto`, `gold` or
 `retry`), path, segments fallback, U8 wait, pause, coverage at the gold checkpoint and foreground writer calls, and
 `rounds.jsonl` with each round's steps, turns, requests, cost and the preview's own count of how its segments ended
-(`segments.results` in `/compaction-status`). `summary.json` adds `replay`: the pause's P50, P95
-and maximum over every committed boundary, over those the segments served and over the writer's, fallbacks by cause,
+(`segments.results` in `/compaction-status`). `summary.json` adds `replay`: pause P50, P95, maximum and total
+over every committed boundary, over those the segments served and over the writer's, fallbacks by cause,
 waits, coverage at each gold checkpoint, and the calls of segments (merged and discarded apart), writers and the
 session's own turns, with cache reads and catalog costs, and those segment results summed with the rounds in which the
 breaker paused segments. A round's requests are its turns and every journaled call it
 dispatched, so the run's limits count segments too.
+
+With `--replay-tools`, the loopback replay drives official Pi through each recorded tool batch in one SDK session
+per fixture chain, so in-memory state survives its checkpoints. Adjacent assistant
+records are coalesced into the next tool-call reply; their text, calls and arguments remain, and tools return the
+recorded results and error status without executing commands. P5 has no elapsed tool times.
+This mode requires `--replay --pace immediate --cache session`, with `--provider loopback` or a provider run.
+`--latency-ms` delays loopback writer replies and `--turn-latency-ms` delays task replies, including the next
+tool-call batch. Both take integers from 0 to 180000 milliseconds and default to zero; `--latency-ms` rejects
+nonzero values for providers. These are injected reply delays, not timings inferred from the fixture. Long delayed
+chains may need `--unit-minutes 20`.
+
+With `--provider openai`, `relay` or `deepseek`, every task, writer and segment request goes to the provider with
+Pi's body and its own Authorization header unchanged, so the provider's cache holds the session's real prefix. Task
+requests cap output at the API's minimum before Pi builds them, their upstream answer is discarded, and the recorded
+reply is released after the upstream completes and the turn delay passes. Writers and segments answer at the
+provider's own latency. Forwarding stops at the first error or limit, a rate-limit error inside HTTP 200 included,
+and `--max-requests`, `--max-minutes`, `--max-cost-usd` and `--max-input-tokens` count every forwarded call.
+`scripts/context-memory-preview-provider-proof.mjs` proves the forwarding offline against fake upstreams.
+Round rows check every tool result and report HTTP request lifetimes; the replay summary adds overlapping
+segment calls, their summed input, peak rolling-minute input, each interval's linked segments and uncached
+spend, and rate-limit errors. With `--cache session` they include the continuation-cache simulation above;
+cached input still counts toward the peak. These estimates remain separate from provider latency, cache and
+rate-limit evidence. Run comparison variants sequentially on an otherwise idle machine. If any variant differs
+from main by exactly one served boundary, repeat that whole cell once and retain both runs.
 
 ### Token-overhead report
 

@@ -1,5 +1,497 @@
 # Validation record
 
+## 0.8.0 segment scheduling review: official-Pi P5 batch replay, offline and on GPT-6 Luna, 2026-11-04 UTC
+
+**Grid complete and V2 selected. The block GPT-6 Luna found is fixed, and every chain completed after the fix.
+Segments stay off by default, and 0.8.0 ships them as an experiment.** The serial grid's eight cells and its one
+required repeat ran on five machines. Rule C, as the maintainer amended it, selects V2, the runtime this branch has
+carried since `1bf62be`, and D's gate holds for every variant. The provider replay mode is merged from
+`codex/segments-p5-provider` and proven offline. In Luna's first four chains, V2 served boundaries in 48 and 108 ms,
+and on the 200k route a boundary segments did not serve left the session writer no room: the chain stopped with
+`CONTEXT_WRITER_CAPACITY`. The cause is the reserve, not segments. Merged from `codex/segments-p5-capacity`, the
+writer now reads the evidence in bounded chunks when no handover fits. Rerun for US$0.46, every chain completed, but
+the chunked compaction took 143 s after one refused attempt. A small recovery check on Luna, for US$0.62, found no
+wrong answer: both arms passed 47 of 49 of P5's probes. The final checks pass on the final source.
+
+### Cache semantics and recorded provider evidence
+
+With `--provider loopback --cache session`, a request reads the longest **complete earlier request** whose
+whole messages are a prefix of this request, with identical tools and system-prompt items. Sharing an opening
+without continuing a whole earlier request reads nothing. Exact repeats also satisfy the prefix predicate.
+Requests become reusable at dispatch. The cache has no expiry within one chain; this is a simulation limit.
+Input is estimated as UTF-8 request bytes / 3, including tools; cached input plus fresh input equals the same
+estimated total as before. Task, writer and segment requests use the same session cache. One SDK session spans
+all checkpoints. The writer's `--latency-ms` and task's `--turn-latency-ms` retain their bounds and defaults.
+
+The continuation-only helper and its fork/continuation tests are committed in `d9e4513`: the existing bench test
+command passes **10/10, exit 0**. The frozen serial runner uses that commit. No adjustment was made to force its
+shares to match provider accounting. The requested segment effort is the session's; no reasoning or provider
+tokenisation is simulated.
+
+| Evidence | Segment cache-read share | Synchronous writer cache-read share |
+| --- | ---: | ---: |
+| Recorded Luna evidence: WP5's 14 segment calls / U5 session-level table | 100% | 95-97% |
+| Continuation simulation, V2 zero-delay diagnostic, 200k | 88.90% | 95.55% |
+| First serial 5 s / 13 s / 200k cell, main | 96.45% | 95.55% |
+| Same cell, V1 | 96.45% | 95.55% |
+| Same cell, V2 | 91.07% | 95.55% |
+| Same cell, V3 | 83.08% | 95.55% |
+| GPT-6 Luna through the provider replay mode, four chains below | 99.88-100% | 100% |
+
+The writer diagnostic agrees with the recorded range. Simulated segment shares stay below the recorded 100%,
+and the provider replay below reproduced 99.88 to 100% on Luna itself, so the simulation is conservative: it
+overstates uncached segment spend. The simulated rows are estimates on recorded P5 batches. Earlier provider
+evidence remains in the WP5 entries below and [Prompt cache](openai-api.md#prompt-cache).
+
+### Serial protocol and provenance
+
+Official Pi 1.4.0, fixture P5, 5/10 s task replies, 13/28 s writers, both routes, segments on and off. Each
+variant and its own control run one after another on the otherwise idle machine, with a three-second quiet
+gap. No builds, tests or other benchmarks run during a measured chain. Main runs first, then V1, V2 and V3,
+each on immediately followed by its off control. There are 64 base commands. If any variant differs from main
+by exactly one served boundary, repeat the entire eight-arm cell once and report both runs. Never select the
+better repeat.
+P5's roughly 70k-token run has eight tool batches; the recording supplies no elapsed tool times. Each completed
+200k chain verifies 46/46 tool results and the 272k chain 43/43, including their error flags.
+
+- Main: `980658b`, after #117.
+- V1: main plus U8 only: half-trigger first start, settled-turn ranges, user cut. Built as an uncommitted local variant.
+- V2: V1 plus complete-batch ranges and the core segments batch cut. Built as an uncommitted local variant from `eea33a3` by restoring the half-trigger guard.
+- V3: `eea33a3` runtime, with the earlier one-range first start as well as batch ranges/cut and U8.
+
+To reconstruct V1, start from main, take `preview/segments.ts` from `eea33a3`, and apply only that commit's
+controller changes to the `segments.skipWait` branch and the compaction journal's `observeCalls` hook; leave
+`extension.ts` and the core at main. V2's runtime is also available in committed form at `1bf62be`. The digest
+table binds the uncommitted variants used for measurement, rather than a subsequently rebuilt package.
+
+| Package | Preview source SHA-256 | Bundle SHA-256 | Archive SHA-256 |
+| --- | --- | --- | --- |
+| main | `ef16bf86bac1ed9b547b840828647ff7754293a1704e5e66d4cdf01d42b7866a` | `30ca900e401c13f1cacfd15667d9d5fdc5eb0ebefd1c452f966cc5944689676f` | `75cc33a0c1c1fbbe016f00574db52b458b73dc45f7653d46f97219bfdb885407` |
+| V1 | `653e1910b005317ab33d3c61dc90a1f1ca54d332dcaa1cf7bfec75308abe8521` | `be69b5ca6797600f2713d4fe0a083219544b819c7acadcac15a5d0530767bb12` | `ffc29def54a3b8ad6111ef6e8f4d9bc75265fda13b58debfb951de247dbb257d` |
+| V2 | `54b54e481662267f095a5855187de487894ea02142926eba9e3842ca9085ad1a` | `acc6da2caf014554f5d9a7ee90dd51824e21f07169efc28e2535e08813719415` | `168562c2deba96c58e74a0397908e357624413eb3c23970cbb420af160ecf6ea` |
+| V3 | `82625e6ce0676ef9337b6dcf01fa0d57db8f6e40cf7a556bea832d9218fdd16e` | `6981bf175d9fb7b1702115327c2f649bb3dad81404a18df68125d4d341b2b413` | `9b9b87918b7e6f6fe39f60e10c388add58c0c0aa042f339e0f94b2e6e7de8029` |
+
+The preview build ID is `stock-preview+src.` followed by the source hash's first 16 characters. The committed
+V2 build from `1bf62be` has byte-identical runtime code to the uncommitted V2 bundle; its matching clean archive
+SHA-256 is `240a7ac31d6f97c0d791fc161b8b3c65f2d9a7085cc442b5a300d00bdd0d1424`.
+Package copies load outside Node projects with official-host provenance and ancestor-shadow checks.
+
+The 200k route uses cuts `1,3,5`, window `180000`; 272k uses `2,4`, window `240000`; both reserve `30000`.
+Build every checkout into its own output parent, since its archive/report are siblings of `package`.
+
+```sh
+node scripts/context-memory-preview-build.mjs --output-dir <build-root>/package
+node scripts/context-memory-preview-bench.mjs --package-dir <build-root>/package --stock-root <official-pi-1.4.0> --output-dir <scratch> --mode probes --provider loopback --fixtures P5 --cache session --replay --replay-tools --pace immediate --cuts <cuts> --window <window> --reserve 30000 --compactions-only --latency-ms <13000|28000> --turn-latency-ms <5000|10000> --thinking medium --session-settings previewSegments=<on|off> --chain-attempts 1 --unit-minutes 20 --label <run-cell-package-arm>
+```
+
+The grid ran on five machines so that it would finish sooner. A cell's arms always ran on one machine, and every
+comparison stays within a cell. B to E rebuilt the four packages with `p5-tools/build-packages.sh`, which stops
+unless each `dist/extension.js` matches the bundle digest above; all matched, and every build ID matches its
+package. Each row below was recomputed from its machine's raw metrics (`summary.json`, `boundaries.jsonl` and
+`rounds.jsonl` per arm, content-free) and matched the published row.
+
+| Machine | Cells | Rows and raw metrics |
+| --- | --- | --- |
+| A, the earlier coordinator | 5 s / 13 s and 5 s / 28 s, both routes, and the required repeat | this entry through `a8d165f`; its later duplicate 10 s cells are not included |
+| B, the maintainer's reviewer session, Node 22 | 10 s / 28 s, both routes | `claude/confident-thompson-3k0e8p` at `ede43d2`, with `P5-CELL-INSTRUCTIONS.md` and `p5-tools/` |
+| C, Codex | 10 s / 13 s / 200k | `codex/segments-p5-cell-c` at `2fbda49` |
+| D, Codex | 10 s / 13 s / 272k | `codex/segments-p5-cell-d` at `c414bf6` |
+| E, Codex | 10 s / 28 s / 200k, a second run | `codex/segments-p5-cell-e` at `280bcaf` |
+
+Only 5 s / 28 s / 200k required a repeat: V3 served one boundary more than main. E's run was started before B's
+first run was known and counts like a repeat.
+
+### Serial results: the complete grid
+
+Times are seconds. Each cell gives served boundaries and total pause with segments on; the last column is the range
+of the four packages' synchronous controls in the same run. Nearest-rank P95 over 2 or 3 boundaries is a chain's
+maximum, not a population tail. Interval spend is input + cache writes + output, excluding cache reads; unknown
+usage is marked, not treated as free. All input, cache reads included, counts toward the provider's limit; these
+are synthetic estimates.
+
+| Turn / writer / route | Run | main | V1 | V2 | V3 | Off controls |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| 5 / 13 / 200k | A1 | 3/3; 16.19 | 3/3; 16.14 | 3/3; 0.40 | 3/3; 0.34 | 39.29–40.10 |
+| 5 / 13 / 272k | A1 | 2/2; 16.01 | 2/2; 15.79 | 2/2; 0.19 | 2/2; 0.23 | 26.21–27.01 |
+| 5 / 28 / 200k | A1 | 1/3; 86.35 | 1/3; 71.93 | 3/3; 33.70 | 2/3; 43.51 | 84.32–84.84 |
+| 5 / 28 / 200k | A2 | 1/3; 86.36 | 1/3; 73.18 | 3/3; 33.27 | 2/3; 43.55 | 84.35–85.46 |
+| 5 / 28 / 272k | A1 | 0/2; 86.30 | 0/2; 56.33 | 2/2; 12.81 | 2/2; 2.59 | 56.28–61.26 |
+| 10 / 13 / 200k | C1 | 3/3; 6.08 | 3/3; 6.07 | 3/3; 0.14 | 3/3; 0.19 | 39.20–39.29 |
+| 10 / 13 / 272k | D1 | 2/2; 6.09 | 2/2; 6.04 | 2/2; 0.13 | 2/2; 0.12 | 26.15–26.20 |
+| 10 / 28 / 200k | B1 | 1/3; 86.32 | 1/3; 71.29 | 3/3; 0.25 | 3/3; 0.25 | 84.31–84.36 |
+| 10 / 28 / 200k | E2 | 1/3; 86.22 | 1/3; 71.19 | 3/3; 0.17 | 3/3; 0.17 | 84.19–84.25 |
+| 10 / 28 / 272k | B1 | 0/2; 86.24 | 0/2; 56.23 | 2/2; 0.19 | 2/2; 0.15 | 56.22–56.25 |
+
+<details>
+<summary>All 80 rows</summary>
+
+| Run | Turn / writer / route | Package / arm | Served | Fallbacks | Wait n; total (P50/P95) | Pause P50/P95; total | Overlap calls / summed input | Peak 60 s input | Calls T/S/W; all input | Cold first wait | Cut: links / uncached spend | Segment / writer cache % | Rate errors |
+| --- | --- | --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | ---: | ---: |
+| A1 | 5 / 13 / 200k | main / on | 3/3 | - | 2; 15.890 (7.922/7.968) | 8.023/8.052; 16.188 | 4 / 1,200,552 | 1,380,592 | 61/4/0; 4,765,989 | 7.968 | 1: 1/4,728; 3: 1/4,892; 5: 1/4,608 + unknown | 96.45 / - | 0 |
+| A1 | 5 / 13 / 200k | main / off | 0/3 | - | 0; 0.000 (-/-) | 13.117/13.167; 39.393 | 0 / 0 | 1,306,598 | 61/0/3; 4,674,261 | - | 1: 0/0; 3: 0/0; 5: 0/0 | - / 95.55 | 0 |
+| A1 | 5 / 13 / 200k | v1 / on | 3/3 | - | 2; 15.897 (7.930/7.967) | 8.021/8.026; 16.142 | 4 / 1,200,543 | 1,380,582 | 61/4/0; 4,765,942 | 7.967 | 1: 1/4,728; 3: 1/4,892; 5: 1/4,609 + unknown | 96.45 / - | 0 |
+| A1 | 5 / 13 / 200k | v1 / off | 0/3 | - | 0; 0.000 (-/-) | 13.139/13.210; 39.437 | 0 / 0 | 1,306,591 | 61/0/3; 4,674,217 | - | 1: 0/0; 3: 0/0; 5: 0/0 | - / 95.55 | 0 |
+| A1 | 5 / 13 / 200k | v2 / on | 3/3 | - | 0; 0.000 (-/-) | 0.118/0.237; 0.397 | 10 / 4,240,764 | 1,737,342 | 61/10/0; 6,135,448 | - | 1: 2/26,091 + unknown; 3: 3/18,394 + unknown; 5: 3/33,245 | 91.07 / - | 0 |
+| A1 | 5 / 13 / 200k | v2 / off | 0/3 | - | 0; 0.000 (-/-) | 13.116/13.900; 40.103 | 0 / 0 | 1,306,591 | 61/0/3; 4,674,217 | - | 1: 0/0; 3: 0/0; 5: 0/0 | - / 95.55 | 0 |
+| A1 | 5 / 13 / 200k | v3 / on | 3/3 | - | 0; 0.000 (-/-) | 0.116/0.155; 0.342 | 14 / 4,709,530 | 1,663,654 | 61/14/0; 5,914,622 | - | 1: 4/62,245; 3: 5/68,032; 5: 4/49,767 + unknown | 83.08 / - | 0 |
+| A1 | 5 / 13 / 200k | v3 / off | 0/3 | - | 0; 0.000 (-/-) | 13.084/13.131; 39.290 | 0 / 0 | 1,306,591 | 61/0/3; 4,674,217 | - | 1: 0/0; 3: 0/0; 5: 0/0 | - / 95.55 | 0 |
+| A1 | 5 / 13 / 272k | main / on | 2/2 | - | 2; 15.807 (7.863/7.944) | 7.984/8.023; 16.007 | 3 / 1,302,636 | 2,192,605 | 56/3/0; 5,733,164 | - | 2: 2/8,738; 4: 1/5,559 | 97.39 / - | 0 |
+| A1 | 5 / 13 / 272k | main / off | 0/2 | - | 0; 0.000 (-/-) | 13.142/13.240; 26.382 | 0 / 0 | 1,930,085 | 56/0/2; 5,595,892 | - | 2: 0/0; 4: 0/0 | - / 96.67 | 0 |
+| A1 | 5 / 13 / 272k | v1 / on | 2/2 | - | 2; 15.651 (7.740/7.911) | 7.831/7.963; 15.794 | 3 / 1,302,629 | 2,192,595 | 56/3/0; 5,733,122 | - | 2: 2/8,737; 4: 1/5,560 | 97.39 / - | 0 |
+| A1 | 5 / 13 / 272k | v1 / off | 0/2 | - | 0; 0.000 (-/-) | 13.147/13.407; 26.554 | 0 / 0 | 1,930,076 | 56/0/2; 5,595,855 | - | 2: 0/0; 4: 0/0 | - / 96.67 | 0 |
+| A1 | 5 / 13 / 272k | v2 / on | 2/2 | - | 0; 0.000 (-/-) | 0.060/0.129; 0.189 | 6 / 3,357,466 | 2,273,528 | 56/6/0; 7,053,648 | - | 2: 2/34,578 + unknown; 4: 3/37,203 | 90.50 / - | 0 |
+| A1 | 5 / 13 / 272k | v2 / off | 0/2 | - | 0; 0.000 (-/-) | 13.120/13.891; 27.011 | 0 / 0 | 1,930,076 | 56/0/2; 5,595,855 | - | 2: 0/0; 4: 0/0 | - / 96.67 | 0 |
+| A1 | 5 / 13 / 272k | v3 / on | 2/2 | - | 0; 0.000 (-/-) | 0.112/0.121; 0.233 | 10 / 4,427,519 | 2,383,905 | 56/10/0; 7,256,472 | - | 2: 4/56,815 + unknown; 4: 5/55,027 | 88.31 / - | 0 |
+| A1 | 5 / 13 / 272k | v3 / off | 0/2 | - | 0; 0.000 (-/-) | 13.101/13.114; 26.215 | 0 / 0 | 1,930,076 | 56/0/2; 5,595,855 | - | 2: 0/0; 4: 0/0 | - / 96.67 | 0 |
+| A1 | 5 / 28 / 200k | main / on | 1/3 | in-flight 2 | 2; 30.005 (15.002/15.003) | 43.097/43.175; 86.346 | 3 / 1,314,720 | 1,380,592 | 61/3/2; 4,917,673 | 15.002 | 1: 1/4,728; 3: 1/4,860; 5: 1/4,683 + unknown | 96.40 / 96.21 | 0 |
+| A1 | 5 / 28 / 200k | main / off | 0/3 | - | 0; 0.000 (-/-) | 28.122/28.138; 84.349 | 0 / 0 | 1,306,598 | 61/0/3; 4,674,261 | - | 1: 0/0; 3: 0/0; 5: 0/0 | - / 95.55 | 0 |
+| A1 | 5 / 28 / 200k | v1 / on | 1/3 | in-flight 2 | 1; 15.002 (15.002/15.002) | 28.713/43.129; 71.933 | 3 / 1,314,712 | 1,380,582 | 61/3/2; 4,917,626 | 15.002 | 1: 1/4,728; 3: 1/4,861; 5: 1/4,683 + unknown | 96.40 / 96.21 | 0 |
+| A1 | 5 / 28 / 200k | v1 / off | 0/3 | - | 0; 0.000 (-/-) | 28.334/28.408; 84.840 | 0 / 0 | 1,306,591 | 61/0/3; 4,674,217 | - | 1: 0/0; 3: 0/0; 5: 0/0 | - / 95.55 | 0 |
+| A1 | 5 / 28 / 200k | v2 / on | 3/3 | - | 3; 33.229 (12.765/12.904) | 12.865/12.968; 33.697 | 6 / 3,743,150 | 1,459,288 | 61/6/0; 5,176,957 | - | 1: 2/16,194; 3: 2/25,738; 5: 2/27,534 | 89.35 / - | 0 |
+| A1 | 5 / 28 / 200k | v2 / off | 0/3 | - | 0; 0.000 (-/-) | 28.143/28.198; 84.446 | 0 / 0 | 1,306,591 | 61/0/3; 4,674,217 | - | 1: 0/0; 3: 0/0; 5: 0/0 | - / 95.55 | 0 |
+| A1 | 5 / 28 / 200k | v3 / on | 2/3 | in-flight 1 | 2; 15.244 (2.872/12.372) | 12.469/28.098; 43.510 | 10 / 5,343,956 | 1,689,455 | 61/10/1; 5,645,143 | - | 1: 3/29,129; 3: 4/45,164; 5: 3/38,722 | 87.02 / 95.68 | 0 |
+| A1 | 5 / 28 / 200k | v3 / off | 0/3 | - | 0; 0.000 (-/-) | 28.118/28.119; 84.322 | 0 / 0 | 1,306,591 | 61/0/3; 4,674,217 | - | 1: 0/0; 3: 0/0; 5: 0/0 | - / 95.55 | 0 |
+| A2 | 5 / 28 / 200k | main / on | 1/3 | in-flight 2 | 2; 30.003 (15.001/15.002) | 43.114/43.137; 86.365 | 3 / 1,314,720 | 1,380,592 | 61/3/2; 4,917,673 | 15.002 | 1: 1/4,728; 3: 1/4,860; 5: 1/4,683 + unknown | 96.40 / 96.21 | 0 |
+| A2 | 5 / 28 / 200k | main / off | 0/3 | - | 0; 0.000 (-/-) | 28.613/28.743; 85.464 | 0 / 0 | 1,306,598 | 61/0/3; 4,674,261 | - | 1: 0/0; 3: 0/0; 5: 0/0 | - / 95.55 | 0 |
+| A2 | 5 / 28 / 200k | v1 / on | 1/3 | in-flight 2 | 1; 15.003 (15.003/15.003) | 28.162/44.934; 73.183 | 3 / 1,314,712 | 1,380,582 | 61/3/2; 4,917,626 | 15.003 | 1: 1/4,728; 3: 1/4,861; 5: 1/4,683 + unknown | 96.40 / 96.21 | 0 |
+| A2 | 5 / 28 / 200k | v1 / off | 0/3 | - | 0; 0.000 (-/-) | 28.111/28.136; 84.347 | 0 / 0 | 1,306,591 | 61/0/3; 4,674,217 | - | 1: 0/0; 3: 0/0; 5: 0/0 | - / 95.55 | 0 |
+| A2 | 5 / 28 / 200k | v2 / on | 3/3 | - | 3; 32.946 (12.665/12.763) | 12.734/12.889; 33.267 | 6 / 3,743,150 | 1,459,288 | 61/6/0; 5,176,957 | - | 1: 2/24,961; 3: 2/25,738; 5: 2/27,534 | 87.99 / - | 0 |
+| A2 | 5 / 28 / 200k | v2 / off | 0/3 | - | 0; 0.000 (-/-) | 28.148/28.846; 85.106 | 0 / 0 | 1,306,591 | 61/0/3; 4,674,217 | - | 1: 0/0; 3: 0/0; 5: 0/0 | - / 95.55 | 0 |
+| A2 | 5 / 28 / 200k | v3 / on | 2/3 | in-flight 1 | 2; 15.193 (2.564/12.629) | 12.789/28.124; 43.549 | 10 / 5,343,956 | 1,689,455 | 61/10/1; 5,645,143 | - | 1: 3/29,129; 3: 4/45,164; 5: 3/38,722 | 87.02 / 95.68 | 0 |
+| A2 | 5 / 28 / 200k | v3 / off | 0/3 | - | 0; 0.000 (-/-) | 28.207/28.313; 84.634 | 0 / 0 | 1,306,591 | 61/0/3; 4,674,217 | - | 1: 0/0; 3: 0/0; 5: 0/0 | - / 95.55 | 0 |
+| A1 | 5 / 28 / 272k | main / on | 0/2 | tail 1, in-flight 1 | 2; 30.006 (15.002/15.004) | 43.127/43.168; 86.295 | 3 / 1,790,996 | 2,192,605 | 56/3/2; 6,108,111 | - | 2: 2/8,738; 4: 1/5,515 | 97.38 / 96.67 | 0 |
+| A1 | 5 / 28 / 272k | main / off | 0/2 | - | 0; 0.000 (-/-) | 28.143/33.113; 61.256 | 0 / 0 | 1,930,085 | 56/0/2; 5,595,892 | - | 2: 0/0; 4: 0/0 | - / 96.67 | 0 |
+| A1 | 5 / 28 / 272k | v1 / on | 0/2 | in-flight 2 | 0; 0.000 (-/-) | 28.104/28.221; 56.325 | 3 / 1,790,987 | 2,262,786 | 56/3/2; 6,108,072 | - | 2: 2/8,737; 4: 1/5,514 | 97.38 / 96.67 | 0 |
+| A1 | 5 / 28 / 272k | v1 / off | 0/2 | - | 0; 0.000 (-/-) | 28.171/28.180; 56.351 | 0 / 0 | 1,930,076 | 56/0/2; 5,595,855 | - | 2: 0/0; 4: 0/0 | - / 96.67 | 0 |
+| A1 | 5 / 28 / 272k | v2 / on | 2/2 | - | 1; 12.357 (12.357/12.357) | 0.188/12.627; 12.815 | 6 / 5,285,533 | 2,416,586 | 56/6/0; 7,062,544 | - | 2: 2/34,578 + unknown; 4: 3/37,261 | 90.60 / - | 0 |
+| A1 | 5 / 28 / 272k | v2 / off | 0/2 | - | 0; 0.000 (-/-) | 28.130/28.146; 56.276 | 0 / 0 | 1,930,076 | 56/0/2; 5,595,855 | - | 2: 0/0; 4: 0/0 | - / 96.67 | 0 |
+| A1 | 5 / 28 / 272k | v3 / on | 2/2 | - | 1; 2.349 (2.349/2.349) | 0.138/2.451; 2.589 | 8 / 6,401,957 | 2,251,582 | 56/8/0; 6,728,762 | - | 2: 4/40,910; 4: 4/54,054 | 88.94 / - | 0 |
+| A1 | 5 / 28 / 272k | v3 / off | 0/2 | - | 0; 0.000 (-/-) | 28.199/28.254; 56.453 | 0 / 0 | 1,930,076 | 56/0/2; 5,595,855 | - | 2: 0/0; 4: 0/0 | - / 96.67 | 0 |
+| C1 | 10 / 13 / 200k | main / on | 3/3 | - | 2; 5.939 (2.954/2.985) | 3.005/3.018; 6.082 | 4 / 1,092,326 | 899,514 | 61/4/0; 4,766,161 | 2.985 | 1: 1/4,727; 3: 1/4,891; 5: 1/4,608 + unknown | 96.45 / - | 0 |
+| C1 | 10 / 13 / 200k | main / off | 0/3 | - | 0; 0.000 (-/-) | 13.074/13.104; 39.241 | 0 / 0 | 782,375 | 61/0/3; 4,674,453 | - | 1: 0/0; 3: 0/0; 5: 0/0 | - / 95.55 | 0 |
+| C1 | 10 / 13 / 200k | v1 / on | 3/3 | - | 2; 5.921 (2.951/2.970) | 3.002/3.003; 6.066 | 4 / 1,092,314 | 899,504 | 61/4/0; 4,766,072 | 2.970 | 1: 1/4,728; 3: 1/4,892; 5: 1/4,609 + unknown | 96.45 / - | 0 |
+| C1 | 10 / 13 / 200k | v1 / off | 0/3 | - | 0; 0.000 (-/-) | 13.067/13.069; 39.195 | 0 / 0 | 782,367 | 61/0/3; 4,674,370 | - | 1: 0/0; 3: 0/0; 5: 0/0 | - / 95.55 | 0 |
+| C1 | 10 / 13 / 200k | v2 / on | 3/3 | - | 0; 0.000 (-/-) | 0.056/0.056; 0.142 | 8 / 2,600,102 | 1,000,256 | 61/8/0; 5,132,234 | - | 1: 3/36,099; 3: 3/25,259; 5: 2/29,523 | 89.68 / - | 0 |
+| C1 | 10 / 13 / 200k | v2 / off | 0/3 | - | 0; 0.000 (-/-) | 13.093/13.100; 39.244 | 0 / 0 | 782,367 | 61/0/3; 4,674,370 | - | 1: 0/0; 3: 0/0; 5: 0/0 | - / 95.55 | 0 |
+| C1 | 10 / 13 / 200k | v3 / on | 3/3 | - | 0; 0.000 (-/-) | 0.060/0.089; 0.188 | 14 / 3,549,802 | 1,056,094 | 61/14/0; 5,914,772 | - | 1: 4/62,245; 3: 5/68,032; 5: 5/69,702 | 83.37 / - | 0 |
+| C1 | 10 / 13 / 200k | v3 / off | 0/3 | - | 0; 0.000 (-/-) | 13.109/13.111; 39.290 | 0 / 0 | 782,367 | 61/0/3; 4,674,370 | - | 1: 0/0; 3: 0/0; 5: 0/0 | - / 95.55 | 0 |
+| D1 | 10 / 13 / 272k | main / on | 2/2 | - | 2; 5.915 (2.925/2.990) | 3.011/3.083; 6.094 | 3 / 1,148,754 | 1,231,789 | 56/3/0; 5,733,317 | - | 2: 2/8,736; 4: 1/5,559 | 97.39 / - | 0 |
+| D1 | 10 / 13 / 272k | main / off | 0/2 | - | 0; 0.000 (-/-) | 13.063/13.086; 26.149 | 0 / 0 | 1,079,028 | 56/0/2; 5,596,066 | - | 2: 0/0; 4: 0/0 | - / 96.67 | 0 |
+| D1 | 10 / 13 / 272k | v1 / on | 2/2 | - | 2; 5.905 (2.918/2.987) | 2.991/3.054; 6.045 | 3 / 1,148,745 | 1,231,781 | 56/3/0; 5,733,240 | - | 2: 2/8,737; 4: 1/5,560 | 97.39 / - | 0 |
+| D1 | 10 / 13 / 272k | v1 / off | 0/2 | - | 0; 0.000 (-/-) | 13.083/13.120; 26.203 | 0 / 0 | 1,079,019 | 56/0/2; 5,595,986 | - | 2: 0/0; 4: 0/0 | - / 96.67 | 0 |
+| D1 | 10 / 13 / 272k | v2 / on | 2/2 | - | 0; 0.000 (-/-) | 0.052/0.076; 0.128 | 5 / 2,165,282 | 1,355,862 | 56/5/0; 5,948,992 | - | 2: 3/47,104; 4: 2/26,367 | 90.03 / - | 0 |
+| D1 | 10 / 13 / 272k | v2 / off | 0/2 | - | 0; 0.000 (-/-) | 13.076/13.096; 26.172 | 0 / 0 | 1,079,019 | 56/0/2; 5,595,986 | - | 2: 0/0; 4: 0/0 | - / 96.67 | 0 |
+| D1 | 10 / 13 / 272k | v3 / on | 2/2 | - | 0; 0.000 (-/-) | 0.048/0.069; 0.117 | 9 / 2,876,384 | 1,355,960 | 56/9/0; 6,188,063 | - | 2: 5/69,390; 4: 4/51,158 | 87.64 / - | 0 |
+| D1 | 10 / 13 / 272k | v3 / off | 0/2 | - | 0; 0.000 (-/-) | 13.096/13.102; 26.198 | 0 / 0 | 1,079,019 | 56/0/2; 5,595,986 | - | 2: 0/0; 4: 0/0 | - / 96.67 | 0 |
+| B1 | 10 / 28 / 200k | main / on | 1/3 | in-flight 2 | 2; 30.002 (15.001/15.001) | 43.088/43.110; 86.317 | 4 / 1,201,619 | 900,673 | 61/4/2; 5,047,531 | 15.001 | 1: 1/4,727; 3: 1/4,861; 5: 1/4,683 + unknown | 96.40 / 96.21 | 0 |
+| B1 | 10 / 28 / 200k | main / off | 0/3 | - | 0; 0.000 (-/-) | 28.109/28.153; 84.356 | 0 / 0 | 782,351 | 61/0/3; 4,674,197 | - | 1: 0/0; 3: 0/0; 5: 0/0 | - / 95.55 | 0 |
+| B1 | 10 / 28 / 200k | v1 / on | 1/3 | in-flight 2 | 1; 15.001 (15.001/15.001) | 28.114/43.087; 71.293 | 4 / 1,201,607 | 900,663 | 61/4/2; 5,047,443 | 15.001 | 1: 1/4,728; 3: 1/4,861; 5: 1/4,683 + unknown | 96.40 / 96.21 | 0 |
+| B1 | 10 / 28 / 200k | v1 / off | 0/3 | - | 0; 0.000 (-/-) | 28.115/28.133; 84.332 | 0 / 0 | 782,343 | 61/0/3; 4,674,114 | - | 1: 0/0; 3: 0/0; 5: 0/0 | - / 95.55 | 0 |
+| B1 | 10 / 28 / 200k | v2 / on | 3/3 | - | 0; 0.000 (-/-) | 0.083/0.132; 0.252 | 10 / 4,240,690 | 1,099,735 | 61/10/0; 6,135,306 | - | 1: 2/26,091 + unknown; 3: 3/18,394 + unknown; 5: 3/21,221 | 92.47 / - | 0 |
+| B1 | 10 / 28 / 200k | v2 / off | 0/3 | - | 0; 0.000 (-/-) | 28.100/28.115; 84.311 | 0 / 0 | 782,343 | 61/0/3; 4,674,114 | - | 1: 0/0; 3: 0/0; 5: 0/0 | - / 95.55 | 0 |
+| B1 | 10 / 28 / 200k | v3 / on | 3/3 | - | 0; 0.000 (-/-) | 0.091/0.112; 0.250 | 14 / 4,709,420 | 1,056,062 | 61/14/0; 5,914,472 | - | 1: 4/62,245; 3: 5/59,255; 5: 4/49,767 + unknown | 83.91 / - | 0 |
+| B1 | 10 / 28 / 200k | v3 / off | 0/3 | - | 0; 0.000 (-/-) | 28.100/28.131; 84.312 | 0 / 0 | 782,343 | 61/0/3; 4,674,114 | - | 1: 0/0; 3: 0/0; 5: 0/0 | - / 95.55 | 0 |
+| E2 | 10 / 28 / 200k | main / on | 1/3 | in-flight 2 | 2; 30.002 (15.001/15.001) | 43.052/43.075; 86.219 | 4 / 1,201,667 | 900,711 | 61/4/2; 5,047,845 | 15.001 | 1: 1/4,728; 3: 1/4,861; 5: 1/4,683 + unknown | 96.40 / 96.21 | 0 |
+| E2 | 10 / 28 / 200k | main / off | 0/3 | - | 0; 0.000 (-/-) | 28.068/28.088; 84.218 | 0 / 0 | 782,379 | 61/0/3; 4,674,498 | - | 1: 0/0; 3: 0/0; 5: 0/0 | - / 95.55 | 0 |
+| E2 | 10 / 28 / 200k | v1 / on | 1/3 | in-flight 2 | 1; 15.001 (15.001/15.001) | 28.061/43.058; 71.185 | 4 / 1,201,655 | 900,700 | 61/4/2; 5,047,758 | 15.001 | 1: 1/4,728; 3: 1/4,860; 5: 1/4,683 + unknown | 96.40 / 96.21 | 0 |
+| E2 | 10 / 28 / 200k | v1 / off | 0/3 | - | 0; 0.000 (-/-) | 28.062/28.077; 84.195 | 0 / 0 | 782,371 | 61/0/3; 4,674,409 | - | 1: 0/0; 3: 0/0; 5: 0/0 | - / 95.55 | 0 |
+| E2 | 10 / 28 / 200k | v2 / on | 3/3 | - | 0; 0.000 (-/-) | 0.060/0.073; 0.170 | 10 / 4,240,860 | 1,099,769 | 61/10/0; 6,135,637 | - | 1: 2/26,092 + unknown; 3: 3/18,394 + unknown; 5: 3/33,246 | 91.07 / - | 0 |
+| E2 | 10 / 28 / 200k | v2 / off | 0/3 | - | 0; 0.000 (-/-) | 28.066/28.070; 84.200 | 0 / 0 | 782,371 | 61/0/3; 4,674,409 | - | 1: 0/0; 3: 0/0; 5: 0/0 | - / 95.55 | 0 |
+| E2 | 10 / 28 / 200k | v3 / on | 3/3 | - | 0; 0.000 (-/-) | 0.058/0.069; 0.165 | 14 / 4,709,673 | 1,056,096 | 61/14/0; 5,914,818 | - | 1: 4/62,247; 3: 5/68,031; 5: 4/49,767 + unknown | 83.08 / - | 0 |
+| E2 | 10 / 28 / 200k | v3 / off | 0/3 | - | 0; 0.000 (-/-) | 28.081/28.096; 84.253 | 0 / 0 | 782,371 | 61/0/3; 4,674,409 | - | 1: 0/0; 3: 0/0; 5: 0/0 | - / 95.55 | 0 |
+| B1 | 10 / 28 / 272k | main / on | 0/2 | tail 1, in-flight 1 | 2; 30.002 (15.001/15.001) | 43.101/43.135; 86.236 | 3 / 1,302,735 | 1,231,761 | 56/3/2; 6,108,032 | - | 2: 2/8,736; 4: 1/5,514 | 97.38 / 96.67 | 0 |
+| B1 | 10 / 28 / 272k | main / off | 0/2 | - | 0; 0.000 (-/-) | 28.105/28.113; 56.218 | 0 / 0 | 1,079,004 | 56/0/2; 5,595,834 | - | 2: 0/0; 4: 0/0 | - / 96.67 | 0 |
+| B1 | 10 / 28 / 272k | v1 / on | 0/2 | in-flight 2 | 0; 0.000 (-/-) | 28.107/28.126; 56.233 | 3 / 1,302,726 | 1,269,837 | 56/3/2; 6,107,950 | - | 2: 2/8,737; 4: 1/5,514 | 97.38 / 96.67 | 0 |
+| B1 | 10 / 28 / 272k | v1 / off | 0/2 | - | 0; 0.000 (-/-) | 28.117/28.125; 56.242 | 0 / 0 | 1,078,995 | 56/0/2; 5,595,754 | - | 2: 0/0; 4: 0/0 | - / 96.67 | 0 |
+| B1 | 10 / 28 / 272k | v2 / on | 2/2 | - | 0; 0.000 (-/-) | 0.076/0.118; 0.194 | 6 / 3,564,863 | 1,380,583 | 56/6/0; 7,053,524 | - | 2: 2/18,274 + unknown; 4: 3/37,203 | 92.69 / - | 0 |
+| B1 | 10 / 28 / 272k | v2 / off | 0/2 | - | 0; 0.000 (-/-) | 28.122/28.131; 56.253 | 0 / 0 | 1,078,995 | 56/0/2; 5,595,754 | - | 2: 0/0; 4: 0/0 | - / 96.67 | 0 |
+| B1 | 10 / 28 / 272k | v3 / on | 2/2 | - | 0; 0.000 (-/-) | 0.051/0.102; 0.153 | 10 / 4,427,441 | 1,355,928 | 56/10/0; 7,256,340 | - | 2: 4/56,815 + unknown; 4: 5/55,027 | 88.31 / - | 0 |
+| B1 | 10 / 28 / 272k | v3 / off | 0/2 | - | 0; 0.000 (-/-) | 28.110/28.125; 56.235 | 0 / 0 | 1,078,995 | 56/0/2; 5,595,754 | - | 2: 0/0; 4: 0/0 | - / 96.67 | 0 |
+
+</details>
+
+### Decision: rule C as amended, and D's gate
+
+The maintainer amended rule C on 2026-11-04 after the first 5 s / 13 s cells showed V2 serving as often as V1
+while cutting total pause from 16.14 to 0.40 s. Qualification is unchanged: in every observed run a candidate serves
+at least as many boundaries as main, and its total pause exceeds its own control by at most 2 s, plus a
+first-boundary U8 wait only when no call had completed to supply an estimate. Among qualifiers, prefer V1, then V2,
+then V3. A more complex qualifier replaces a simpler one when, in at least two distinct cells, it serves more
+boundaries or pauses at least 5 s less in total, and in no cell serves fewer or pauses more than 2 s longer. Every
+observed run counts, repeats included.
+
+- **All three qualify.** No candidate serves fewer than main in any run. V1 never exceeds its control: its closest
+  runs are 56.33 against 56.35 s and 56.23 against 56.24 s on 272k with 28 s writers.
+- **V2 replaces V1.** It serves more in 5 s / 28 s on both routes and in 10 s / 28 s on both routes, in every run,
+  and pauses at least 5 s less in all four 13 s cells (16.14 to 0.40, 15.79 to 0.19, 6.07 to 0.14 and 6.04 to
+  0.13 s). It serves fewer or pauses longer in no cell.
+- **V3 does not replace V2.** It serves more in no cell and pauses at least 5 s less only in 5 s / 28 s / 272k
+  (2.59 against 12.81 s), and it serves one boundary fewer in 5 s / 28 s / 200k in both runs (2/3 against 3/3).
+- **What V2 costs.** 5 to 10 segment calls per chain against V1's 3 or 4, and 55,477 to 90,881 known uncached
+  segment tokens per chain against 14,229 to 14,297. Its peak rolling-minute input reaches 1,380,583 at 10 s
+  turns, below the 1,600,000 pacing line, and 2,416,586 at 5 s turns, above Luna's limit; any provider run uses
+  10 s turns.
+
+D's gate holds: in both 5 s / 13 s cells V2's raw total pause, 0.40 and 0.19 s, is below its controls of 40.10 and
+27.01 s, and V1 and V3 pass as well.
+
+### Provider replay mode
+
+Merged from `codex/segments-p5-provider` (`87e7c48`, `cc1aa02`, `69d0ed0`). The existing `--replay --replay-tools
+--cache session --pace immediate` accepts `--provider openai|relay|deepseek`, and `--turn-latency-ms` applies to
+its task replies; `--latency-ms` stays loopback-only and the existing provider limits stay required. Every task,
+writer and segment body and its own Authorization header pass unchanged through the repair forward path
+(`configureHttpDispatcher()`, the catalog address moved to checked `127.0.0.1`); no header is logged or retained.
+Tasks cap output before Pi serialises the request (Responses 16, Chat Completions 1), discard the upstream answer,
+and release the recorded reply after upstream completion and the turn delay. Luna's local replies use Responses;
+recorded reasoning and native `fc_` item IDs never enter later requests, and local message IDs are unique.
+Disconnects abort upstream, every forwarded request times out, and an error or limit stops later forwarding.
+
+| Command | Result / source | Exit |
+| --- | --- | ---: |
+| `node --test scripts/context-memory-preview-provider-proof.mjs scripts/context-memory-preview-bench.test.mjs` | 27/27: 17 proof + 10 bench; fake upstreams compare Pi's bytes and headers for two tasks, one writer and one segment per API, plus completion and delay order, disconnects and timeouts, HTTP 401/429, rate errors inside HTTP 200 and in-chain limits; `cc1aa02` | 0 |
+| Same command after the merge into this branch | 27/27 on Node 22, machine B, `61a614d` | 0 |
+| `node scripts/context-memory-ops.mjs verify` | core 221 + isolated 221; adapters 39; runtime 727; scripts 167; security 461; `cc1aa02` | 0 |
+| `node scripts/context-memory-ops.mjs preview` | `87e7c48`: stock 42/36/36/36, strict scenarios 157, release checks 37 | 0 |
+| `node scripts/context-memory-ops.mjs preview` | `cc1aa02`: stock 42/36/36/36; strict scenarios 156/157, the bounded-growth timing guard comparing 0 ms at 10 checkpoints with 16 ms at 20; the runtime is unchanged from `87e7c48` | 1 |
+
+The bounded-growth guard passed again in the [final checks](#final-checks).
+
+### GPT-6 Luna through the provider replay mode
+
+Provider evidence, apart from the simulated grid. The maintainer approved at most four chains before the first
+request, each at most 120 requests, 25 minutes, US$1 and 270,000 input tokens per request, stopping at the first
+4xx or rate-limit error. They used 232 requests and US$0.39, with no 4xx and no rate-limit error. Machine B ran
+them one at a time with nothing else measured: V2's package (build `stock-preview+src.54b54e481662267f`), official
+Pi 1.4.0, 10 s turns, Luna as the writer and segment model at its own latency, thinking `medium`. Raw metrics and
+the exact command: `LUNA-P5.md` and `luna-p5/` on `claude/confident-thompson-3k0e8p` at `348858d`.
+
+| Chain | Route | Segments | Boundaries | Paths | Total pause (s) | Requests T/S/W | Peak 60 s input | Cost (US$) |
+| --- | --- | --- | --- | --- | ---: | --- | ---: | ---: |
+| `luna-smoke-10-200k-v2-on` | 200k | on | 1 committed, then 2 failed | segments 1 | 0.048 | 41/5/0 | 840,582 | 0.0809 |
+| `luna-control-10-200k-v2-off` | 200k | off | 3/3 | sync 3 | 51.382 | 61/0/3 | 829,989 | 0.0953 |
+| `luna-10-272k-v2-on` | 272k | on | 2/2 | sync 1, segments 1 | 19.048 | 56/6/2 | 1,361,452 | 0.1148 |
+| `luna-control-10-272k-v2-off` | 272k | off | 2/2 | sync 2 | 37.524 | 56/0/2 | 1,170,524 | 0.0995 |
+
+- Luna accepted every locally answered history, and every tool result the chains reached replayed exactly.
+- On 272k, cut 2 fell back to the writer with `segmentsFallback: ambiguous-supersede` (18.9 s), and cut 4 was
+  served by segments in 108 ms.
+- Writers took 13.2 to 20.8 s and segments 15.0 to 42.7 s, longer than the grid's 28 s cells. Capped task requests
+  took 10.0 to 23.8 s in the first chain and never exceeded the 10 s turn delay afterwards.
+- Luna counted about 6% more input than the bench's bytes/3 estimate at cut 1 (146,117 against 137,545) and about
+  11% more at the control's cut 3 (144,428 against 130,048).
+
+### The writer's room at Pi's own trigger: the finding and its fix
+
+**What Luna showed.** In the first 200k chain with segments on, cut 1 was served by segments in 48 ms. Cut 3 became
+Pi's own trigger at step 4, in the middle of a tool batch, at 161,175 input tokens. Segments had not covered it:
+their calls took 21.6 to 42.7 s. The synchronous writer refused twice with `CONTEXT_WRITER_CAPACITY` ("the session
+context leaves no room for the handover request"), and the chain stopped.
+
+**Why, and why segments are not the cause.** Let `R` be Pi's reserve, `B` the batch that crosses the trigger, `O`
+the writer's output reservation and `I` its smallest handover instruction. A boundary reached at window − `R` + `B`
+fits a session handover only if `O` + `I` + `B` ≤ `R`, on any window. `O` is
+`min(model.maxTokens, max(4096, 2 × hardNoteTokens))`, 10,000 at the 5,000-token hard note budget used here.
+P5's largest batch is 67,059 bytes: 22,353 tokens at the bench's bytes/3, 16,765 at Pi's characters/4. The focused
+cases below measure `I` at 2,287 tokens with segments off and 3,751 after a segment commit, so the handover needs
+34,640 and 36,104 tokens: 4,640 and 6,104 more than the bench's 30,000 reserve, on both routes. At characters/4 the
+off case fits with 948 to spare and the on case is 516 short. These are synthetic lifecycle cases, not Luna's token
+counts. Pi's default reserve is 16,384 tokens (`DEFAULT_COMPACTION_SETTINGS.reserveTokens`), which the preview
+inherits when none is set, so a session at Pi's defaults is more exposed than the bench. Segments made the condition
+visible because V2 lets Pi's own trigger arrive; the segments-off chains cut below it (146,117, 144,428 and 142,503
+tokens against 150,000) and never met it.
+
+**The fix.** Merged from `codex/segments-p5-capacity` (`e23a4f9`, documented in `f4645df`) at `e758e11`. When
+none of the session handover forms fits, the core chooses before any request to read bounded chunks of original
+evidence through the same transport, model and thinking level, reusing the existing sequential chunk path
+(`writeInChunks`). Each chunk carries the preceding note and the referenced originals with their IDs and offsets;
+all chunks share the frozen note budget, the validator, one repair and the call journal, and every request is
+checked against the window before dispatch. A provider refusal or an invalid note still blocks the session. A
+handover that fits, exactly included, is unchanged, and segment calls keep their own capacity refusal; no
+scheduling, wait, cut, retained tail, reserve or setting changed. The cost is more calls and no session prefix cache
+for that compaction. The maintainer accepted the design on 2026-11-04 as consistent with "Do not substitute a writer
+on failure": the choice follows from the request's size before dispatch, the writer is the same, and a failure is
+never retried another way. The same condition stopped the prose session of
+[2026-11-01](#pis-default-trigger-on-a-272k-model-the-preview-stops-requests-first), whose `/compact` failed with
+`CONTEXT_WRITER_CAPACITY`; with the fix it would take the chunked path. That session was not rerun.
+
+**Regression.** `compacts at Pi's trigger plus a P5 batch: window %i, segments %s` in
+`context-memory-preview.test.ts` runs both routes with segments on and off. Each case commits a first checkpoint,
+then presents Pi's trigger plus one P5-sized batch to the writer. With only `packages/compaction-core/src/writer.ts`
+restored to its base bytes, all four fail with `CONTEXT_WRITER_CAPACITY` (exit 1); with the fix, all four pass
+(exit 0), with coverage and source hashes, paired retained tools and disk readback checked. Machine B reproduced
+both results. The core tests add exact fit, lossless multi-chunk evidence including Unicode, the unchanged segment
+refusal, writer identity and accounting, and no change of path after a dispatched writer fails.
+
+**No grid cell changes.** The fix acts only when no handover fits, and every one of the grid's 80 chains committed
+all its boundaries, so none reached that branch. The loopback did not reproduce the refusal either: with a 40 s
+writer at 10 s turns, U8 waited and segments served the boundary; a segments-off chain cut only at 5 committed one
+automatic checkpoint at 153,903 tokens, then stopped at `CONTEXT_INPUT_TOO_LARGE`, the preview's guard on a
+request's input, and a manual retry was refused as `CONTEXT_NOTE_SCOPE`. Neither is the writer's room.
+
+**On Luna after the fix.** The maintainer approved the same four chains on the same limits. They used 261 requests,
+45.6 minutes and US$0.46, with no 4xx and no rate-limit error, one at a time on an otherwise idle machine: package
+`stock-preview+src.7c815afa75319b7b` from `e758e11`, everything else as above. Raw metrics: `LUNA-P5.md` and
+`luna-p5/luna-10-*-v2fix-*` on `claude/confident-thompson-3k0e8p` at `6e68943`.
+
+| Chain | Route | Segments | Boundaries | Paths | Total pause (s) | Requests T/S/W | Peak 60 s input | Cost (US$) |
+| --- | --- | --- | --- | --- | ---: | --- | ---: | ---: |
+| `luna-10-200k-v2fix-on` | 200k | on | 3/3, one refused attempt before cut 3 | segments 1, sync 2 | 169.084 | 61/5/11 | 986,587 | 0.1509 |
+| `luna-10-200k-v2fix-off` | 200k | off | 3/3 | sync 3 | 60.436 | 61/0/3 | 829,994 | 0.0963 |
+| `luna-10-272k-v2fix-on` | 272k | on | 2/2 | sync 2 | 43.656 | 56/4/2 | 1,361,051 | 0.1114 |
+| `luna-10-272k-v2fix-off` | 272k | off | 2/2 | sync 2 | 49.668 | 56/0/2 | 1,170,526 | 0.0997 |
+
+- **No session blocked; the chunked path is slow, and it failed once.** Cut 1 was served by segments in 45 ms. Cut 3
+  again became Pi's own trigger at step 4, and the writer took the chunked path. The automatic attempt wrote three
+  chunks in 55.6 s, and its note failed validation with `CONTEXT_NOTE_INVALID`, a schema fault outside the
+  repairable classes (uncited sources, quotations, size), so it stopped there. The retry committed through seven
+  chunks in 143.1 s at 161,242 tokens: 25,849 to 35,274 input tokens and 18.1 to 23.3 s per call, none from the
+  cache. From the first chunk to the commit the session waited 198.8 s; the bench's pause counts only the committed
+  attempt. The ten chunk calls read 322,054 uncached tokens for US$0.044, against US$0.011 for all three writers of
+  the control, which read from the cache.
+- **Every chunk is another chance to fail.** Only uncited sources, quotations and size are repaired. A missing
+  section, a wrong type or a schema limit fails the note at once, and the chunked path asks for a whole note after
+  each chunk, so its exposure grows with the number of chunks. One refusal in two attempts is too few to give a rate.
+- **272k with segments on** went to the writer at both cuts after `ambiguous-supersede`, 15.0 and 28.6 s, and its
+  four segment calls were discarded. In the first run the merge served cut 4 in 108 ms. The fix touches neither the
+  merge nor the segments, so the difference comes from what Luna wrote in each run.
+- **The controls** paused 17.5 to 26.7 s per compaction, every writer reading from the cache: 60.4 s in all on 200k
+  (51.4 s before) and 49.7 s on 272k (37.5 s before).
+
+### Recovery on Luna with V2: a small check
+
+On 2026-11-04 the maintainer chose to ship 0.8.0 with segments off by default and asked first for a small recovery
+check on Luna, within US$5: the rerun's four chains with P5's probes, each answered on its own copy of the chain at
+its checkpoint with only `context_history` active (`--probe-conditions history --chain-attempts 4 --unit-minutes
+30`), each chain at most 250 requests, 45 minutes, US$1.20 and 270,000 input tokens per request. They used 614
+requests, 80.2 minutes and US$0.62, with no 4xx and no rate-limit error. The final checks ran on the same machine
+during the first chain, so its pauses are not timing evidence. Raw metrics: `luna-p5/luna-probes-*` on
+`claude/confident-thompson-3k0e8p` at `2e15513`.
+
+| Route | Segments | Boundaries | Paths | Total pause (s) | Probes passed (wrong, blocked, invalid) | Superseded values | Requests | Cost (US$) |
+| --- | --- | --- | --- | ---: | --- | --- | ---: | ---: |
+| 200k | on | 3/3 | segments 1, sync 2 | 178.129 | 28 of 30 (0, 0, 2) | 3 of 3 | 185 | 0.2527 |
+| 200k | off | 3/3 | sync 3 | 58.729 | 29 of 30 (0, 0, 1) | 3 of 3 | 169 | 0.1198 |
+| 272k | on | 2/2 | sync 2 | 40.782 | 19 of 19 (0, 0, 0) | 2 of 2 | 137 | 0.1305 |
+| 272k | off | 2/2 | sync 2 | 52.095 | 18 of 19 (0, 0, 1) | 2 of 2 | 123 | 0.1139 |
+
+**The gate's recovery criterion holds on this sample.** Both arms passed 47 of 49 probes with no wrong answer, no
+blocked probe and no fabrication, and every superseded value and every answer whose source crossed a checkpoint was
+right. Segments answered 43 from the records and 4 as correct unknowns, the controls 42 and 5; the misses are
+replies without a valid answer object. WP5's rerun found no wrong answer either. One chain per cell cannot show a
+difference of a probe or two.
+
+**The chunked path committed at the first attempt this time**, at Pi's own trigger on the 200k route again: seven
+chunks in 154.7 s, 18.1 to 26.7 s per call, none from the cache. Over the two runs it has committed twice and been
+refused once. Segments served one boundary of five; the others went to the writer after `ambiguous-supersede`.
+
+### Final checks
+
+On the final source, `e758e11`, Node 22.23.4, official npm Pi installations, package
+`stock-preview+src.7c815afa75319b7b` (bundle SHA-256 `310fd964…`). The commits after it change documents only. No
+model service was called; the Luna probe runs used another stock copy and are not timing evidence for these checks.
+
+| Command | Result | Exit |
+| --- | --- | ---: |
+| `node scripts/context-memory-ops.mjs verify` | core 224 + isolated 224; adapters 39; runtime 731; scripts 167; security 461 | 0 |
+| `node scripts/context-memory-ops.mjs preview` | stock 42/36/36/36 on Pi 1.4.0, 1.3.0, 1.2.0, 1.1.0; strict scenarios 157, bounded growth included; release checks 37; release `--prepare` | 0 |
+| `node scripts/context-memory-preview-acceptance.mjs --package-dir <package> --stock-root <pi> --segments on --output-dir <out>` | Pi 1.4.0 42/42 with three compatible roots; 1.3.0, 1.2.0 and 1.1.0 36/36 each | 0 each |
+| `node scripts/context-memory-preview-scenarios.mjs --package-dir <package> --stock-root <pi-1.4.0> --other-stock-root <pi-1.0.4> --segments on --acceptance-profile strict --output-dir <out>` | 157 passed; no failure, gap, skip or performance exception | 0 |
+| `PI_OFFLINE=1 node node_modules/vitest/dist/cli.js run packages/compaction-core/test` | 224/224; 34 base + 35 segment vectors, conformance `.3` | 0 |
+| `node --test scripts/context-memory-preview-provider-proof.mjs scripts/context-memory-preview-bench.test.mjs` | 27/27 | 0 |
+| From coding-agent: `PI_OFFLINE=1 CONTEXT_MEMORY_FUZZ_SEEDS=200 CONTEXT_MEMORY_FUZZ_REPORT=<out>.json node ../../node_modules/vitest/dist/cli.js run test/context-memory-preview.test.ts test/context-memory-preview-fuzz.test.ts` | 449/449: 248 focused + 201 fuzz; 9,600 operations; all 13 reaches met | 0 |
+| P5 off-equivalence: the bench with `--provider loopback --replay --replay-tools --cache session --pace immediate --compactions-only --session-settings previewSegments=off --equivalence-out <file>` on `main` (`980658b`) and on this build, both routes, then `node scripts/context-memory-equivalence-compare.mjs <main> <this>` | equal: 3 cases on 200k, 2 on 272k; every boundary committed by the writer on both sides | 0 |
+| `git diff --check 980658b e758e11` | clean | 0 |
+
+The fuzz reaches are the provisional V2's, count for count: segments 18, synchronous 597, failed compaction 144,
+ruling replacement 11, merge after wait 1, skipped wait 8, custom-focus fallback 51, tail fallback 50, hanging
+segment 42, hanging compaction 25, breaker 141, branch move before checkpoint 128, restart dropping segments 42. No
+resident fingerprint, evaluation pin, release version, commit guard, spending cap or checkpoint source hash was
+changed.
+
+### Labelled historical context: no cache, including zero-delay worst case
+
+The following is the earlier `eea33a3` evidence, **with no cache simulation and concurrent chains**. Zero-turn
+rows are the worst case for preparation time. These 64 no-cache arms are context, not selection evidence under
+the addendum. Each row pairs on with its own off control. Definitions and units match the serial table above;
+the original commands exited 0 with 160 committed boundaries. The coalescing ablations and retained diagnostics
+remain in this entry's Git history. No real-provider run was repeated.
+
+<details>
+<summary>No-cache pause and input tables</summary>
+
+| Turn / writer / route | Package | Served | Fallbacks | Waits: n; total (P50/P95) | On P50/P95; total | Off P50/P95; total |
+| --- | --- | ---: | --- | ---: | ---: | ---: |
+| 0 / 13 / 200k | main | 3/3 | - | 3; 38.73 (12.93/13.84) | 13.11/14.62; 40.26 | 13.45/14.10; 40.64 |
+| 0 / 13 / 200k | branch | 0/3 | tail 3 | 3; 25.37 (7.88/11.77) | 21.31/25.04; 66.03 | 13.41/13.88; 40.59 |
+| 0 / 13 / 272k | main | 1/2 | tail 1 | 2; 24.34 (12.09/12.25) | 13.02/26.19; 39.21 | 13.65/14.96; 28.61 |
+| 0 / 13 / 272k | branch | 0/2 | tail 2 | 2; 20.44 (9.73/10.71) | 24.14/24.91; 49.05 | 14.32/14.40; 28.72 |
+| 0 / 28 / 200k | main | 0/3 | in-flight 3 | 3; 45.11 (15.05/15.05) | 44.25/44.68; 132.60 | 28.56/29.65; 86.49 |
+| 0 / 28 / 200k | branch | 0/3 | in-flight 3 | 1; 15.00 (15.00/15.00) | 29.67/44.07; 102.75 | 28.47/30.49; 87.12 |
+| 0 / 28 / 272k | main | 0/2 | in-flight 2 | 2; 30.02 (15.00/15.02) | 43.22/46.30; 89.52 | 28.45/29.96; 58.41 |
+| 0 / 28 / 272k | branch | 0/2 | in-flight 2 | 1; 15.06 (15.06/15.06) | 28.26/43.30; 71.56 | 29.10/29.74; 58.84 |
+| 2 / 13 / 200k | main | 3/3 | - | 3; 22.26 (10.95/10.97) | 11.02/11.23; 22.73 | 13.14/13.41; 39.67 |
+| 2 / 13 / 200k | branch | 2/3 | tail 1 | 2; 4.78 (0.00/4.78) | 4.86/13.31; 20.17 | 13.51/13.54; 40.37 |
+| 2 / 13 / 272k | main | 2/2 | - | 2; 19.98 (9.96/10.03) | 10.36/10.37; 20.73 | 14.01/14.52; 28.54 |
+| 2 / 13 / 272k | branch | 0/2 | tail 2 | 2; 0.00 (0.00/0.00) | 13.46/14.68; 28.14 | 14.37/16.94; 31.30 |
+| 2 / 28 / 200k | main | 1/3 | in-flight 2 | 3; 43.92 (15.00/15.00) | 43.16/43.22; 100.48 | 28.16/28.27; 84.57 |
+| 2 / 28 / 200k | branch | 1/3 | in-flight 2 | 1; 14.24 (14.24/14.24) | 28.14/29.01; 71.47 | 28.13/28.17; 84.41 |
+| 2 / 28 / 272k | main | 0/2 | tail 1, in-flight 1 | 2; 23.33 (8.33/15.00) | 36.43/43.43; 79.86 | 28.12/28.14; 56.26 |
+| 2 / 28 / 272k | branch | 1/2 | in-flight 1 | 1; 11.22 (11.22/11.22) | 11.47/28.21; 39.68 | 28.16/28.35; 56.51 |
+| 5 / 13 / 200k | main | 3/3 | - | 2; 15.95 (7.96/7.98) | 8.07/8.08; 16.39 | 13.16/13.26; 39.53 |
+| 5 / 13 / 200k | branch | 0/3 | tail 3 | 3; 0.00 (0.00/0.00) | 13.12/14.15; 40.35 | 13.19/13.34; 39.65 |
+| 5 / 13 / 272k | main | 2/2 | - | 2; 15.40 (7.62/7.78) | 7.69/8.01; 15.70 | 13.11/13.23; 26.35 |
+| 5 / 13 / 272k | branch | 0/2 | tail 2 | 2; 0.00 (0.00/0.00) | 13.12/13.29; 26.41 | 13.24/13.24; 26.49 |
+| 5 / 28 / 200k | main | 1/3 | in-flight 2 | 2; 30.00 (15.00/15.00) | 43.17/46.22; 89.93 | 28.14/28.17; 84.44 |
+| 5 / 28 / 200k | branch | 2/3 | tail 1 | 3; 14.92 (2.58/12.34) | 12.56/28.28; 43.53 | 28.27/28.46; 85.00 |
+| 5 / 28 / 272k | main | 0/2 | tail 1, in-flight 1 | 2; 30.00 (15.00/15.00) | 43.16/43.20; 86.36 | 28.15/28.26; 56.41 |
+| 5 / 28 / 272k | branch | 0/2 | tail 2 | 2; 0.00 (0.00/0.00) | 28.16/28.18; 56.34 | 28.14/28.42; 56.56 |
+| 10 / 13 / 200k | main | 3/3 | - | 2; 5.74 (2.80/2.94) | 3.05/3.06; 6.40 | 13.10/13.62; 39.83 |
+| 10 / 13 / 200k | branch | 0/3 | tail 3 | 3; 0.00 (0.00/0.00) | 13.19/13.28; 39.60 | 13.20/13.23; 39.54 |
+| 10 / 13 / 272k | main | 2/2 | - | 2; 5.78 (2.78/3.00) | 3.02/3.17; 6.19 | 13.32/13.65; 26.98 |
+| 10 / 13 / 272k | branch | 0/2 | tail 2 | 2; 0.00 (0.00/0.00) | 13.19/14.39; 27.58 | 13.13/13.48; 26.62 |
+| 10 / 28 / 200k | main | 1/3 | in-flight 2 | 2; 30.00 (15.00/15.00) | 43.22/43.22; 86.54 | 28.13/30.04; 86.29 |
+| 10 / 28 / 200k | branch | 0/3 | tail 3 | 3; 0.00 (0.00/0.00) | 28.16/28.28; 84.56 | 28.28/28.69; 85.12 |
+| 10 / 28 / 272k | main | 0/2 | tail 1, in-flight 1 | 2; 30.05 (15.00/15.05) | 43.18/43.38; 86.56 | 28.25/28.29; 56.54 |
+| 10 / 28 / 272k | branch | 0/2 | tail 2 | 2; 0.00 (0.00/0.00) | 28.19/28.22; 56.41 | 28.31/28.34; 56.66 |
+
+| Turn / writer / route | Package | Overlap calls | Overlap summed input | Peak 60 s input on / off | Rate errors on / off |
+| --- | --- | ---: | ---: | ---: | ---: |
+| 0 / 13 / 200k | main | 3 | 1,313,575 | 4,635,903 / 4,673,897 | 0 / 0 |
+| 0 / 13 / 200k | branch | 3 | 4,210,029 | 3,330,240 / 4,673,941 | 0 / 0 |
+| 0 / 13 / 272k | main | 2 | 1,965,568 | 5,735,039 / 5,595,565 | 0 / 0 |
+| 0 / 13 / 272k | branch | 2 | 5,133,779 | 5,680,079 / 5,595,602 | 0 / 0 |
+| 0 / 28 / 200k | main | 3 | 1,314,657 | 3,380,040 / 3,239,917 | 0 / 0 |
+| 0 / 28 / 200k | branch | 3 | 4,210,029 | 3,301,931 / 3,964,695 | 0 / 0 |
+| 0 / 28 / 272k | main | 2 | 1,965,568 | 5,735,039 / 5,595,565 | 0 / 0 |
+| 0 / 28 / 272k | branch | 2 | 5,133,779 | 5,680,079 / 5,595,602 | 0 / 0 |
+| 2 / 13 / 200k | main | 3 | 1,313,575 | 2,103,510 / 1,839,732 | 0 / 0 |
+| 2 / 13 / 200k | branch | 9 | 4,842,068 | 2,597,707 / 1,803,121 | 0 / 0 |
+| 2 / 13 / 272k | main | 3 | 1,969,163 | 3,202,733 / 3,062,086 | 0 / 0 |
+| 2 / 13 / 272k | branch | 6 | 3,958,125 | 3,291,159 / 3,023,887 | 0 / 0 |
+| 2 / 28 / 200k | main | 3 | 1,314,657 | 1,821,341 / 1,681,292 | 0 / 0 |
+| 2 / 28 / 200k | branch | 6 | 4,923,459 | 2,199,894 / 1,681,307 | 0 / 0 |
+| 2 / 28 / 272k | main | 2 | 1,965,568 | 3,118,389 / 3,063,891 | 0 / 0 |
+| 2 / 28 / 272k | branch | 4 | 5,407,005 | 3,342,231 / 3,043,044 | 0 / 0 |
+| 5 / 13 / 200k | main | 4 | 1,200,493 | 1,380,517 / 1,306,531 | 0 / 0 |
+| 5 / 13 / 200k | branch | 9 | 2,265,492 | 1,401,624 / 1,306,538 | 0 / 0 |
+| 5 / 13 / 272k | main | 3 | 1,302,589 | 2,192,525 / 1,930,016 | 0 / 0 |
+| 5 / 13 / 272k | branch | 6 | 1,938,672 | 1,930,021 / 1,930,025 | 0 / 0 |
+| 5 / 28 / 200k | main | 3 | 1,314,657 | 1,380,517 / 1,306,531 | 0 / 0 |
+| 5 / 28 / 200k | branch | 9 | 4,932,302 | 1,531,261 / 1,306,538 | 0 / 0 |
+| 5 / 28 / 272k | main | 3 | 1,790,932 | 2,192,525 / 1,930,016 | 0 / 0 |
+| 5 / 28 / 272k | branch | 6 | 3,986,613 | 1,985,178 / 1,930,025 | 0 / 0 |
+| 10 / 13 / 200k | main | 4 | 1,092,254 | 899,450 / 782,325 | 0 / 0 |
+| 10 / 13 / 200k | branch | 9 | 1,635,999 | 782,327 / 782,329 | 0 / 0 |
+| 10 / 13 / 272k | main | 3 | 1,148,698 | 1,231,733 / 1,078,977 | 0 / 0 |
+| 10 / 13 / 272k | branch | 6 | 1,405,329 | 1,078,980 / 1,078,981 | 0 / 0 |
+| 10 / 28 / 200k | main | 4 | 1,201,579 | 900,641 / 782,325 | 0 / 0 |
+| 10 / 28 / 200k | branch | 9 | 2,265,500 | 782,327 / 782,329 | 0 / 0 |
+| 10 / 28 / 272k | main | 3 | 1,302,703 | 1,231,733 / 1,078,977 | 0 / 0 |
+| 10 / 28 / 272k | branch | 6 | 1,938,679 | 1,078,980 / 1,078,981 | 0 / 0 |
+
+</details>
+
 ## 0.8.0 WP5 rerun: GPT-6 Luna with the bounded tail, 2026-11-04 UTC
 
 A real-provider run, recorded apart from the offline evidence below. Official Pi 1.4.0 with the independent preview at

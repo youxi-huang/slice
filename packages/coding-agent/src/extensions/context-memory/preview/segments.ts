@@ -2,6 +2,7 @@
 // (U10); U9's limits: the journal's per-interval call limit and spending cap, and a breaker after three
 // consecutive failures of one class until the next commit. Segments never block work: any limit leaves the next
 // boundary to the synchronous writer. Assembly at the boundary is WP3's.
+
 import type { ThinkingLevel } from "@earendil-works/pi-ai";
 import { segmentBudgetLeft } from "../../../../../compaction-core/src/call-journal.ts";
 import { noteSections } from "../../../../../compaction-core/src/notes.ts";
@@ -39,7 +40,7 @@ export function segmentFailure(error: unknown): SegmentFailure {
 }
 
 /**
- * How this session's segments ended, content-free: calls linked into the chain; calls cancelled in flight, by a
+ * How this session's segments ended, content-free: calls linked into the chain; runs cancelled before or after dispatch, by a
  * checkpoint, a branch or writer change or the session's end; calls whose result no longer extended the chain; calls
  * refused or failed, by error code, with `CONTEXT_SEGMENT_DEADLINE` for a run past its deadline; and links the chain
  * dropped when a settled turn classified it again, by the reason the chain stopped.
@@ -93,12 +94,18 @@ export class PreviewSegments {
 	/** The thinking level segments are written at (U5): the session's own unless configured. */
 	readonly effort: SegmentEffort;
 	private readonly deadlineMs: number;
+	private lastCallMs?: number;
 	private readonly settingsError?: string;
 	private readonly journal: CallJournal;
 	private sessionId?: string;
 	private epoch = 0;
 	private links: PreparedSegment[] = [];
-	private running?: { abort: AbortController; settled: Promise<void>; input: SegmentSnapshot };
+	private running?: {
+		abort: AbortController;
+		settled: Promise<void>;
+		input: SegmentSnapshot;
+		dispatchedAt?: number;
+	};
 	private streak?: { kind: SegmentFailure; count: number };
 	private results = noResults();
 	private broken?: SegmentFailure;
@@ -136,7 +143,26 @@ export class PreviewSegments {
 		this.streak = undefined;
 		this.broken = undefined;
 		this.results = noResults();
+		this.lastCallMs = undefined;
 		this.sessionId = sessionId;
+	}
+
+	/** U8 learns completed calls in this session, including the foreground writer, without reading persisted timing. */
+	observeCalls(sessionId: string, hooks: WriterCallHooks): WriterCallHooks {
+		this.activate(sessionId);
+		return {
+			beforeDispatch: hooks.beforeDispatch,
+			afterDispatch: (result) => {
+				if (this.sessionId === sessionId && result.dispatched && result.outcome !== "cancelled")
+					this.lastCallMs = result.elapsedMs;
+				return hooks.afterDispatch(result);
+			},
+		};
+	}
+
+	skipWait(ms: number): boolean {
+		const start = this.running?.dispatchedAt;
+		return start !== undefined && this.lastCallMs !== undefined && this.lastCallMs - (performance.now() - start) > ms;
 	}
 
 	/** Keeps the chain's longest valid prefix and cancels a run whose input no longer matches the session. */
@@ -168,7 +194,12 @@ export class PreviewSegments {
 		this.activate(input.preparation.sessionId);
 		if (input.preparation.epoch !== this.epoch || input.chainHash !== chainHash(this.links)) return false;
 		const abort = new AbortController();
-		const task = { abort, settled: Promise.resolve(), input };
+		const task = {
+			abort,
+			settled: Promise.resolve(),
+			input,
+			dispatchedAt: undefined as number | undefined,
+		};
 		this.running = task;
 		let late = false;
 		const timer = setTimeout(() => {
@@ -176,15 +207,22 @@ export class PreviewSegments {
 			abort.abort();
 		}, this.deadlineMs);
 		timer.unref();
-		const journal = this.journal.hooks(input.preparation.sessionId, "segment", interval);
+		const journal = this.observeCalls(
+			input.preparation.sessionId,
+			this.journal.hooks(input.preparation.sessionId, "segment", interval),
+		);
 		const callIds: string[] = [];
 		const hooks: WriterCallHooks = {
 			beforeDispatch: async (call) => {
 				const id = await journal.beforeDispatch(call);
+				task.dispatchedAt = performance.now();
 				callIds.push(id);
 				return id;
 			},
-			afterDispatch: journal.afterDispatch,
+			afterDispatch: (result) => {
+				task.dispatchedAt = undefined;
+				return journal.afterDispatch(result);
+			},
 		};
 		const current = () =>
 			!this.disposed && input.preparation.epoch === this.epoch && this.sessionId === input.preparation.sessionId;

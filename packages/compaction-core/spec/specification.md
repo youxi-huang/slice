@@ -316,13 +316,13 @@ no link after it is merged out of order. A base checkpoint without a
 `coveredThrough` starts no chain.
 
 The core chooses each range (`segments.ts` `nextSegmentRange`). A range ends at
-the branch's last record, which must close a settled turn: an assistant
-message that stopped, with every tool call in the range answered. A range that
-cannot close defers and the chain does not advance. The first link of an
-interval waits until the context reaches half the trigger and then covers
-everything uncovered, so a session that never nears compaction pays for no
-segment. Each later link waits for `segmentRangeTokens` of new history, 15 % of
-the trigger between 8,192 and 32,000 tokens, measured as compacted sources are.
+the branch's last record: a stopped assistant message or the last result of a
+complete tool batch. Every tool call in the range must have its result; a
+partial parallel batch defers without advancing the chain. The first link of
+an interval waits for half the trigger and covers everything uncovered, so a
+session that never nears compaction pays for no segment. Each later link waits
+for `segmentRangeTokens` of new history, 15 % of the trigger between 8,192 and
+32,000 tokens, measured as compacted sources are.
 These are starting values that 0.8.0's evaluation measures.
 
 The segment writer is the session writer (`writer.ts` `WriteMemoryOptions`
@@ -354,6 +354,15 @@ The reference adapter commits it for its prefix only when the originals that
 would stay verbatim after the chain hold at most `segmentRangeTokens` of the
 trigger; a longer tail is history the chain did not cover, and the synchronous
 writer compacts instead (`tail`).
+
+At a boundary that needs more coverage, U8 allows a wait of at most 15 seconds
+for the active segment call. The most recent completed writer or segment call
+in the current session supplies its duration estimate. Subtract the active
+call's time since dispatch; wait only if the estimate fits the remaining wait.
+With no completed call, retain the existing wait. A skipped wait falls back as
+`in-flight` and records no `segmentsWaitMs`. The estimate remains in memory
+across checkpoints and is never persisted or reconstructed from a journal.
+Skipping a wait does not abort the segment or relax any commit check.
 
 **Coverage invariant.** After every boundary, each original after the base
 checkpoint's coverage is covered by a committed checkpoint, by a merged
@@ -537,11 +546,22 @@ transport work); there must
 be uncovered original evidence, else `CONTEXT_NO_NEW_SOURCE` (`writeMemory`);
 the request, its evidence and its output reservation must fit the writer's
 window, else `CONTEXT_WRITER_CAPACITY` (`writeMemory`); budget arguments must
-be valid integer counts, else `CONTEXT_CONFIG`. The cut that selects what
+be valid integer counts, else `CONTEXT_CONFIG`. When a session handover cannot
+fit even its smallest instruction, a compaction uses bounded original-evidence
+chunks through the same already selected transport, model and effort. This is
+decided before dispatch, never in response to a writer failure. The frozen note
+budget, validation, single repair allowance and per-call accounting still apply.
+Every source part retains its original ID and offset. Optional segment calls
+keep their existing capacity refusal; segment scheduling and retained tails do
+not change. The cut that selects what
 leaves context must land on a turn start that follows the previous
 checkpoint, else `CONTEXT_NO_CUT` (`cuts.ts` `chooseCut`); a prefix
-commit uses the latest turn start inside the covered prefix
-(`cuts.ts` `prefixCut`).
+commit uses the latest projected user-message turn start inside the covered
+prefix (`cuts.ts` `prefixCut`). Only the segments path may instead cut just
+after a covered complete tool batch, at the next projected assistant message,
+within the ordinary cut and after the previous checkpoint. Both sides must
+retain complete tool pairs (`cuts.ts` `segmentPrefixCut`). The notes path and
+arm A retain the user-message rule. Segments remain off by default (U13).
 
 ## Commit and failure states
 

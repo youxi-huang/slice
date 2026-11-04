@@ -9,7 +9,7 @@ import { readMemoryConfig } from "../packages/coding-agent/src/extensions/contex
 import { readExcerptSettings } from "../packages/coding-agent/src/extensions/context-memory/preview/excerpts.ts";
 import { readPreparationSettings } from "../packages/coding-agent/src/extensions/context-memory/preview/preparation.ts";
 // Importing the bench starts no run: only its helpers are read here.
-import { parseSessionSettings, percentile, settledSteps, writeUnitSettings } from "./context-memory-preview-bench.mjs";
+import { loopbackLatencyMs, loopbackPrefixCache, parseSessionSettings, percentile, replaySourceIds, requestOverlap, settledSteps, toolReplayReplies, writeUnitSettings } from "./context-memory-preview-bench.mjs";
 
 const script = fileURLToPath(new URL("./context-memory-preview-bench.mjs", import.meta.url));
 
@@ -20,6 +20,39 @@ function scratch(t) {
 }
 
 const settingsFile = (agentDir) => join(agentDir, "pi-context-memory.json");
+
+test("session cache requires a whole earlier request to continue, with the same system prompt and tools", () => {
+	const cached = loopbackPrefixCache();
+	const tools = [{ type: "function", function: { name: "read", parameters: { type: "object" } } }];
+	const messages = [{ role: "system", content: "Synthetic prompt" }, { role: "user", content: "Synthetic task" }];
+	const tokens = (parts, functions = tools) => Math.ceil(Buffer.byteLength(JSON.stringify(parts) + JSON.stringify(functions)) / 3);
+	assert.equal(cached({ messages, tools }), 0);
+	for (const content of ["Task reply", "Return ONLY the memory note itself", "Write a segment note for entries a through b only"])
+		assert.equal(cached({ messages: [...messages, { role: "user", content }], tools }), tokens(messages));
+	assert.equal(cached({ messages, tools }), tokens(messages));
+	assert.equal(cached({ messages: [messages[0], { role: "user", content: "Synthetic task changed" }], tools }), 0);
+	assert.equal(cached({ messages, tools: [] }), 0);
+	assert.equal(cached({ messages: [{ ...messages[0], content: "Different prompt" }, messages[1]], tools }), 0);
+	assert.equal(loopbackPrefixCache()({ messages, tools }), 0);
+	const forked = loopbackPrefixCache();
+	const prior = [...messages, { role: "assistant", content: "Earlier branch" }];
+	assert.equal(forked({ messages: prior, tools }), 0);
+	assert.equal(forked({ messages: [...messages, { role: "assistant", content: "Different branch" }], tools }), 0);
+	assert.equal(forked({ messages: [...prior, { role: "user", content: "Continue" }], tools }), tokens(prior));
+});
+
+test("loopback writer and task latency share bounds and reject provider runs before dispatch", () => {
+	for (const flag of ["--latency-ms", "--turn-latency-ms"]) {
+		for (const ms of [0, 2_000, 5_000, 10_000, 13_000, 28_000, 52_000, 133_000, 180_000]) assert.equal(loopbackLatencyMs(String(ms), "loopback", flag), ms);
+		for (const value of ["-1", "0.5", "Infinity", "NaN", "180001"]) assert.throws(() => loopbackLatencyMs(value, "loopback", flag), { message: `${flag} takes an integer from 0 to 180000` });
+		assert.throws(() => loopbackLatencyMs("2000", "openai", flag), /needs --provider loopback/);
+		assert.equal(loopbackLatencyMs("0", "openai", flag), 0);
+	}
+	for (const provider of ["openai", "relay", "deepseek"]) {
+		assert.equal(loopbackLatencyMs("10000", provider, "--turn-latency-ms", true), 10000);
+		assert.throws(() => loopbackLatencyMs("13000", provider, "--latency-ms", true), /needs --provider loopback/);
+	}
+});
 
 test("a unit's pi-context-memory.json carries each named switch in the shape the preview reads", (t) => {
 	const { label, settings } = parseSessionSettings("previewReduction=on,previewExcerpts=off");
@@ -143,6 +176,10 @@ test("--provider openai is a provider run on the official API, and the long-rout
 		);
 	// Each is refused before the package, the host or the run directory is read, so no request can follow.
 	for (const [flags, message] of [
+		[["--mode", "probes", "--provider", "openai", "--latency-ms", "13000"], /--latency-ms needs --provider loopback/],
+		[["--mode", "probes", "--provider", "openai", "--turn-latency-ms", "2000"], /--turn-latency-ms needs --provider loopback/],
+		[["--mode", "probes", "--turn-latency-ms", "180001"], /--turn-latency-ms takes an integer/],
+		[["--mode", "probes", "--latency-ms", "180001"], /--latency-ms takes an integer/],
 		[["--mode", "smoke", "--provider", "openai"], /Missing --max-requests/],
 		[["--mode", "smoke", "--provider", "openai", "--max-requests", "1", "--max-minutes", "1", "--max-cost-usd", "0"], /--max-costUsd must be positive for a provider run/],
 		[["--mode", "repair", "--provider", "openai", "--max-requests", "1", "--max-minutes", "1", "--max-cost-usd", "0.01"], /--provider openai does not serve --mode repair/],
@@ -164,6 +201,11 @@ test("--provider openai is a provider run on the official API, and the long-rout
 		[["--mode", "writer", "--arm", "native", "--probe-conditions", "none"], /--arm native serves only --mode probes/],
 		// --replay: a probes chain whose every turn runs on the session itself, with the package, at a known pace,
 		// in a window of plausible size; a segment level only with segments switched on.
+		[["--mode", "probes", "--replay-tools"], /--replay-tools needs/],
+		[["--mode", "probes", "--replay", "--replay-tools", "--cache", "session", "--pace", "immediate", "--provider", "openai"], /Missing --max-requests/],
+		[["--mode", "probes", "--replay", "--replay-tools", "--cache", "session", "--pace", "immediate", "--provider", "openai", "--turn-latency-ms", "10000"], /Missing --max-requests/],
+		[["--mode", "probes", "--replay", "--replay-tools", "--cache", "session", "--pace", "immediate", "--provider", "relay", "--base-url", "https://example.invalid", "--turn-latency-ms", "5000"], /Missing --max-requests/],
+		[["--mode", "probes", "--replay", "--replay-tools", "--cache", "session", "--pace", "immediate", "--provider", "deepseek-local"], /--replay-tools needs/],
 		[["--mode", "writer", "--replay"], /--replay applies to probes mode/],
 		[["--mode", "probes", "--replay"], /--replay runs every turn on the session itself: give --cache session/],
 		[["--mode", "probes", "--replay", "--cache", "session", "--arm", "native", "--probe-conditions", "none"], /--replay needs the package/],
@@ -212,4 +254,35 @@ test("--replay splits a round where the agent settles, and reports nearest-rank 
 	assert.equal(percentile([5, 1, 3, 4, 2], 0.95), 5);
 	assert.equal(percentile([7], 0.95), 7);
 	assert.equal(percentile([null], 0.5), null);
+});
+
+
+test("tool replay maps native IDs without changing sources and measures concurrent full inputs", () => {
+	const record = (id, content) => ({ type: "message", id, message: { role: "user", content } });
+	const recorded = [record("s1", "Same"), record("s2", "Same"), record("s3", "Other")];
+	const actual = [record("n1", "Same"), record("n2", "Same"), record("n3", "Other"), record("unrelated", "Absent")];
+	assert.deepEqual([...replaySourceIds(recorded, actual)], [["s1", "n1"], ["s2", "n2"], ["s3", "n3"]]);
+	assert.deepEqual(recorded.map((entry) => entry.id), ["s1", "s2", "s3"]);
+	const calls = [
+		{ kind: "segment", start: 0, end: 13_000, input: 80_000 },
+		{ kind: "main", start: 1_000, end: 2_000, input: 90_000 },
+		{ kind: "main", start: 12_999, end: 14_000, input: 100_000 },
+		{ kind: "main", start: 13_000, end: 14_000, input: 110_000 },
+		{ kind: "writer", start: 70_000, end: 83_000, input: 120_000 },
+	];
+	assert.deepEqual(requestOverlap(calls), { segmentCalls: 1, pairs: 2, summedInput: 270_000, maxPairInput: 180_000, peakMinuteInput: 380_000 });
+	assert.deepEqual(requestOverlap([]), { segmentCalls: 0, pairs: 0, summedInput: 0, maxPairInput: 0, peakMinuteInput: 0 });
+});
+
+
+test("tool replay retains every P5 batch and coalesces only adjacent assistant replies", () => {
+	const entries = readFileSync(new URL("../eval/preview/fixtures/P5/session.jsonl", import.meta.url), "utf8").trim().split("\n").map(JSON.parse).slice(1);
+	const steps = settledSteps(entries);
+	const replies = steps.flatMap(toolReplayReplies);
+	const originalCalls = entries.flatMap((entry) => entry.message?.role === "assistant" ? entry.message.content.filter((part) => part.type === "toolCall") : []);
+	assert.equal(originalCalls.length, 46);
+	assert.deepEqual(replies.flatMap((reply) => reply.content.filter((part) => part.type === "toolCall")), originalCalls);
+	assert.deepEqual(replies.flatMap((reply) => reply.content.filter((part) => part.type === "text")), entries.flatMap((entry) => entry.message?.role === "assistant" ? entry.message.content.filter((part) => part.type === "text") : []));
+	assert.equal(replies.filter((reply) => reply.stopReason === "stop").length, steps.length);
+	assert.deepEqual(replaySourceIds([{type: "message", id: "old", message: { role: "user", content: "Exact" } }], [{type: "message", id: "new", message: { role: "user", content: [{ type: "text", text: "Exact" }] } }]).get("old"), "new");
 });

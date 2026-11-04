@@ -1,4 +1,5 @@
 import { selectNoteBudget, type NoteBudget } from "../src/config.ts";
+import { prefixCut, segmentPrefixCut } from "../src/cuts.ts";
 import { errorCode, PROJECT_CODES } from "../src/events.ts";
 import { assertToolPairs } from "../src/guards.ts";
 import { CONTEXT_KEEP_NONE, CONTEXT_MEMORY_KIND, CONTEXT_MEMORY_VERSION } from "../src/identity.ts";
@@ -25,6 +26,7 @@ import {
 	finalizeSegment,
 	freezeSegmentInput,
 	mergeChain,
+	nextSegmentRange,
 	type PreparedSegment,
 } from "../src/segments.ts";
 import { applySourcesRepair, sourcesRepairEligible } from "../src/sources-repair.ts";
@@ -89,10 +91,24 @@ interface SegmentBoundary {
 
 export type SegmentChainOutcome = { links: number } & Pick<ChainClassification, "coveredThrough" | "stop">;
 export type SegmentMergeOutcome = ReturnType<typeof mergeChain>;
-type SegmentOutcome = Outcome | SegmentChainOutcome | SegmentMergeOutcome;
+type RangeOutcome = ReturnType<typeof nextSegmentRange>;
+type CutOutcome = { cut: number | null };
+type SegmentOutcome = Outcome | SegmentChainOutcome | SegmentMergeOutcome | RangeOutcome | CutOutcome;
 
 export type SegmentVector = Pick<VectorBase, "id" | "records"> &
 	(
+		| {
+				stage: "segment-range";
+				options: Parameters<typeof nextSegmentRange>[1];
+				expected: RangeOutcome;
+		  }
+		| {
+				stage: "segment-cut";
+				coveredIndex: number;
+				cut: number;
+				path: "segments" | "prefix";
+				expected: CutOutcome | Outcome;
+		  }
 		| { stage: "segment"; link: SegmentLink; expected: Outcome }
 		| { stage: "segment-chain"; links: SegmentLink[]; boundary?: SegmentBoundary; expected: SegmentChainOutcome }
 		| {
@@ -205,6 +221,16 @@ export function runCoreVector(
 	serialization: Serialization = "pi",
 ): SegmentOutcome {
 	try {
+		if (vector.stage === "segment-range") return nextSegmentRange(vector.records, vector.options);
+		if (vector.stage === "segment-cut") {
+			const projection = {
+				entries: vector.records.map((record) => ({
+					sourceEntry: record,
+					messages: record.type === "message" ? [record.message] : [],
+				})),
+			};
+			return { cut: (vector.path === "segments" ? segmentPrefixCut : prefixCut)(vector.records, projection, vector.coveredIndex, vector.cut) ?? null };
+		}
 		if (vector.stage === "segment" || vector.stage === "segment-chain" || vector.stage === "segment-merge") {
 			const links: PreparedSegment[] = [];
 			for (const link of vector.stage === "segment" ? [vector.link] : vector.links)
