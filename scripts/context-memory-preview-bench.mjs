@@ -1,10 +1,12 @@
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { appendFileSync, copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, copyFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
+import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { checkpointRecords, equivalenceLine, errorClasses } from "./context-memory-equivalence-compare.mjs";
+import { inspectOfficialPi } from "./context-memory-preview-stock-install.mjs";
 
 // The 0.5.0 writer bench and recovery probes for the independent preview on official Pi.
 //
@@ -76,6 +78,8 @@ import { checkpointRecords, equivalenceLine, errorClasses } from "./context-memo
 // and --segment-effort turn segments on at a level; probe units run with segments off. Rows go to boundaries.jsonl
 // and rounds.jsonl, and summary.json gains `replay`.
 // --latency-ms delays loopback writer replies only, leaving the task's short replies immediate.
+// --replay-tools (loopback, immediate only) lets official Pi execute each recorded batch, returning the fixture's
+// results without running its commands. P5 has no elapsed tool times; none are invented. Main replies are immediate.
 
 const script = fileURLToPath(import.meta.url);
 const root = resolve(script, "../..");
@@ -381,6 +385,44 @@ export function percentile(values, share) {
 	return sorted.length ? sorted[Math.max(0, Math.ceil(share * sorted.length) - 1)] : null;
 }
 
+export function requestOverlap(calls) {
+	const pairs = calls.filter((call) => call.kind === "segment").flatMap((segment) =>
+		calls.filter((main) => main.kind === "main" && main.start < segment.end && segment.start < main.end).map((main) => [segment, main]),
+	);
+	const overlapping = new Set(pairs.flat());
+	return {
+		segmentCalls: new Set(pairs.map(([segment]) => segment)).size,
+		pairs: pairs.length,
+		summedInput: [...overlapping].reduce((sum, call) => sum + call.input, 0),
+		maxPairInput: Math.max(0, ...pairs.map((pair) => pair.reduce((sum, call) => sum + call.input, 0))),
+		peakMinuteInput: Math.max(0, ...calls.map((end) => calls.filter((call) => call.start <= end.start && call.start > end.start - 60_000).reduce((sum, call) => sum + call.input, 0))),
+	};
+}
+
+export function replaySourceIds(recorded, actual) {
+	const key = ({ message }) => JSON.stringify([message.role, message.role === "user" && Array.isArray(message.content) ? message.content.map((part) => part.text).join("\n") : message.content, message.toolCallId]);
+	const sources = new Map();
+	for (const entry of recorded.filter((entry) => entry.type === "message")) {
+		const signature = key(entry);
+		if (!sources.has(signature)) sources.set(signature, []);
+		sources.get(signature).push(entry.id);
+	}
+	return new Map(actual.filter((entry) => entry.type === "message").map((entry) => [sources.get(key(entry))?.shift(), entry.id]).filter(([id]) => id));
+}
+
+export function toolReplayReplies(entries) {
+	const replies = [];
+	let adjacent = false;
+	for (const entry of entries) {
+		if (entry.message?.role === "assistant") {
+			if (adjacent) replies[replies.length - 1] = { ...entry.message, content: [...replies.at(-1).content, ...entry.message.content] };
+			else replies.push(entry.message);
+		}
+		adjacent = entry.message?.role === "assistant";
+	}
+	return replies;
+}
+
 async function worker() {
 	const action = JSON.parse(Buffer.from(argument("--action"), "base64url").toString("utf8"));
 	const packageDir = resolve(argument("--package-dir"));
@@ -409,7 +451,10 @@ async function worker() {
 	// candidate, and only the quotation repair reaches the measured model: from here, so the request is the one
 	// official Pi built for that model. `deepseek-local` answers it with the case's scripted repair and never leaves
 	// this machine.
-	const { gold } = readFixture(action.fixture);
+	const fixture = readFixture(action.fixture);
+	const { gold } = fixture;
+	const taskReplies = [];
+	const transportCalls = [];
 	const repairSettings = [];
 	let forwarded = 0;
 	/** The catalog's address for the measured model, read before the bench moves it. */
@@ -419,6 +464,11 @@ async function worker() {
 		for await (const part of request) raw += part;
 		const payload = JSON.parse(raw);
 		const serialized = JSON.stringify(payload.messages ?? []);
+		const call = { kind: "main", start: performance.timeOrigin + performance.now(), input: Math.ceil(Buffer.byteLength(serialized + JSON.stringify(payload.tools ?? [])) / 3), end: Infinity };
+		if (action.toolReplay) {
+			transportCalls.push(call);
+			response.once("close", () => { call.end = performance.timeOrigin + performance.now(); });
+		}
 		if (action.type === "repair") {
 			const repair = serialized.includes("Correct the quotations of a memory candidate");
 			if (repair) repairSettings.push({ thinking: payload.thinking?.type ?? null, effort: payload.reasoning_effort ?? null, maxTokens: payload.max_tokens ?? payload.max_completion_tokens ?? null, toolChoice: payload.tool_choice ?? null, tools: Array.isArray(payload.tools) ? payload.tools.length : 0 });
@@ -445,6 +495,7 @@ async function worker() {
 			return;
 		}
 		const writer = WRITER_REQUESTS.some((marker) => serialized.includes(marker));
+		call.kind = writer ? serialized.includes("Write a segment note for entries") ? "segment" : "writer" : "main";
 		if (writer && action.latencyMs) await new Promise((done) => setTimeout(done, action.latencyMs));
 		const readable = new Set(
 			readLines(action.sessionFile)
@@ -461,6 +512,16 @@ async function worker() {
 		const chunk = (delta, finish, reported) =>
 			`data: ${JSON.stringify({ id: "bench", object: "chat.completion.chunk", created: 1, model: payload.model, choices: [{ index: 0, delta, finish_reason: finish }], ...(reported ? { usage: reported } : {}) })}\n\n`;
 		response.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache" });
+		if (action.toolReplay && !writer) {
+			const reply = taskReplies.shift();
+			if (!reply) throw new Error("Recorded assistant replies exhausted");
+			const content = reply.content.filter((part) => part.type === "text").map((part) => part.text).join("\n");
+			const tools = reply.content.filter((part) => part.type === "toolCall");
+			response.write(chunk({ role: "assistant", content, ...(tools.length ? { tool_calls: tools.map((part, index) => ({ index, id: part.id, type: "function", function: { name: part.name, arguments: JSON.stringify(part.arguments) } })) } : {}) }, null));
+			response.write(chunk({}, tools.length ? "tool_calls" : "stop", usage(content)));
+			response.end("data: [DONE]\n\n");
+			return;
+		}
 		// A history probe first reads its first gold evidence entry once, so retrieval and page-back carry figures.
 		const evidence = action.type === "probe" && action.probe ? gold.probes.find((probe) => probe.id === action.probe)?.evidence[0] : undefined;
 		const messages = payload.messages ?? [];
@@ -473,10 +534,13 @@ async function worker() {
 			return;
 		}
 		const range = writer ? serialized.match(/Write a segment note for entries (\S+) through (\S+) only/) : null;
+		const entries = readLines(action.sessionFile).slice(1);
+		const ids = action.toolReplay ? replaySourceIds(fixture.entries, entries) : new Map();
+		const effectiveGold = action.toolReplay ? { ...gold, checkpoints: gold.checkpoints.map((cut) => ({ ...cut, afterEntryId: ids.get(cut.afterEntryId) })), probes: gold.probes.map((probe) => ({ ...probe, evidence: probe.evidence.map((id) => ids.get(id)).filter(Boolean) })) } : gold;
 		const text = range
-			? JSON.stringify(goldSegment(gold, action.cutIndex ?? 0, readLines(action.sessionFile).slice(1), range[1], range[2]))
+			? JSON.stringify(goldSegment(effectiveGold, action.cutIndex ?? 0, entries, range[1], range[2]))
 			: writer
-				? JSON.stringify(goldNote(gold, action.cutIndex ?? 0, readable))
+				? JSON.stringify(goldNote(effectiveGold, action.cutIndex ?? 0, readable))
 				: JSON.stringify({ status: "unknown" });
 		response.write(chunk({ role: "assistant", content: text }, null));
 		response.write(chunk({}, "stop", usage(text)));
@@ -532,7 +596,16 @@ async function worker() {
 	// The output maximum is capped as a model of that class would have it: the preview reserves the larger of 16,384
 	// and the model's maximum below its window, so a catalog maximum of 128,000 or 384,000 would leave no budget.
 	if (action.window) model = { ...model, contextWindow: action.window, maxTokens: Math.min(model.maxTokens, 32_000) };
-	const { session } = await stock.createAgentSession({ cwd, agentDir, modelRuntime: runtime, model, thinkingLevel, sessionManager, settingsManager, resourceLoader: loader, noTools: "builtin" });
+	const recordedResults = fixture.entries.filter((entry) => entry.message?.role === "toolResult");
+	const customTools = action.toolReplay ? [...new Set(recordedResults.map((entry) => entry.message.toolName))].map((name) => ({
+		name, label: name, description: `Return recorded ${name} output without executing it.`, parameters: { type: "object", properties: {}, additionalProperties: true },
+		async execute(id) {
+			const entry = recordedResults.find((result) => result.message.toolCallId === id);
+			if (!entry) throw new Error(`Unrecorded tool call ${id}`);
+			return { content: entry.message.content, isError: entry.message.isError, details: {} };
+		},
+	})) : [];
+	const { session } = await stock.createAgentSession({ cwd, agentDir, modelRuntime: runtime, model, thinkingLevel, sessionManager, settingsManager, resourceLoader: loader, noTools: "builtin", customTools });
 	await session.bindExtensions({ onError: (error) => diagnostics.push(String(error?.message ?? error).slice(0, 200)) });
 	const status = async () => {
 		commandOutput = [];
@@ -612,8 +685,10 @@ async function worker() {
 		const usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0 };
 		const roundUsage = [];
 		let rounds = 0;
+		let rateLimitErrors = 0;
 		session.subscribe((event) => {
 			if (event.type !== "message_end" || event.message?.role !== "assistant") return;
+			if (/rate.?limit|too many requests|\b429\b/i.test(event.message.errorMessage ?? "")) rateLimitErrors++;
 			rounds++;
 			const reported = event.message.usage;
 			if (reported) {
@@ -696,15 +771,19 @@ async function worker() {
 		};
 		let broken = false;
 		for (const [index, step] of steps.entries()) {
-			for (const entry of step) sessionManager._appendEntry({ ...entry, parentId: sessionManager.getLeafId() });
-			session._refreshFinalizedContext();
+			if (action.toolReplay) taskReplies.push(...toolReplayReplies(step));
+			else {
+				for (const entry of step) sessionManager._appendEntry({ ...entry, parentId: sessionManager.getLeafId() });
+				session._refreshFinalizedContext();
+			}
 			const before = checkpoints();
 			try {
-				await session.prompt(action.prompt);
+				await session.prompt(action.toolReplay ? step.find((entry) => entry.message?.role === "user").message.content : action.prompt);
 			} catch (cause) {
 				errors.push(String(cause?.message ?? cause).slice(0, 200));
 			}
 			await quiet();
+			if (rateLimitErrors) { broken = true; break; }
 			if (checkpoints() > before) {
 				const row = await describe("auto", index + 1, true, { attempt: 1 });
 				boundaries.push(row);
@@ -774,6 +853,7 @@ async function worker() {
 			usage,
 			roundUsage,
 			journalCalls,
+			...(action.toolReplay ? { transportCalls, rateLimitErrors, tools: sessionManager.getEntries().filter((entry) => entry.message?.role === "toolResult").length, remainingReplies: taskReplies.length } : {}),
 			requests: rounds + sent.length,
 			costUsd: usage.cost + sent.reduce((sum, call) => sum + call.costUsd, 0),
 			...(action.provider === "openai" ? { openaiResponses: responseItems } : {}),
@@ -891,7 +971,9 @@ async function parent() {
 	// written where a session writes them; --pace says whether the next step waits for the segment in flight, and
 	// --window sets the route's window. Every arm of a comparison replays the same way.
 	const replay = args.includes("--replay");
+	const toolReplay = args.includes("--replay-tools");
 	const pace = argument("--pace", "settled");
+	if (toolReplay && (!replay || provider !== "loopback" || pace !== "immediate")) throw new Error("--replay-tools needs --replay --provider loopback --pace immediate");
 	const window = args.includes("--window") ? Number(argument("--window")) : null;
 	// --reserve: Pi's compaction.reserveTokens for every unit, so its trigger sits where the route compacts.
 	const reserve = args.includes("--reserve") ? Number(argument("--reserve")) : null;
@@ -996,7 +1078,16 @@ async function parent() {
 		const cwd = join(runDir, "cwd", cache === "cold" ? id : "shared");
 		writeUnitSettings(agentDir, action.type === "probe" && action.condition !== "session" ? probeSettings : unitSettings);
 		const encoded = Buffer.from(JSON.stringify({ ...action, arm, cwd, ...(latencyMs ? { latencyMs } : {}), ...(window ? { window } : {}), ...(reserve ? { reserve } : {}), ...(action.provider === "relay" ? { baseUrl, relay } : {}), ...(equivalenceOut ? { equivalence: true } : {}) })).toString("base64url");
-		const child = spawn(process.execPath, [script, "--worker", "--action", encoded, "--package-dir", packageDir, "--stock-root", stockRoot], { cwd: runDir, env: environment(agentDir), stdio: ["ignore", "pipe", "pipe"] });
+		const isolated = toolReplay ? mkdtempSync(join(tmpdir(), "pi-preview-tool-replay-")) : undefined;
+		if (isolated) {
+			for (let directory = isolated; ; directory = dirname(directory)) {
+				for (const name of ["@earendil-works/pi-coding-agent", "@earendil-works/pi-ai", "typebox"])
+					if (existsSync(join(directory, "node_modules", name))) throw new Error("TMPDIR would shadow official Pi");
+				if (dirname(directory) === directory) break;
+			}
+			cpSync(packageDir, join(isolated, "package"), { recursive: true });
+		}
+		const child = spawn(process.execPath, [script, "--worker", "--action", encoded, "--package-dir", isolated ? join(isolated, "package") : packageDir, "--stock-root", stockRoot], { cwd: runDir, env: environment(agentDir), stdio: ["ignore", "pipe", "pipe"] });
 		let stdout = "";
 		let stderr = "";
 		child.stdout.on("data", (part) => (stdout += part));
@@ -1008,6 +1099,7 @@ async function parent() {
 		}, unitMinutes * 60_000);
 		const [code] = await once(child, "close");
 		clearTimeout(timer);
+		if (isolated) rmSync(isolated, { recursive: true, force: true });
 		// The unit's call journal, content-free, read before its directory goes: a crashed or timed-out unit's
 		// calls and the usage they settled with stay in the report.
 		const journal = readJournal(agentDir);
@@ -1148,7 +1240,7 @@ async function parent() {
 		mkdirSync(join(runDir, "steps"), { recursive: true });
 		const stepsFile = join(runDir, "steps", `${fixture.gold.id}-cut${k + 1}.json`);
 		writeFileSync(stepsFile, JSON.stringify(steps));
-		const result = await run({ type: "round", provider, fixture: fixture.gold.id, cutIndex: k, sessionFile: file, stepsFile, pace, chainAttempts, prompt: "Reply with the single word OK.", thinking });
+		const result = await run({ type: "round", provider, fixture: fixture.gold.id, cutIndex: k, sessionFile: file, stepsFile, pace, chainAttempts, prompt: "Reply with the single word OK.", thinking, ...(toolReplay ? { toolReplay } : {}) });
 		spend(result, provider !== "loopback");
 		rmSync(stepsFile, { force: true });
 		if (result.crashed) return [{ ...result, ok: false, code: null }];
@@ -1159,6 +1251,7 @@ async function parent() {
 		}
 		const round = { fixture: fixture.gold.id, cut: k + 1, steps: result.steps, rounds: result.rounds, usage: result.usage, requests: result.requests, costUsd: result.costUsd, errors: result.errors, segments: result.segmentsStatus?.results ?? null, segmentsState: result.segmentsStatus ? { state: result.segmentsStatus.state, reason: result.segmentsStatus.reason ?? null } : null, journalCalls: result.journalCalls };
 		roundRows.push(round);
+		if (toolReplay) Object.assign(round, { transportCalls: result.transportCalls, rateLimitErrors: result.rateLimitErrors, tools: result.tools, remainingReplies: result.remainingReplies });
 		record("rounds.jsonl", { ...round, journalCalls: undefined });
 		const gold = result.boundaries.filter((row) => row.gold);
 		const attempts = (gold.length ? gold : [{ ok: false, code: result.boundaries.at(-1)?.code ?? null }]).map((row) => ({ ...row, diagnostics: result.diagnostics, journal: [] }));
@@ -1233,6 +1326,7 @@ async function parent() {
 	const shown = Object.fromEntries(Object.entries(limits).map(([name, value]) => [name, Number.isFinite(value) ? value : "unlimited"]));
 	const report = { label, mode, provider, model: provider === "loopback" ? LOOPBACK.id : relay ? `${relay.model.provider}/${relay.id}` : `${MEASURED[provider].provider}/${MEASURED[provider].id}`, ...(relay && relay.id !== relay.model.id ? { catalogModel: `${relay.model.provider}/${relay.model.id}` } : {}), ...(baseUrl ? { endpoint: new URL(baseUrl).host } : provider === "openai" ? { endpoint: OPENAI_HOST } : {}), thinking, cache, arm, ...(cuts ? { cuts } : {}), ...(mode === "probes" ? { probeConditions, compactionsOnly } : {}), ...(mode === "writer" || mode === "repair" ? { attempts } : {}), ...(mode === "probes" ? { chainAttempts } : {}), concurrency, build: build.buildId ?? build.build ?? null, piVersion: hostVersion, fixtures, sessionSettings, ...(segmentEffort ? { segmentEffort } : {}), unitSettings: Object.keys(unitSettings).length ? unitSettings : null, control, limits: { ...shown, inputTokensPerRequest: Number.isFinite(maxInputTokens) ? maxInputTokens : "unlimited" } };
 	if (latencyMs) report.latencyMs = latencyMs;
+	if (toolReplay) Object.assign(report, { toolReplay: { host: inspectOfficialPi(stockRoot, hostVersion), tools: "recorded content, no commands executed or invented delays", mainLatencyMs: 0, adjacentAssistants: "coalesced until the next recorded tool batch or user", writerCache: "not simulated" } });
 
 	if (mode === "smoke") {
 		// One small request through the history conversion: the opening turn of P1 and a one-word reply.
@@ -1505,6 +1599,7 @@ async function parent() {
 		const warm = roundRows.reduce((sum, round) => ({ rounds: sum.rounds + (round.rounds ?? 0), input: sum.input + (round.usage?.input ?? 0), cacheRead: sum.cacheRead + (round.usage?.cacheRead ?? 0), cacheWrite: sum.cacheWrite + (round.usage?.cacheWrite ?? 0), output: sum.output + (round.usage?.output ?? 0), costUsd: sum.costUsd + (round.usage?.cost ?? 0) }), { rounds: 0, input: 0, cacheRead: 0, cacheWrite: 0, output: 0, costUsd: 0 });
 		return {
 			window,
+			...(toolReplay ? { overlap: requestOverlap(roundRows.flatMap((round) => round.transportCalls ?? [])), rateLimitErrors: roundRows.reduce((sum, round) => sum + (round.rateLimitErrors ?? 0), 0) } : {}),
 			reserve,
 			pace,
 			segments: unitSettings.previewSegments?.enabled === true ? (segmentEffort || "session") : "off",
