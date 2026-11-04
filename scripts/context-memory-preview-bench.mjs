@@ -6,12 +6,13 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { checkpointRecords, equivalenceLine, errorClasses } from "./context-memory-equivalence-compare.mjs";
+import { createReplayForwarder, forwardPreviewRequest, recordedCallId, relocatePreviewModel, replayRequestKind, replayTaskStream } from "./context-memory-preview-forward.mjs";
 import { inspectOfficialPi } from "./context-memory-preview-stock-install.mjs";
 
 // The 0.5.0 writer bench and recovery probes for the independent preview on official Pi.
 //
-// Sessions come from eval/preview: invented, generated JSONL, cut at fixed checkpoints. No model drives the task;
-// only writer calls and probe answers reach a provider. Two modes:
+// Sessions come from eval/preview: invented, generated JSONL, cut at fixed checkpoints. With --replay-tools every
+// task reaches the provider too; its capped output is discarded before the recorded local reply. Modes:
 //
 //   writer  For each checkpoint cut, earlier cuts are compacted by a deterministic loopback writer that builds
 //           faithful notes from the gold files; the measured writer then compacts the cut on fresh copies,
@@ -77,9 +78,10 @@ import { inspectOfficialPi } from "./context-memory-preview-stock-install.mjs";
 // before the next step; immediate does not. --window sets the route's window. --session-settings previewSegments=on
 // and --segment-effort turn segments on at a level; probe units run with segments off. Rows go to boundaries.jsonl
 // and rounds.jsonl, and summary.json gains `replay`.
-// --latency-ms delays loopback writers; --turn-latency-ms delays task replies independently.
-// --replay-tools (loopback, immediate only) lets official Pi execute each recorded batch, returning the fixture's
-// results without running its commands. P5 has no elapsed tool times; reply delays are explicitly injected.
+// --latency-ms delays loopback writers; --turn-latency-ms delays task replies independently (also provider replay).
+// --replay-tools (immediate only) lets official Pi execute each recorded batch, returning the fixture's results
+// without running its commands. Provider replay forwards every Pi body intact and releases each recorded reply
+// after upstream completion and the turn delay. P5 has no elapsed tool times; reply delays are explicitly injected.
 
 const script = fileURLToPath(import.meta.url);
 const root = resolve(script, "../..");
@@ -138,14 +140,12 @@ export function writeUnitSettings(agentDir, settings) {
 	writeFileSync(file, `${JSON.stringify({ ...current, ...settings })}\n`);
 }
 
-/** The note request of 0.5.3 and later, then that of v0.5.2 and earlier, which the quotation repair still carries. */
-const WRITER_REQUESTS = ["Return ONLY the memory note itself", "Return ONLY one JSON object matching this schema"];
-
-export function loopbackLatencyMs(value, provider, flag = "--latency-ms") {
+export function loopbackLatencyMs(value, provider, flag = "--latency-ms", toolReplay = false) {
 	const ms = Number(value);
 	if (!Number.isSafeInteger(ms) || ms < 0 || ms > 180_000)
 		throw new Error(`${flag} takes an integer from 0 to 180000`);
-	if (ms && provider !== "loopback") throw new Error(`${flag} needs --provider loopback`);
+	if (ms && provider !== "loopback" && !(toolReplay && flag === "--turn-latency-ms" && ["openai", "relay", "deepseek"].includes(provider)))
+		throw new Error(`${flag} needs --provider loopback (or --replay-tools for task delay)`);
 	return ms;
 }
 
@@ -419,7 +419,11 @@ export function requestOverlap(calls) {
 }
 
 export function replaySourceIds(recorded, actual) {
-	const key = ({ message }) => JSON.stringify([message.role, message.role === "user" && Array.isArray(message.content) ? message.content.map((part) => part.text).join("\n") : message.content, message.toolCallId]);
+	const key = ({ message }) => JSON.stringify([message.role,
+		message.role === "user" && Array.isArray(message.content) ? message.content.map((part) => part.text).join("\n")
+			: message.role === "assistant" ? message.content.filter((part) => ["text", "toolCall"].includes(part.type)).map((part) => part.type === "text" ? { type: "text", text: part.text } : { type: "toolCall", id: recordedCallId(part.id), name: part.name, arguments: part.arguments })
+				: message.content,
+		message.toolCallId ? recordedCallId(message.toolCallId) : undefined]);
 	const sources = new Map();
 	for (const entry of recorded.filter((entry) => entry.type === "message")) {
 		const signature = key(entry);
@@ -479,11 +483,13 @@ async function worker() {
 	let forwarded = 0;
 	/** The catalog's address for the measured model, read before the bench moves it. */
 	let upstream;
+	let replayForwarder;
 	const server = createServer(async (request, response) => {
-		let raw = "";
-		for await (const part of request) raw += part;
-		const payload = JSON.parse(raw);
-		const serialized = JSON.stringify(payload.messages ?? []);
+		const parts = [];
+		for await (const part of request) parts.push(part);
+		const raw = Buffer.concat(parts);
+		const payload = JSON.parse(raw.toString("utf8"));
+		const serialized = JSON.stringify(payload.messages ?? payload.input ?? []);
 		const call = { kind: "main", start: performance.timeOrigin + performance.now(), input: Math.ceil(Buffer.byteLength(serialized + JSON.stringify(payload.tools ?? [])) / 3), end: Infinity };
 		const cached = cacheRead(payload);
 		if (action.toolReplay) call.cacheRead = cached;
@@ -496,15 +502,7 @@ async function worker() {
 			if (repair) repairSettings.push({ thinking: payload.thinking?.type ?? null, effort: payload.reasoning_effort ?? null, maxTokens: payload.max_tokens ?? payload.max_completion_tokens ?? null, toolChoice: payload.tool_choice ?? null, tools: Array.isArray(payload.tools) ? payload.tools.length : 0 });
 			if (repair && action.provider === "deepseek") {
 				forwarded++;
-				try {
-					const answer = await fetch(`${upstream}${request.url}`, { method: "POST", headers: { "content-type": "application/json", authorization: request.headers.authorization ?? "" }, body: raw, signal: AbortSignal.timeout(600_000) });
-					response.writeHead(answer.status, { "content-type": answer.headers.get("content-type") ?? "text/event-stream", "cache-control": "no-cache" });
-					if (answer.body) for await (const part of answer.body) response.write(part);
-					response.end();
-				} catch (cause) {
-					if (!response.headersSent) response.writeHead(502, { "content-type": "application/json" });
-					response.end(JSON.stringify({ error: { message: `bench forward failed: ${String(cause?.message ?? cause).slice(0, 120)}` } }));
-				}
+				await forwardPreviewRequest(request, response, raw, upstream);
 				return;
 			}
 			// Local answers carry no usage: only the measured repair is counted.
@@ -516,10 +514,14 @@ async function worker() {
 			response.end("data: [DONE]\n\n");
 			return;
 		}
-		const writer = WRITER_REQUESTS.some((marker) => serialized.includes(marker));
-		call.kind = writer ? serialized.includes("Write a segment note for entries") ? "segment" : "writer" : "main";
+		call.kind = replayRequestKind(payload);
+		const writer = call.kind !== "main";
 		const range = writer ? serialized.match(/Write a segment note for entries (\S+) through (\S+) only/) : null;
 		if (action.toolReplay && range) call.range = [range[1], range[2]];
+		if (replayForwarder) {
+			await replayForwarder.handle(request, response, raw, payload, call);
+			return;
+		}
 		const latency = writer ? action.latencyMs : action.turnLatencyMs;
 		if (latency) await new Promise((done) => setTimeout(done, latency));
 		const readable = new Set(
@@ -580,17 +582,28 @@ async function worker() {
 	if (action.provider === "loopback") {
 		model = { ...LOOPBACK, baseUrl: `http://127.0.0.1:${server.address().port}/v1` };
 		runtime.registerProvider(model.provider, { api: model.api, apiKey: "bench-loopback-only", baseUrl: model.baseUrl, models: [model] });
-	} else if (action.type === "repair") {
+	} else if (action.type === "repair" || action.toolReplay) {
 		// The catalog's own model, with its compatibility settings and level map; only the address moves here.
-		if (action.provider === "deepseek") {
+		if (action.provider !== "deepseek-local") {
 			const dispatcher = await import(pathToFileURL(join(stockRoot, "node_modules", "@earendil-works", "pi-coding-agent", "dist", "core", "http-dispatcher.js")).href);
 			dispatcher.configureHttpDispatcher();
 		}
-		upstream = runtime.getModel(measured.provider, measured.id)?.baseUrl;
-		if (!upstream?.startsWith("https://")) throw new Error(`${measured.provider}/${measured.id} is not in this Pi's catalog`);
-		runtime.registerProvider(measured.provider, { baseUrl: `http://127.0.0.1:${server.address().port}` });
-		model = runtime.getModel(measured.provider, measured.id);
-		if (!model?.baseUrl?.startsWith("http://127.0.0.1:")) throw new Error(`${measured.provider}/${measured.id} did not move to the bench's address`);
+		const catalog = runtime.getModel(measured.provider, measured.id);
+		upstream = action.provider === "relay" ? action.baseUrl : catalog?.baseUrl;
+		if (!upstream?.startsWith("https://")) throw new Error(`${measured.provider}/${measured.id} has no HTTPS catalog or relay address`);
+		if (action.provider === "openai" && new URL(upstream).host !== OPENAI_HOST) throw new Error(`${measured.provider}/${measured.id} is not served from ${OPENAI_HOST} in this Pi's catalog`);
+		({ model } = relocatePreviewModel(runtime, measured.provider, measured.id, `http://127.0.0.1:${server.address().port}`, action.provider === "relay" ? action.relay.id : measured.id));
+		if (action.toolReplay) replayForwarder = createReplayForwarder({
+			upstream: () => upstream,
+			nextReply: () => {
+				const reply = taskReplies.shift();
+				if (!reply) throw new Error("Recorded assistant replies exhausted");
+				return reply;
+			},
+			turnLatencyMs: action.turnLatencyMs,
+			prices: model.cost,
+			limits: action.forwardLimits,
+		});
 	} else {
 		// The Pi CLI installs its proxy-aware dispatcher at startup; an SDK caller has to do the same.
 		const dispatcher = await import(pathToFileURL(join(stockRoot, "node_modules", "@earendil-works", "pi-coding-agent", "dist", "core", "http-dispatcher.js")).href);
@@ -624,12 +637,13 @@ async function worker() {
 	const customTools = action.toolReplay ? [...new Set(recordedResults.map((entry) => entry.message.toolName))].map((name) => ({
 		name, label: name, description: `Return recorded ${name} output without executing it.`, parameters: { type: "object", properties: {}, additionalProperties: true },
 		async execute(id) {
-			const entry = recordedResults.find((result) => result.message.toolCallId === id);
+			const entry = recordedResults.find((result) => recordedCallId(result.message.toolCallId) === recordedCallId(id));
 			if (!entry) throw new Error(`Unrecorded tool call ${id}`);
 			return { content: entry.message.content, isError: entry.message.isError, details: {} };
 		},
 	})) : [];
 	const { session } = await stock.createAgentSession({ cwd, agentDir, modelRuntime: runtime, model, thinkingLevel, sessionManager, settingsManager, resourceLoader: loader, noTools: "builtin", customTools });
+	if (replayForwarder) session.agent.streamFunction = replayTaskStream(session.agent.streamFunction);
 	await session.bindExtensions({ onError: (error) => diagnostics.push(String(error?.message ?? error).slice(0, 200)) });
 	const status = async () => {
 		commandOutput = [];
@@ -713,6 +727,8 @@ async function worker() {
 			action.cutIndex = round.cutIndex;
 			const steps = round.steps;
 			const callStart = transportCalls.length;
+			const forwardedStart = replayForwarder?.state.requests ?? 0;
+			const forwardedCostStart = replayForwarder?.state.costUsd ?? 0;
 			const initialToolCount = sessionManager.getEntries().filter((entry) => entry.message?.role === "toolResult").length;
 			const usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0 };
 			const roundUsage = [];
@@ -790,6 +806,7 @@ async function worker() {
 			/** /compact until it commits or `action.chainAttempts` attempts in all have failed. */
 			const compactNow = async (trigger, step, extra) => {
 				for (let attempt = 1; attempt <= action.chainAttempts; attempt++) {
+					if (replayForwarder?.state.failure) return false;
 					const before = checkpoints();
 					let error;
 					const started = performance.now();
@@ -820,7 +837,7 @@ async function worker() {
 					errors.push(String(cause?.message ?? cause).slice(0, 200));
 				}
 				await quiet();
-				if (rateLimitErrors) { broken = true; break; }
+				if (rateLimitErrors || replayForwarder?.state.failure) { broken = true; break; }
 				if (checkpoints() > before) {
 					const row = await describe("auto", index + 1, true, { attempt: 1 });
 					boundaries.push(row);
@@ -885,9 +902,9 @@ async function worker() {
 			const expectedTools = steps.flat().filter((entry) => entry.message?.role === "toolResult");
 			const exactTools = executed.length === expectedTools.length && executed.every((entry, index) => {
 				const expected = expectedTools[index].message;
-				return entry.message.toolCallId === expected.toolCallId && entry.message.toolName === expected.toolName && entry.message.isError === expected.isError && JSON.stringify(entry.message.content) === JSON.stringify(expected.content);
+				return recordedCallId(entry.message.toolCallId) === recordedCallId(expected.toolCallId) && entry.message.toolName === expected.toolName && entry.message.isError === expected.isError && JSON.stringify(entry.message.content) === JSON.stringify(expected.content);
 			});
-			if (action.toolReplay && (!exactTools || taskReplies.length)) broken = true;
+			if (action.toolReplay && (!exactTools || taskReplies.length || replayForwarder?.state.failure)) broken = true;
 			result = {
 				ok: !broken && boundaries.some((row) => row.gold && row.ok),
 				steps: steps.length,
@@ -898,9 +915,10 @@ async function worker() {
 				usage,
 				roundUsage,
 				journalCalls,
-				...(action.toolReplay ? { transportCalls: transportCalls.slice(callStart), rateLimitErrors, tools: { expected: expectedTools.length, executed: executed.length, exact: exactTools }, remainingReplies: taskReplies.length } : {}),
+				...(action.toolReplay ? { transportCalls: transportCalls.slice(callStart), rateLimitErrors: Math.max(rateLimitErrors, replayForwarder?.state.failure?.rateLimit ? 1 : 0), tools: { expected: expectedTools.length, executed: executed.length, exact: exactTools }, remainingReplies: taskReplies.length } : {}),
 				requests: rounds + sent.length,
 				costUsd: usage.cost + sent.reduce((sum, call) => sum + call.costUsd, 0),
+				...(replayForwarder ? { requests: replayForwarder.state.requests - forwardedStart, costUsd: replayForwarder.state.costUsd - forwardedCostStart, forwardFailure: replayForwarder.state.failure } : {}),
 				...(action.provider === "openai" ? { openaiResponses: responseItems } : {}),
 			};
 			unsubscribe();
@@ -1015,8 +1033,9 @@ async function parent() {
 	const outputDir = resolve(argument("--output-dir"));
 	const mode = argument("--mode");
 	const provider = argument("--provider", "loopback");
+	const toolReplay = args.includes("--replay-tools");
 	const latencyMs = loopbackLatencyMs(argument("--latency-ms", "0"), provider);
-	const turnLatencyMs = loopbackLatencyMs(argument("--turn-latency-ms", "0"), provider, "--turn-latency-ms");
+	const turnLatencyMs = loopbackLatencyMs(argument("--turn-latency-ms", "0"), provider, "--turn-latency-ms", toolReplay);
 	const fixtures = argument("--fixtures", "P1,P2,P3").split(",");
 	const attempts = Number(argument("--attempts", "8"));
 	const thinking = argument("--thinking", "high");
@@ -1037,9 +1056,8 @@ async function parent() {
 	// written where a session writes them; --pace says whether the next step waits for the segment in flight, and
 	// --window sets the route's window. Every arm of a comparison replays the same way.
 	const replay = args.includes("--replay");
-	const toolReplay = args.includes("--replay-tools");
 	const pace = argument("--pace", "settled");
-	if (toolReplay && (!replay || provider !== "loopback" || pace !== "immediate")) throw new Error("--replay-tools needs --replay --provider loopback --pace immediate");
+	if (toolReplay && (!replay || !["loopback", "openai", "relay", "deepseek"].includes(provider) || pace !== "immediate")) throw new Error("--replay-tools needs --replay --provider loopback|openai|relay|deepseek --pace immediate");
 	const window = args.includes("--window") ? Number(argument("--window")) : null;
 	// --reserve: Pi's compaction.reserveTokens for every unit, so its trigger sits where the route compacts.
 	const reserve = args.includes("--reserve") ? Number(argument("--reserve")) : null;
@@ -1143,7 +1161,7 @@ async function parent() {
 		// prefix after a few hundred tokens; a warm run shares one directory, as one user's session does.
 		const cwd = join(runDir, "cwd", cache === "cold" ? id : "shared");
 		writeUnitSettings(agentDir, action.type === "probe" && action.condition !== "session" ? probeSettings : unitSettings);
-		const encoded = Buffer.from(JSON.stringify({ ...action, arm, cwd, cache, ...(latencyMs ? { latencyMs } : {}), ...(turnLatencyMs ? { turnLatencyMs } : {}), ...(window ? { window } : {}), ...(reserve ? { reserve } : {}), ...(action.provider === "relay" ? { baseUrl, relay } : {}), ...(equivalenceOut ? { equivalence: true } : {}) })).toString("base64url");
+		const encoded = Buffer.from(JSON.stringify({ ...action, arm, cwd, cache, ...(latencyMs ? { latencyMs } : {}), ...(turnLatencyMs ? { turnLatencyMs } : {}), ...(window ? { window } : {}), ...(reserve ? { reserve } : {}), ...(action.provider === "relay" ? { baseUrl, relay } : {}), ...(equivalenceOut ? { equivalence: true } : {}), ...(toolReplay && action.provider !== "loopback" ? { forwardLimits: { requests: limits.requests - used.requests, costUsd: limits.costUsd - used.costUsd, until: started + limits.minutes * 60_000, inputTokens: Number.isFinite(maxInputTokens) ? maxInputTokens : undefined } } : {}) })).toString("base64url");
 		const isolated = toolReplay ? mkdtempSync(join(tmpdir(), "pi-preview-tool-replay-")) : undefined;
 		if (isolated) {
 			for (let directory = isolated; ; directory = dirname(directory)) {
@@ -1335,7 +1353,7 @@ async function parent() {
 		}
 		const round = { fixture: fixture.gold.id, cut: k + 1, steps: result.steps, rounds: result.rounds, usage: result.usage, requests: result.requests, costUsd: result.costUsd, errors: result.errors, segments: result.segmentsStatus?.results ?? null, segmentsState: result.segmentsStatus ? { state: result.segmentsStatus.state, reason: result.segmentsStatus.reason ?? null } : null, journalCalls: result.journalCalls };
 		roundRows.push(round);
-		if (toolReplay) Object.assign(round, { transportCalls: result.transportCalls, rateLimitErrors: result.rateLimitErrors, tools: result.tools, remainingReplies: result.remainingReplies });
+		if (toolReplay) Object.assign(round, { transportCalls: result.transportCalls, rateLimitErrors: result.rateLimitErrors, tools: result.tools, remainingReplies: result.remainingReplies, ...(result.forwardFailure ? { forwardFailure: result.forwardFailure } : {}) });
 		record("rounds.jsonl", { ...round, journalCalls: undefined });
 		const gold = result.boundaries.filter((row) => row.gold);
 		const attempts = (gold.length ? gold : [{ ok: false, code: result.boundaries.at(-1)?.code ?? null }]).map((row) => ({ ...row, diagnostics: result.diagnostics, journal: [] }));
@@ -1412,7 +1430,7 @@ async function parent() {
 	if (latencyMs) report.latencyMs = latencyMs;
 	if (turnLatencyMs) report.turnLatencyMs = turnLatencyMs;
 	if (provider === "loopback") report.loopbackCache = cache === "session" ? "simulated continuation of a whole earlier request, same tools, reusable at dispatch, no expiry within a session" : "no cache";
-	if (toolReplay) Object.assign(report, { toolReplay: { host: inspectOfficialPi(stockRoot, hostVersion), tools: "recorded content, no commands executed or invented delays", mainLatencyMs: turnLatencyMs, adjacentAssistants: "coalesced until the next recorded tool batch or user", writerCache: report.loopbackCache } });
+	if (toolReplay) Object.assign(report, { toolReplay: { host: inspectOfficialPi(stockRoot, hostVersion), tools: "recorded content, no commands executed or invented delays", mainLatencyMs: turnLatencyMs, adjacentAssistants: "coalesced until the next recorded tool batch or user", writerCache: report.loopbackCache ?? "provider-reported", ...(remote ? { forwarding: "every task, writer and segment body unchanged; task output capped before serialisation and discarded; recorded reply after upstream completion and turn delay" } : {}) } });
 
 	if (mode === "smoke") {
 		// One small request through the history conversion: the opening turn of P1 and a one-word reply.
@@ -1690,8 +1708,10 @@ async function parent() {
 			intervals.set(key, interval);
 		}
 		const warm = roundRows.reduce((sum, round) => ({ rounds: sum.rounds + (round.rounds ?? 0), input: sum.input + (round.usage?.input ?? 0), cacheRead: sum.cacheRead + (round.usage?.cacheRead ?? 0), cacheWrite: sum.cacheWrite + (round.usage?.cacheWrite ?? 0), output: sum.output + (round.usage?.output ?? 0), costUsd: sum.costUsd + (round.usage?.cost ?? 0) }), { rounds: 0, input: 0, cacheRead: 0, cacheWrite: 0, output: 0, costUsd: 0 });
+		const forwarded = roundRows.flatMap((round) => round.transportCalls ?? []).filter((call) => call.forwarded);
 		return {
 			window,
+			...(toolReplay && remote ? { forwarded: { requests: forwarded.length, byKind: tally(forwarded.map((call) => call.kind)), usageMissing: forwarded.filter((call) => !call.usage).length, reportedInput: forwarded.filter((call) => call.usage).reduce((sum, call) => sum + call.input, 0), knownCostUsd: forwarded.reduce((sum, call) => sum + (call.costUsd ?? 0), 0) } } : {}),
 			...(toolReplay ? { overlap: requestOverlap(roundRows.flatMap((round) => round.transportCalls ?? [])), rateLimitErrors: roundRows.reduce((sum, round) => sum + (round.rateLimitErrors ?? 0), 0) } : {}),
 			...(toolReplay ? { intervals: [...intervals.values()].map((interval) => {
 				const work = segmentCalls.filter((call) => call.interval === interval.id);
@@ -1741,6 +1761,7 @@ async function parent() {
 	rmSync(join(runDir, "cwd"), { recursive: true, force: true });
 	process.stdout.write(`${JSON.stringify(report.used)}\nSummary: ${join(runDir, "summary.json")}\n`);
 	if (!existsSync(join(runDir, "summary.json"))) process.exit(1);
+	if (toolReplay && remote && (report.replay?.boundaries.failed || report.probes.compactions.committed !== report.probes.compactions.attempts || roundRows.some((round) => round.forwardFailure || round.rateLimitErrors))) process.exitCode = 1;
 }
 
 /** A run starts only when this file is the script node was given; a test imports the helpers above without one. */

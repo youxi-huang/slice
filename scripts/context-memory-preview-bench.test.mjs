@@ -45,8 +45,12 @@ test("loopback writer and task latency share bounds and reject provider runs bef
 	for (const flag of ["--latency-ms", "--turn-latency-ms"]) {
 		for (const ms of [0, 2_000, 5_000, 10_000, 13_000, 28_000, 52_000, 133_000, 180_000]) assert.equal(loopbackLatencyMs(String(ms), "loopback", flag), ms);
 		for (const value of ["-1", "0.5", "Infinity", "NaN", "180001"]) assert.throws(() => loopbackLatencyMs(value, "loopback", flag), { message: `${flag} takes an integer from 0 to 180000` });
-		assert.throws(() => loopbackLatencyMs("2000", "openai", flag), { message: `${flag} needs --provider loopback` });
+		assert.throws(() => loopbackLatencyMs("2000", "openai", flag), /needs --provider loopback/);
 		assert.equal(loopbackLatencyMs("0", "openai", flag), 0);
+	}
+	for (const provider of ["openai", "relay", "deepseek"]) {
+		assert.equal(loopbackLatencyMs("10000", provider, "--turn-latency-ms", true), 10000);
+		assert.throws(() => loopbackLatencyMs("13000", provider, "--latency-ms", true), /needs --provider loopback/);
 	}
 });
 
@@ -198,7 +202,10 @@ test("--provider openai is a provider run on the official API, and the long-rout
 		// --replay: a probes chain whose every turn runs on the session itself, with the package, at a known pace,
 		// in a window of plausible size; a segment level only with segments switched on.
 		[["--mode", "probes", "--replay-tools"], /--replay-tools needs/],
-		[["--mode", "probes", "--replay", "--replay-tools", "--cache", "session", "--pace", "immediate", "--provider", "openai"], /--replay-tools needs/],
+		[["--mode", "probes", "--replay", "--replay-tools", "--cache", "session", "--pace", "immediate", "--provider", "openai"], /Missing --max-requests/],
+		[["--mode", "probes", "--replay", "--replay-tools", "--cache", "session", "--pace", "immediate", "--provider", "openai", "--turn-latency-ms", "10000"], /Missing --max-requests/],
+		[["--mode", "probes", "--replay", "--replay-tools", "--cache", "session", "--pace", "immediate", "--provider", "relay", "--base-url", "https://example.invalid", "--turn-latency-ms", "5000"], /Missing --max-requests/],
+		[["--mode", "probes", "--replay", "--replay-tools", "--cache", "session", "--pace", "immediate", "--provider", "deepseek-local"], /--replay-tools needs/],
 		[["--mode", "writer", "--replay"], /--replay applies to probes mode/],
 		[["--mode", "probes", "--replay"], /--replay runs every turn on the session itself: give --cache session/],
 		[["--mode", "probes", "--replay", "--cache", "session", "--arm", "native", "--probe-conditions", "none"], /--replay needs the package/],
