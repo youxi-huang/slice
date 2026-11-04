@@ -15,12 +15,18 @@ Changes under **Unreleased** are not included in an existing release tag or its 
 
 - With preparation on, a checkpoint that preparation did not serve records why in `details.preparation.preparationFallback`: nothing was prepared, a run was still in flight or had failed or been cancelled, the candidate no longer matched its sources, a stale candidate left no reusable prefix, the turn was unfinished, or the prefix did not fit. Work notes already record their own reason in `notesFallback`. Older readers ignore the field; no checkpoint format changes.
 
+### Changed
+
+- Experimental segments can start after one range of new history, before half the trigger, and close between complete tool batches inside a long run. A covered batch can leave context while later batches stay verbatim, under the existing tail and fit bounds. These scheduling proposals remain off by default pending the maintainer's decision and a new provider comparison.
+
 ### Fixed
 
 - The note writer now states the note schema's limit of 20 source IDs per item in its rules, where only the attached schema gave it. On large sessions GPT-6 Luna at Pi's default thinking level cited 21 to 33 entries in one fact, the schema refused the note, and compaction failed six times in seven attempts on the 272k route of the evaluation set; with the rule, once in five.
 - After `/tree`, the preview checks at once whether the session writer still has room for its handover, and starts the compaction `/compact` would when it does not. Before, it checked only after the next turn and at most once per checkpoint interval on any branch, so a branch moved back before a checkpoint, or to a point near the limit, could grow past the room the session writer needs, and every `/compact` then failed with `CONTEXT_WRITER_CAPACITY` until the writer was changed. Found by 0.8.0's lifecycle fuzz.
 
 ### Maintenance
+
+- The preview bench accepts `--latency-ms` with the loopback provider to delay writer replies by up to 180 seconds while task replies remain immediate, and records the delay in its report.
 
 - The host-neutral core gains 0.8.0's segment contract (`segments.ts`): a segment freezes and validates like a preparation candidate over a closed range and cites only inside it, a chain merges its longest contiguous valid prefix, and the merge, generalized from the work-note merge as `mergeNotes`, says why it leaves a boundary to the writer. The specification states the chain and the coverage invariant, and the conformance set, now `0.8-conformance.1`, adds 26 segment vectors in `segments.json`. Nothing calls it yet; work notes merge as before.
 - The core chooses each segment's range at a settled turn (`nextSegmentRange`), the session writer writes a segment from the session's own request with an instruction that limits citations to the range, and the call journal records segment calls under their own purpose, at most eight per checkpoint interval and within a spending cap where unknown usage spends it all. In the Pi preview, `PreviewSegments` runs one segment at a time, cancels it when the session, branch or writer changes, and stops after three failures of one kind until the next checkpoint. `/compaction-status` counts segment calls.
