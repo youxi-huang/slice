@@ -191,20 +191,24 @@ than the default unit limit; give `--unit-minutes 30`.
 A replay run writes `boundaries.jsonl`, one content-free row per compaction attempt with its trigger (`auto`, `gold` or
 `retry`), path, segments fallback, U8 wait, pause, coverage at the gold checkpoint and foreground writer calls, and
 `rounds.jsonl` with each round's steps, turns, requests, cost and the preview's own count of how its segments ended
-(`segments.results` in `/compaction-status`). `summary.json` adds `replay`: the pause's P50, P95
-and maximum over every committed boundary, over those the segments served and over the writer's, fallbacks by cause,
+(`segments.results` in `/compaction-status`). `summary.json` adds `replay`: pause P50, P95, maximum and total
+over every committed boundary, over those the segments served and over the writer's, fallbacks by cause,
 waits, coverage at each gold checkpoint, and the calls of segments (merged and discarded apart), writers and the
 session's own turns, with cache reads and catalog costs, and those segment results summed with the rounds in which the
 breaker paused segments. A round's requests are its turns and every journaled call it
 dispatched, so the run's limits count segments too.
 
-With `--replay-tools`, the loopback replay drives official Pi through each recorded tool batch. Adjacent assistant
+With `--replay-tools`, the loopback replay drives official Pi through each recorded tool batch in one SDK session
+per fixture chain, so in-memory state survives its checkpoints. Adjacent assistant
 records are coalesced into the next tool-call reply; their text, calls and arguments remain, and tools return the
-recorded results and error status without executing commands. P5 has no elapsed tool times, so no delays are invented.
+recorded results and error status without executing commands. P5 has no elapsed tool times.
 This mode requires `--replay --provider loopback --pace immediate --cache session`. `--latency-ms` delays writer
-replies. Round rows check every tool result and report HTTP request lifetimes; the replay summary adds overlapping
+replies and `--turn-latency-ms` delays task replies, including the next tool-call batch. Both take integers from
+0 to 180000 milliseconds, default to zero and reject nonzero values for other providers. These are injected
+reply delays, not timings inferred from the fixture. Long delayed chains may need `--unit-minutes 20`.
+Round rows check every tool result and report HTTP request lifetimes; the replay summary adds overlapping
 segment calls, their summed input, peak rolling-minute input and rate-limit errors. These are loopback figures,
-with immediate main replies and estimated input sizes, separate from provider latency, cache and rate-limit evidence.
+with estimated input sizes and no simulated cache reads, separate from provider latency, cache and rate-limit evidence.
 
 ### Token-overhead report
 

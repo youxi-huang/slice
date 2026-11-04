@@ -772,7 +772,7 @@ async function worker() {
 					}
 					const ms = Math.round(performance.now() - started);
 					await quiet();
-				const row = await describe(trigger, step, checkpoints() > before, { attempt, ms, ...(action.toolReplay ? { startedAt: performance.timeOrigin + started } : {}), ...extra, ...(error ? { error } : {}) });
+					const row = await describe(trigger, step, checkpoints() > before, { attempt, ms, ...(action.toolReplay ? { startedAt: performance.timeOrigin + started } : {}), ...extra, ...(error ? { error } : {}) });
 					boundaries.push(row);
 					if (row.ok) return true;
 				}
