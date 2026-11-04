@@ -358,10 +358,20 @@ session has already warmed: on DeepSeek, 95 to 97% of the writer's input over
 192 compactions. The closing message tells
 the model to call no tool. A tool call is never run: the first is answered as
 unavailable and the same request continues once. That continuation does not
-spend the compaction's one repair, so a compaction makes at most three writer
+spend the compaction's one repair, so a handover makes at most three writer
 calls. A second tool call, or one with `noteRepair` off, refuses the note with
 `CONTEXT_WRITER_FAILED`. On DeepSeek about one writer response in twenty called
 a tool.
+
+If the full session handover cannot fit, even with bare citation IDs, the same
+selected session model and thinking level read bounded chunks of original
+evidence instead. This choice happens before any writer request; it does not
+retry a failed writer. Each chunk carries the preceding note and original IDs
+and offsets; all calls share the frozen note budget, validation and one repair
+allowance. This can require more calls and lose the session's prefix cache.
+Segment requests and the tail kept by a segments checkpoint are unchanged.
+This covers a tool batch consuming Pi's reserve before its compaction trigger
+runs, including when segments cannot serve that boundary.
 
 Configuration is latched for the process; restart Pi after changing it. The
 preview uses the writer, note-budget, repair and retained-text settings from

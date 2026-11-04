@@ -24,6 +24,7 @@ import {
 	type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { memoryBudget, selectNoteBudget } from "../../compaction-core/src/config.ts";
 // The preview's validation walk now lives in the core copy (v0.7.0 WP2 step 3); the spy must target it.
 import * as memoryNotes from "../../compaction-core/src/notes.ts";
 import type { SessionRecord } from "../../compaction-core/src/records.ts";
@@ -32,7 +33,9 @@ import {
 	validateWorkNote,
 	WORK_NOTE_GUIDELINE,
 	workNotes,
+	writerSources,
 } from "../../compaction-core/src/work-notes.ts";
+import { sessionHandoverTokens } from "../../compaction-core/src/writer.ts";
 import { DEFAULT_MEMORY_CONFIG, SESSION_WRITER } from "../src/extensions/context-memory/config.ts";
 import { freezeHistory, queryHistory } from "../src/extensions/context-memory/history.ts";
 import {
@@ -3458,7 +3461,7 @@ describe("preview segments at settled turns (0.8.0 WP2)", () => {
 		expect(controller.status(ctx).calls).toMatchObject({ segmentCalls: 1, preparationCalls: 0, compactionCalls: 0 });
 	});
 
-	async function toolBatches(enabled = true): Promise<PreviewCompaction> {
+	async function toolBatches(enabled = true, repeats = 4_000, reserveTokens?: number): Promise<PreviewCompaction> {
 		session.entries = [];
 		session.leafId = null;
 		session.persist();
@@ -3470,6 +3473,7 @@ describe("preview segments at settled turns (0.8.0 WP2)", () => {
 				failureStore: store,
 				segments,
 				journal,
+				...(reserveTokens === undefined ? {} : { hostSettings: () => ({ compaction: { reserveTokens } }) }),
 			});
 		}
 		const append = (id: string, message: AgentMessage) =>
@@ -3497,7 +3501,7 @@ describe("preview segments at settled turns (0.8.0 WP2)", () => {
 				role: "toolResult",
 				toolCallId: `read-${index}`,
 				toolName: "read",
-				content: [{ type: "text", text: index < 4 ? "Synthetic output. ".repeat(4_000) : "Done." }],
+				content: [{ type: "text", text: index < 4 ? "Synthetic output. ".repeat(repeats) : "Done." }],
 				isError: false,
 				timestamp: 1,
 			});
@@ -3542,6 +3546,113 @@ describe("preview segments at settled turns (0.8.0 WP2)", () => {
 		expect(value.details?.preparation).toBeUndefined();
 		expect(value.details?.coveredThrough).toBe("done");
 		expect(value.firstKeptEntryId).toBe(CONTEXT_KEEP_NONE);
+	});
+
+	it.each([
+		[180_000, false],
+		[180_000, true],
+		[240_000, false],
+		[240_000, true],
+	] as const)("compacts at Pi's trigger plus a P5 batch: window %i, segments %s", async (window, enabled) => {
+		const route = { ...model, contextWindow: window, maxTokens: 32_000 };
+		const reserve = 30_000;
+		ctx = {
+			...ctx,
+			model: route,
+			getContextUsage: () => ({ tokens: contextTokens, contextWindow: window, percent: null }),
+		};
+		contextTokens = window / 2;
+		controller = new PreviewMemoryController({
+			config: { ...DEFAULT_MEMORY_CONFIG, writerModel: SESSION_WRITER, noteRepair: false },
+			failureStore: store,
+			segments,
+			journal,
+			hostSettings: () => ({ compaction: { reserveTokens: reserve } }),
+		});
+		// Both checkpoints use this route. Complete batches exceed a segment range; the last short one stays raw.
+		const first = await toolBatches(enabled, 8_000, reserve);
+		if (enabled) {
+			expect(first.details?.preparation?.path).toBe("segments");
+			expect(first.firstKeptEntryId).toBe("a4");
+			expect(first.details?.coveredThrough).toBe("r3");
+		}
+		commit(first);
+		// P5's largest recorded tool batch has 67,059 ASCII bytes (22,353 bench tokens).
+		// The preceding request can sit immediately below Pi's trigger when that batch arrives.
+		const overshoot = 22_353;
+		contextTokens = window - reserve + overshoot;
+		ctx = {
+			...ctx,
+			model: route,
+			getContextUsage: () => ({ tokens: contextTokens, contextWindow: window, percent: null }),
+		};
+		turn(99, "Synthetic capacity evidence. ".repeat(16_000));
+		const branch = session.getBranch();
+		const previous = latestMemory(branch)!;
+		const active = new Set(
+			session
+				.buildSessionProjection()
+				.entries.filter((entry) => entry.messages.length)
+				.map((entry) => entry.sourceEntry.id),
+		);
+		const policy = selectNoteBudget(
+			DEFAULT_MEMORY_CONFIG,
+			memoryBudget(route).threshold,
+			memoryNotes.compactedSourceTokens(asRecords(branch.filter((entry) => active.has(entry.id)))),
+			Math.ceil(memoryNotes.noteBytes(previous.memory.note) / 3),
+		);
+		const output = Math.min(route.maxTokens, Math.max(4096, policy.hardTokens * 2));
+		const handover = sessionHandoverTokens({
+			maxOutputTokens: route.maxTokens,
+			previous: previous.memory.note,
+			increments: [],
+			uncovered: writerSources(asRecords(branch), previous),
+			branch: asRecords(branch),
+			noteTokens: policy.hardTokens,
+			baseNoteTokens: policy.baseTokens,
+		});
+		if (process.env.CONTEXT_MEMORY_CAPACITY_REPORT)
+			fs.appendFileSync(
+				process.env.CONTEXT_MEMORY_CAPACITY_REPORT,
+				`${JSON.stringify({
+					window,
+					enabled,
+					reserve,
+					overshoot,
+					prefix: contextTokens,
+					output,
+					instruction: handover - output,
+					required: handover + overshoot,
+					deficit: handover + overshoot - reserve,
+				})}\n`,
+			);
+		expect(handover + overshoot).toBeGreaterThan(reserve);
+		const start = requests.length;
+		for (let index = 0; index < 30; index++) outputs.push(fact(99, "Synthetic capacity progress."));
+		const value = await controller.compact({ ...event(), reason: "threshold" }, ctx);
+		expect(value.details?.writerModel).toBe("preview-test/preview-test");
+		expect(value.details?.coveredThrough).toBe("reply-99");
+		expect(value.details?.sourceHash).toBe(hashEntries(branch));
+		expect(value.firstKeptEntryId).toBe(CONTEXT_KEEP_NONE);
+		expect(requests.length - start).toBeGreaterThan(1);
+		for (const request of requests.slice(start)) {
+			expect(request.systemPrompt).toContain("You maintain a compact, evidence-backed memory");
+			expect(request.tools).toEqual([]);
+		}
+		const entry = { ...saved(session, value), id: "checkpoint-2" };
+		session.append(entry);
+		controller.committed(
+			{
+				type: "session_compact",
+				compactionEntry: entry,
+				fromExtension: true,
+				reason: "threshold",
+				willRetry: false,
+			},
+			ctx,
+		);
+		expect(store.inspect(session).state).toBe("ready");
+		expect(() => controller.assertReady(ctx)).not.toThrow();
 	});
 
 	it("blocks tool-chunk readback when a covered result changes under its ID", async () => {
