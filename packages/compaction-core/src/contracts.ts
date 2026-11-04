@@ -51,7 +51,8 @@ export type PrefixRefusal = "cut" | "user-messages" | "fit";
 /**
  * Why segments did not serve a compaction (0.8.0 WP3): none was ready, the one in flight did not finish in time, none
  * of the ready ones was still valid, the turn was unfinished, custom focus, a merge refusal or a merged note that does
- * not validate, or the prefix was refused. Segments carry no user messages, so `user-messages` does not occur.
+ * not validate, history after the chain that would stay verbatim past one range (`tail`), or the prefix was refused.
+ * Segments carry no user messages, so `user-messages` does not occur.
  */
 export type SegmentsFallback =
 	| "no-segments"
@@ -60,6 +61,7 @@ export type SegmentsFallback =
 	| "unfinished-turn"
 	| "custom-focus"
 	| "merge"
+	| "tail"
 	| MergeRefusal
 	| PrefixRefusal;
 

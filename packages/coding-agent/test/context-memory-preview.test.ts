@@ -3601,6 +3601,42 @@ describe("preview segments at settled turns (0.8.0 WP2)", () => {
 		expect(segments.status()).toMatchObject({ ready: 0 });
 	});
 
+	it("leaves the boundary to the writer when more than one range after the chain would stay verbatim (WP5)", async () => {
+		await settle();
+		turn(2, long("The synthetic build is green."));
+		outputs.push(fact(2, "The synthetic build is green."));
+		await settle();
+		// About 28,500 tokens after the chain: past one range of 16,742, under half the threshold of 102,400. On P5 a
+		// 70,000-token run stayed verbatim this way, and the next large input overflowed the window.
+		turn(3, long(long("Keep going.")));
+		const value = await controller.compact(event(), ctx);
+		expect(requests).toHaveLength(3);
+		expect(value.details?.preparation).toMatchObject({ path: "sync", segmentsFallback: "tail" });
+		expect(value.firstKeptEntryId).toBe(CONTEXT_KEEP_NONE);
+		expect(value.details?.coveredThrough).toBe("reply-3");
+	});
+
+	it("waits for the segment in flight that covers a tail past one range, then commits without the writer", async () => {
+		await settle();
+		turn(2, long("The synthetic build is green."));
+		outputs.push(fact(2, "The synthetic build is green."));
+		await settle();
+		turn(3, long(long("Keep going.")));
+		outputs.push(fact(3, "Keep going."));
+		hold = true;
+		controller.segment(ctx);
+		await vi.waitFor(() => expect(held).toBeDefined());
+		hold = false;
+		const pending = controller.compact(event(), ctx);
+		held?.release();
+		const value = await pending;
+		expect(requests).toHaveLength(3);
+		expect(value.details?.preparation).toMatchObject({ path: "segments" });
+		expect(value.details?.preparation?.segmentIds).toHaveLength(3);
+		expect(value.details?.preparation?.segmentsWaitMs).toBeGreaterThanOrEqual(0);
+		expect(value.details?.coveredThrough).toBe("reply-3");
+	});
+
 	it.each([
 		["no-segments", undefined],
 		["custom-focus", "Focus on the build."],

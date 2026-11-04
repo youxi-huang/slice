@@ -61,6 +61,7 @@ import {
 	mergeChain,
 	nextSegmentRange,
 	type PreparedSegment,
+	segmentRangeTokens,
 } from "../../../../../compaction-core/src/segments.ts";
 import {
 	assertUserMessages,
@@ -1581,6 +1582,13 @@ export class PreviewMemoryController {
 			// 0.8.0 WP3: merge the segment chain without a writer call (U6) and commit it for its prefix, keeping later
 			// originals verbatim, under the notes path's half-threshold bound (U7). When only more coverage would help,
 			// the boundary waits at most U8's 15 s for a segment in flight that extends the chain.
+			// Found by WP5: the half-threshold bound alone kept P5's 70,000-token run verbatim, the next interval began
+			// near 75,000 tokens and the next large input overflowed the window where the control compacted. The
+			// verbatim tail is now at most one range of Pi's trigger, as the scheduler sizes a later link (U3); history
+			// past that is what the chain failed to cover, and the writer covers it.
+			const tailLimit = segmentRangeTokens(
+				ctx.model.contextWindow - piReserveTokens(this.hostSettings(), ctx.model),
+			);
 			let segmentsNote: MemoryNote | undefined;
 			let segmentsFallback: SegmentsFallback | undefined;
 			let segmentsWaitMs: number | undefined;
@@ -1620,10 +1628,21 @@ export class PreviewMemoryController {
 						// A chain through the last entry covers everything, as a complete candidate does: the ordinary
 						// cut decides what stays. The prefix path would keep the covered last turn verbatim.
 						if (end === branch.length - 1) return undefined;
+						const start = prefixCut(branch, projection, end, cut);
+						if (
+							start !== undefined &&
+							retainedFrom(start).reduce((sum, message) => sum + estimateTokens(message), 0) > tailLimit
+						)
+							return "tail";
 						return commitPrefix(segmentsNote, end, 0.5);
 					};
 					segmentsFallback = assemble();
-					if (segmentsFallback === "in-flight" || segmentsFallback === "fit" || segmentsFallback === "cut") {
+					if (
+						segmentsFallback === "in-flight" ||
+						segmentsFallback === "fit" ||
+						segmentsFallback === "cut" ||
+						segmentsFallback === "tail"
+					) {
 						const waiting = performance.now();
 						const settled = await segments.settle(segments.waitMs, event.signal);
 						segmentsWaitMs = Math.round(performance.now() - waiting);

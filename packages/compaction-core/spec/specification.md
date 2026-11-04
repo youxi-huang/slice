@@ -350,6 +350,10 @@ instructions than rulings replace (`instruction-superseded`), when it supports
 more earlier items in all than the note gives in their place
 (`ambiguous-supersede`), or when the result exceeds the note schema (`schema`).
 A merged note is committed under the full commit checks, as rule 5 requires.
+The reference adapter commits it for its prefix only when the originals that
+would stay verbatim after the chain hold at most `segmentRangeTokens` of the
+trigger; a longer tail is history the chain did not cover, and the synchronous
+writer compacts instead (`tail`).
 
 **Coverage invariant.** After every boundary, each original after the base
 checkpoint's coverage is covered by a committed checkpoint, by a merged
