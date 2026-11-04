@@ -264,6 +264,13 @@ export default function contextMemoryPreview(pi: ExtensionAPI): void {
 			controller.segment(ctx);
 		}),
 	);
+	if (segments.enabled)
+		pi.on(
+			"turn_end",
+			live((event, ctx) => {
+				if (event.toolResults.length) controller.segment(ctx);
+			}),
+		);
 	pi.on(
 		"session_before_switch",
 		live(() => controller.invalidatePreparation("session-switch")),

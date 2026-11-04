@@ -407,6 +407,48 @@ describe("choosing the next range (0.8.0 WP2, U3)", () => {
 		});
 	});
 
+	it("closes inside a long tool run only after every call in the batch has its result", () => {
+		const calls: SessionRecord = {
+			type: "message",
+			id: "calls",
+			parentId: "u4",
+			timestamp,
+			message: {
+				role: "assistant",
+				stopReason: "toolUse",
+				content: [
+					{ type: "toolCall", id: "read-1", name: "read", arguments: {} },
+					{ type: "toolCall", id: "read-2", name: "read", arguments: {} },
+				],
+			},
+		};
+		const first: SessionRecord = {
+			type: "message",
+			id: "r1",
+			parentId: "calls",
+			timestamp,
+			message: { role: "toolResult", toolCallId: "read-1", content: [{ type: "text", text: "x".repeat(75_000) }] },
+		};
+		const partial = [...branch(), user("u4", "a3", "Read the synthetic files."), calls, first];
+		expect(nextSegmentRange(partial, { chainEnd: "a3", triggerTokens: trigger, contextTokens: 80_000 })).toEqual({
+			defer: "unsettled",
+		});
+		const complete = [
+			...partial,
+			{
+				...first,
+				id: "r2",
+				parentId: "r1",
+				message: { role: "toolResult", toolCallId: "read-2", content: [{ type: "text", text: "Done." }] },
+			} satisfies SessionRecord,
+		];
+		expect(
+			nextSegmentRange(complete, { chainEnd: "a3", triggerTokens: trigger, contextTokens: 80_000 }),
+		).toMatchObject({ range: { firstId: "u4", lastId: "r2" } });
+		const link = segment(complete, "u1", "r2", [], note({ state: [{ text: "Both files read.", sources: ["r2"] }] }));
+		expect(classifyChain([link], submission(complete)).coveredThrough).toBe("r2");
+	});
+
 	it("starts after the base checkpoint's coverage, and refuses a chain end off the branch", () => {
 		const base: SessionRecord = {
 			type: "compaction",

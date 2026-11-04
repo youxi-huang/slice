@@ -1553,8 +1553,8 @@ export class PreviewMemoryController {
 				end: number,
 				share: number,
 				users: readonly SessionRecord[] = [],
+				start = prefixCut(branch, projection, end, cut),
 			): PrefixRefusal | undefined => {
-				const start = prefixCut(branch, projection, end, cut);
 				if (start === undefined) return "cut";
 				const retained = retainedFrom(start);
 				const retainedTokens = systemTokens + retained.reduce((sum, message) => sum + estimateTokens(message), 0);
@@ -1628,13 +1628,25 @@ export class PreviewMemoryController {
 						// A chain through the last entry covers everything, as a complete candidate does: the ordinary
 						// cut decides what stays. The prefix path would keep the covered last turn verbatim.
 						if (end === branch.length - 1) return undefined;
-						const start = prefixCut(branch, projection, end, cut);
+						let start = prefixCut(branch, projection, end, cut);
+						const covered = branch[end];
+						const next = branch[end + 1];
+						// A closed tool batch can release its prefix inside a run. The full projection was paired above;
+						// the next assistant starts a new batch, and commitPrefix checks the retained side again.
+						if (
+							end + 1 <= cut &&
+							covered.type === "message" &&
+							covered.message.role === "toolResult" &&
+							next.type === "message" &&
+							next.message.role === "assistant"
+						)
+							start = end + 1;
 						if (
 							start !== undefined &&
 							retainedFrom(start).reduce((sum, message) => sum + estimateTokens(message), 0) > tailLimit
 						)
 							return "tail";
-						return commitPrefix(segmentsNote, end, 0.5);
+						return commitPrefix(segmentsNote, end, 0.5, [], start);
 					};
 					segmentsFallback = assemble();
 					if (

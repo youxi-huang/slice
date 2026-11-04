@@ -148,8 +148,8 @@ export interface SegmentRange {
 
 /**
  * U3: the next range to prepare, or why none closes now. A range starts right after the chain's last link, or
- * after the base checkpoint's coverage for the first link of an interval, and ends at the branch's last record,
- * which must close a settled turn: an assistant reply that stopped, with every tool call in the range answered.
+ * after the base checkpoint's coverage for the first link of an interval, and ends at the branch's last record:
+ * a stopped assistant reply or a tool result, with every tool call in the range answered.
  * The first link starts after one range of new history, or at half the trigger when carried context reaches it
  * first. Each later link waits for `segmentRangeTokens` of new history.
  */
@@ -173,7 +173,10 @@ export function nextSegmentRange(
 	const range = branch.slice(start);
 	const last = range.at(-1);
 	if (!last) return { defer: "too-small" };
-	if (last.type !== "message" || last.message.role !== "assistant" || last.message.stopReason !== "stop")
+	if (
+		last.type !== "message" ||
+		!(last.message.role === "toolResult" || (last.message.role === "assistant" && last.message.stopReason === "stop"))
+	)
 		return { defer: "unsettled" };
 	try {
 		assertToolPairs(range.flatMap((record) => (record.type === "message" ? [record.message] : [])));
