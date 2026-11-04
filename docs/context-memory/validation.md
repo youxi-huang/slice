@@ -2,14 +2,15 @@
 
 ## 0.8.0 segment scheduling review: official-Pi P5 batch replay, offline and on GPT-6 Luna, 2026-11-04 UTC
 
-**Grid complete; V2 selected, pending a capacity investigation. Four GPT-6 Luna chains ran within the maintainer's
-budget, for US$0.39.** The serial grid's eight cells and its one required repeat ran on five machines. Rule C, as the
-maintainer amended it, selects V2, the runtime this branch has carried since `1bf62be`, and D's gate holds for every
-variant. The provider replay mode is merged from `codex/segments-p5-provider` and proven offline. On Luna, V2 served
-boundaries in 48 and 108 ms and cut the 272k route's total pause from 37.5 to 19.0 s. On the 200k route, a boundary
-that segments did not serve left the writer no room, and the chain stopped with `CONTEXT_WRITER_CAPACITY`. Whether
-that risk is specific to segments is open and under investigation on `codex/segments-p5-capacity`; V2 stays
-provisional until it closes. No further Luna budget is proposed. Final checks have not run on the final source.
+**Grid complete and V2 selected. The block GPT-6 Luna found is fixed, and every chain completed after the fix.
+Segments stay off by default, and 0.8.0 ships them as an experiment.** The serial grid's eight cells and its one
+required repeat ran on five machines. Rule C, as the maintainer amended it, selects V2, the runtime this branch has
+carried since `1bf62be`, and D's gate holds for every variant. The provider replay mode is merged from
+`codex/segments-p5-provider` and proven offline. In Luna's first four chains, V2 served boundaries in 48 and 108 ms,
+and on the 200k route a boundary segments did not serve left the session writer no room: the chain stopped with
+`CONTEXT_WRITER_CAPACITY`. The cause is the reserve, not segments. Merged from `codex/segments-p5-capacity`, the
+writer now reads the evidence in bounded chunks when no handover fits. Rerun for US$0.46, every chain completed, but
+the chunked compaction took 143 s after one refused attempt. The final checks pass on the final source.
 
 ### Cache semantics and recorded provider evidence
 
@@ -253,7 +254,7 @@ Disconnects abort upstream, every forwarded request times out, and an error or l
 | `node scripts/context-memory-ops.mjs preview` | `87e7c48`: stock 42/36/36/36, strict scenarios 157, release checks 37 | 0 |
 | `node scripts/context-memory-ops.mjs preview` | `cc1aa02`: stock 42/36/36/36; strict scenarios 156/157, the bounded-growth timing guard comparing 0 ms at 10 checkpoints with 16 ms at 20; the runtime is unchanged from `87e7c48` | 1 |
 
-The bounded-growth guard reruns with the final checks.
+The bounded-growth guard passed again in the [final checks](#final-checks).
 
 ### GPT-6 Luna through the provider replay mode
 
@@ -279,50 +280,106 @@ the exact command: `LUNA-P5.md` and `luna-p5/` on `claude/confident-thompson-3k0
 - Luna counted about 6% more input than the bench's bytes/3 estimate at cut 1 (146,117 against 137,545) and about
   11% more at the control's cut 3 (144,428 against 130,048).
 
-### Open: the writer's room at Pi's own trigger
+### The writer's room at Pi's own trigger: the finding and its fix
 
-In the 200k chain with segments on, cut 1 was served by segments in 48 ms. Cut 3 became Pi's own trigger at step 4,
-in the middle of a tool batch, at 161,175 input tokens. Segments had not covered it: their calls took 21.6 to
-42.7 s. The synchronous writer refused twice with `CONTEXT_WRITER_CAPACITY` ("the session context leaves no room
-for the handover request"), and the chain stopped. With segments off, the chain reached its planned cuts first, at
-146,117, 144,428 and 142,503 tokens, below Pi's 150,000 trigger, so it never met Pi's own trigger.
+**What Luna showed.** In the first 200k chain with segments on, cut 1 was served by segments in 48 ms. Cut 3 became
+Pi's own trigger at step 4, in the middle of a tool batch, at 161,175 input tokens. Segments had not covered it:
+their calls took 21.6 to 42.7 s. The synchronous writer refused twice with `CONTEXT_WRITER_CAPACITY` ("the session
+context leaves no room for the handover request"), and the chain stopped.
 
-Offline, V2's second boundary on 200k is also Pi's own trigger, at 154,428 estimated tokens against 130,048 for
-the control's planned cut, and on 272k it reaches 207,527 against 174,321. Segments served every one of those
-boundaries offline, so the writer's fallback after a segments commit was never exercised. A verbatim tail of one
-range (22,500 tokens on 200k, 31,500 on 272k) raises the start of the next interval. A real session meets Pi's own
-trigger at every boundary, after whatever batch crosses it, so the same refusal may reach the writer with segments
-off.
+**Why, and why segments are not the cause.** Let `R` be Pi's reserve, `B` the batch that crosses the trigger, `O`
+the writer's output reservation and `I` its smallest handover instruction. A boundary reached at window − `R` + `B`
+fits a session handover only if `O` + `I` + `B` ≤ `R`, on any window. `O` is
+`min(model.maxTokens, max(4096, 2 × hardNoteTokens))`, 10,000 at the 5,000-token hard note budget used here.
+P5's largest batch is 67,059 bytes: 22,353 tokens at the bench's bytes/3, 16,765 at Pi's characters/4. The focused
+cases below measure `I` at 2,287 tokens with segments off and 3,751 after a segment commit, so the handover needs
+34,640 and 36,104 tokens: 4,640 and 6,104 more than the bench's 30,000 reserve, on both routes. At characters/4 the
+off case fits with 948 to spare and the on case is 516 short. These are synthetic lifecycle cases, not Luna's token
+counts. Pi's default reserve is 16,384 tokens (`DEFAULT_COMPACTION_SETTINGS.reserveTokens`), which the preview
+inherits when none is set, so a session at Pi's defaults is more exposed than the bench. Segments made the condition
+visible because V2 lets Pi's own trigger arrive; the segments-off chains cut below it (146,117, 144,428 and 142,503
+tokens against 150,000) and never met it.
 
-`codex/segments-p5-capacity` is to establish which, state the headroom the writer needs at Pi's trigger plus a
-batch, fix it with the smallest change that keeps every boundary compactable without substituting a writer, add a
-focused regression, reproduce it offline if the loopback can, and name the grid cells, if any, its fix can change.
-Machine B's offline attempt did not reach it. V2 with a 40 s loopback writer at 10 s turns on 200k met Pi's own
-trigger at cut 3 at 154,420 estimated tokens, but U8 waited 9.8 s, the segment in flight finished, and segments
-served the boundary (pause 9.9 s); the writer's fallback never ran. Reaching it offline needs a segment that U8
-does not wait for, and the loopback's bytes/3 estimate runs 6 to 11% below Luna's count, so a focused test with
-exact token counts is the more reliable regression.
-After the fix, the same four Luna chains would cost about US$0.40; no such run is proposed yet.
+**The fix.** Merged from `codex/segments-p5-capacity` (`e23a4f9`, documented in `f4645df`) at `e758e11`. When
+none of the session handover forms fits, the core chooses before any request to read bounded chunks of original
+evidence through the same transport, model and thinking level, reusing the existing sequential chunk path
+(`writeInChunks`). Each chunk carries the preceding note and the referenced originals with their IDs and offsets;
+all chunks share the frozen note budget, the validator, one repair and the call journal, and every request is
+checked against the window before dispatch. A provider refusal or an invalid note still blocks the session. A
+handover that fits, exactly included, is unchanged, and segment calls keep their own capacity refusal; no
+scheduling, wait, cut, retained tail, reserve or setting changed. The cost is more calls and no session prefix cache
+for that compaction. The maintainer accepted the design on 2026-11-04 as consistent with "Do not substitute a writer
+on failure": the choice follows from the request's size before dispatch, the writer is the same, and a failure is
+never retried another way. The same condition stopped the prose session of
+[2026-11-01](#pis-default-trigger-on-a-272k-model-the-preview-stops-requests-first), whose `/compact` failed with
+`CONTEXT_WRITER_CAPACITY`; with the fix it would take the chunked path. That session was not rerun.
 
-### Checks so far; final checks pending
+**Regression.** `compacts at Pi's trigger plus a P5 batch: window %i, segments %s` in
+`context-memory-preview.test.ts` runs both routes with segments on and off. Each case commits a first checkpoint,
+then presents Pi's trigger plus one P5-sized batch to the writer. With only `packages/compaction-core/src/writer.ts`
+restored to its base bytes, all four fail with `CONTEXT_WRITER_CAPACITY` (exit 1); with the fix, all four pass
+(exit 0), with coverage and source hashes, paired retained tools and disk readback checked. Machine B reproduced
+both results. The core tests add exact fit, lossless multi-chunk evidence including Unicode, the unchanged segment
+refusal, writer identity and accounting, and no change of path after a dispatched writer fails.
 
-These cover the V2 runtime at `1bf62be` and the provider mode at `cc1aa02`, not the final source:
+**No grid cell changes.** The fix acts only when no handover fits, and every one of the grid's 80 chains committed
+all its boundaries, so none reached that branch. The loopback did not reproduce the refusal either: with a 40 s
+writer at 10 s turns, U8 waited and segments served the boundary; a segments-off chain cut only at 5 committed one
+automatic checkpoint at 153,903 tokens, then stopped at `CONTEXT_INPUT_TOO_LARGE`, the preview's guard on a
+request's input, and a manual retry was refused as `CONTEXT_NOTE_SCOPE`. Neither is the writer's room.
 
-| Command | Result / source | Exit |
+**On Luna after the fix.** The maintainer approved the same four chains on the same limits. They used 261 requests,
+45.6 minutes and US$0.46, with no 4xx and no rate-limit error, one at a time on an otherwise idle machine: package
+`stock-preview+src.7c815afa75319b7b` from `e758e11`, everything else as above. Raw metrics: `LUNA-P5.md` and
+`luna-p5/luna-10-*-v2fix-*` on `claude/confident-thompson-3k0e8p` at `6e68943`.
+
+| Chain | Route | Segments | Boundaries | Paths | Total pause (s) | Requests T/S/W | Peak 60 s input | Cost (US$) |
+| --- | --- | --- | --- | --- | ---: | --- | ---: | ---: |
+| `luna-10-200k-v2fix-on` | 200k | on | 3/3, one refused attempt before cut 3 | segments 1, sync 2 | 169.084 | 61/5/11 | 986,587 | 0.1509 |
+| `luna-10-200k-v2fix-off` | 200k | off | 3/3 | sync 3 | 60.436 | 61/0/3 | 829,994 | 0.0963 |
+| `luna-10-272k-v2fix-on` | 272k | on | 2/2 | sync 2 | 43.656 | 56/4/2 | 1,361,051 | 0.1114 |
+| `luna-10-272k-v2fix-off` | 272k | off | 2/2 | sync 2 | 49.668 | 56/0/2 | 1,170,526 | 0.0997 |
+
+- **No session blocked; the chunked path is slow, and it failed once.** Cut 1 was served by segments in 45 ms. Cut 3
+  again became Pi's own trigger at step 4, and the writer took the chunked path. The automatic attempt wrote three
+  chunks in 55.6 s, and its note failed validation with `CONTEXT_NOTE_INVALID`, a schema fault outside the
+  repairable classes (uncited sources, quotations, size), so it stopped there. The retry committed through seven
+  chunks in 143.1 s at 161,242 tokens: 25,849 to 35,274 input tokens and 18.1 to 23.3 s per call, none from the
+  cache. From the first chunk to the commit the session waited 198.8 s; the bench's pause counts only the committed
+  attempt. The ten chunk calls read 322,054 uncached tokens for US$0.044, against US$0.011 for all three writers of
+  the control, which read from the cache.
+- **Every chunk is another chance to fail.** Only uncited sources, quotations and size are repaired. A missing
+  section, a wrong type or a schema limit fails the note at once, and the chunked path asks for a whole note after
+  each chunk, so its exposure grows with the number of chunks. One refusal in two attempts is too few to give a rate.
+- **272k with segments on** went to the writer at both cuts after `ambiguous-supersede`, 15.0 and 28.6 s, and its
+  four segment calls were discarded. In the first run the merge served cut 4 in 108 ms. The fix touches neither the
+  merge nor the segments, so the difference comes from what Luna wrote in each run.
+- **The controls** paused 17.5 to 26.7 s per compaction, every writer reading from the cache: 60.4 s in all on 200k
+  (51.4 s before) and 49.7 s on 272k (37.5 s before).
+
+### Final checks
+
+On the final source, `e758e11`, Node 22.23.4, official npm Pi installations, package
+`stock-preview+src.7c815afa75319b7b` (bundle SHA-256 `310fd964…`). The commits after it change documents only. No
+model service was called; the Luna probe runs used another stock copy and are not timing evidence for these checks.
+
+| Command | Result | Exit |
 | --- | --- | ---: |
-| `node --test scripts/context-memory-preview-bench.test.mjs` | 10/10, continuation-only simulation, `d9e4513` | 0 |
-| `node node_modules/vitest/dist/cli.js run packages/compaction-core/test` | 221/221; 34 base + 35 segment vectors, conformance `.3`, `1bf62be` | 0 |
-| From coding-agent: `PI_OFFLINE=1 CONTEXT_MEMORY_FUZZ_SEEDS=200 CONTEXT_MEMORY_FUZZ_REPORT=<out>.json node ../../node_modules/vitest/dist/cli.js run test/context-memory-preview.test.ts test/context-memory-preview-fuzz.test.ts` | 445/445: 244 focused + 201 fuzz; 9,600 operations; all 13 reaches met, `1bf62be` | 0 |
-| `node scripts/context-memory-preview-acceptance.mjs --package-dir <build>/package --stock-root <pi> --segments on --output-dir <out>` | V2: Pi 1.4.0 42/42 with three compatibility roots; 1.3.0, 1.2.0, 1.1.0 36/36 each | 0 each |
-| `node scripts/context-memory-preview-scenarios.mjs --package-dir <build>/package --stock-root <pi-1.4.0> --other-stock-root <pi-1.0.4> --segments on --acceptance-profile strict --output-dir <out>` | V2: 157 passed; 0 failures/gaps/skips/performance exceptions; 50 ms / growth bounds met | 0 |
+| `node scripts/context-memory-ops.mjs verify` | core 224 + isolated 224; adapters 39; runtime 731; scripts 167; security 461 | 0 |
+| `node scripts/context-memory-ops.mjs preview` | stock 42/36/36/36 on Pi 1.4.0, 1.3.0, 1.2.0, 1.1.0; strict scenarios 157, bounded growth included; release checks 37; release `--prepare` | 0 |
+| `node scripts/context-memory-preview-acceptance.mjs --package-dir <package> --stock-root <pi> --segments on --output-dir <out>` | Pi 1.4.0 42/42 with three compatible roots; 1.3.0, 1.2.0 and 1.1.0 36/36 each | 0 each |
+| `node scripts/context-memory-preview-scenarios.mjs --package-dir <package> --stock-root <pi-1.4.0> --other-stock-root <pi-1.0.4> --segments on --acceptance-profile strict --output-dir <out>` | 157 passed; no failure, gap, skip or performance exception | 0 |
+| `PI_OFFLINE=1 node node_modules/vitest/dist/cli.js run packages/compaction-core/test` | 224/224; 34 base + 35 segment vectors, conformance `.3` | 0 |
+| `node --test scripts/context-memory-preview-provider-proof.mjs scripts/context-memory-preview-bench.test.mjs` | 27/27 | 0 |
+| From coding-agent: `PI_OFFLINE=1 CONTEXT_MEMORY_FUZZ_SEEDS=200 CONTEXT_MEMORY_FUZZ_REPORT=<out>.json node ../../node_modules/vitest/dist/cli.js run test/context-memory-preview.test.ts test/context-memory-preview-fuzz.test.ts` | 449/449: 248 focused + 201 fuzz; 9,600 operations; all 13 reaches met | 0 |
+| P5 off-equivalence: the bench with `--provider loopback --replay --replay-tools --cache session --pace immediate --compactions-only --session-settings previewSegments=off --equivalence-out <file>` on `main` (`980658b`) and on this build, both routes, then `node scripts/context-memory-equivalence-compare.mjs <main> <this>` | equal: 3 cases on 200k, 2 on 272k; every boundary committed by the writer on both sides | 0 |
+| `git diff --check 980658b e758e11` | clean | 0 |
 
-Provisional V2's fuzz reaches: segments 18, synchronous 597, failed compaction 144, ruling replacement 11,
-merge after wait 1, skipped wait 8, custom-focus fallback 51, tail fallback 50, hanging segment 42,
-hanging compaction 25, breaker 141, branch move before checkpoint 128, restart dropping segments 42.
-
-Final `verify`, `preview`, stock-on checks, strict-on scenarios, 200-seed fuzz, core/conformance, P5 off-equivalence
-against main and `git diff --check` run on the final source after the capacity fix. No resident fingerprint,
-evaluation pin, release version, commit guard, spending cap or checkpoint source hash was changed.
+The fuzz reaches are the provisional V2's, count for count: segments 18, synchronous 597, failed compaction 144,
+ruling replacement 11, merge after wait 1, skipped wait 8, custom-focus fallback 51, tail fallback 50, hanging
+segment 42, hanging compaction 25, breaker 141, branch move before checkpoint 128, restart dropping segments 42. No
+resident fingerprint, evaluation pin, release version, commit guard, spending cap or checkpoint source hash was
+changed.
 
 ### Labelled historical context: no cache, including zero-delay worst case
 
