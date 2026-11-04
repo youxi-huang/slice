@@ -1,5 +1,152 @@
 # Validation record
 
+## 0.8.0 segment scheduling review: official-Pi P5 batch replay, offline, 2026-11-04 UTC
+
+No model service was called. These are loopback measurements, separate from the Luna rerun below. The new mode
+serves boundaries at a 13-second writer delay, but its all-boundary pause P95 exceeds its synchronous control's
+on both routes. At 28 seconds none is served. **No new Luna budget is proposed; the previous proposal is not approved.**
+
+The maintainer amended U3 and the segments prefix cut on 2026-11-04, recorded in the plan's Decisions table.
+They apply whenever segments are on; segments remain off by default (U13). `cuts.ts` now owns the segments-only
+assistant cut and checks complete tool pairs on both sides. Notes and arm A retain the projected-user cut.
+The specification and `0.8-conformance.2` agree: 34 base vectors and 35 segment vectors, with the manifest's exact
+UTF-8 hashes updated. Nine new vectors distinguish both first-start lines, complete/partial parallel batches,
+the assistant cut, its ordinary-cut bound and the unchanged prefix control. Checkpoint serialization and source
+hashes did not change.
+
+### P5 and the committed runner
+
+The roughly 70,000-token run is **eight tool batches**, with results `p5-00031`, `p5-00034`, `p5-00037`,
+`p5-00040`, `p5-00043`, `p5-00046`, `p5-00049` and `p5-00052`. It is not one indivisible result. Closing a range
+inside it is therefore structurally possible. Full P5 has 46 tool results; the 272k route through cut 4 has 43.
+All fixture timestamps are the same synthetic instant, so they supply no elapsed tool or model times.
+
+The bench's committed `--replay-tools` mode requires loopback, replay and immediate pace. Official Pi's public SDK
+receives the recorded user messages and makes the actual tool requests, batch by batch, firing `turn_start` within
+the run. Adjacent assistant records are coalesced into the next tool-call reply: their text remains, while native
+record boundaries and stop markers are normalised. All 46 calls and their arguments remain in order. The tools
+return the fixture's exact result content and `isError`, without executing commands or inventing delays; every
+round checks result count, call ID, tool name, content and error status. Recorded evidence IDs map to Pi’s native IDs
+for the loopback writer. Main replies are immediate. Writer delay alone is injected; cache hits and
+provider tokenisation are not simulated. The former seven-log harness and its 43.1 → 12.7 s result are replaced
+by this mode and are not evidence about P5.
+
+Each candidate loads from a copy outside any Node project, with ancestor-shadow checks and the official-host
+cohort/provenance inspection. All runs below used official Pi 1.4.0. Main is `980658b` after #117, preview
+`stock-preview+src.ef16bf86bac1ed9b`; the branch runtime is `a92bb77`, preview
+`stock-preview+src.e80416454908eb86`. Their `dist/extension.js` SHA-256 values are, respectively,
+`30ca900e401c13f1cacfd15667d9d5fdc5eb0ebefd1c452f966cc5944689676f` and
+`de690f60e4c7bc96d3d3cc8e429c3dd156520996f146731281e9dff83e6afe75`.
+The operations-built package and the measured branch bundle have identical bytes. The clean main archive SHA-256
+is `75cc33a0c1c1fbbe016f00574db52b458b73dc45f7653d46f97219bfdb885407`; the measured branch archive is
+`947aedb54a4694d16ce0faf5dbadce56bb089251da71e0a0cac7e5205606a8c5`.
+
+### The lost boundary and its fix
+
+The settled replay at 13 s / 272k reproduced main's 1/2 and the earlier branch's 0/2: cut 4 was lost. The earlier
+first link captured the prefix through `p5-00110`; while it occupied the sole slot, the long run through
+`p5-00148` arrived. Its tail exceeded one range. Main's half-trigger start happened later and covered that run.
+Cancelling a dispatched writer was rejected: its unknown usage correctly stops further starts under U9.
+
+The preview now coalesces an interval's first queued snapshot for one second. A newer complete range replaces
+it before dispatch and restarts that delay. Dispatched requests continue unchanged. Queue replacements spend no
+writer call; the existing journal, call/spending limits, breaker, 120-second deadline and 15-second wait setting
+remain. The final settled replay serves **2/2**, at 14.5 / 18.3 s P50/P95, with no fallback, against main's
+1/2 at 13.0 / 25.9 s. The raw second wait was 18.1 s under concurrent CPU load: Node timers may fire late, so the
+15-second setting is not a hard wall-clock guarantee. No result is relabelled to hide that delay.
+
+The batch replay also retains a counterexample: at 13 s / 200k, main serves all three cuts and the branch serves
+cuts 1 and 3, with cut 5 falling back as `tail`. A first snapshot can already be dispatched when later batches
+arrive; it is then retained under U9. Coalescing recovers the reported 272k regression without guaranteeing
+better coverage for every timing pattern. The `limited` counter still means scope-cropped notes, not a U9 start
+refusal; no limit was relaxed. The partial-batch, uncovered-pair, readback, changed-result-under-the-same-ID and
+segments-off regressions now use `SyntheticSession` in the existing preview test file; the second fake session
+and its standalone file were deleted.
+
+### Paired batch replay
+
+Seconds, nearest-rank P50 / P95 over every committed boundary. Each row pairs segments on with the same package's
+synchronous, segments-off control. There is one chain per cell; runs overlapped on this machine, so small timing
+differences are not provider-speed evidence. All 24 commands exited 0, all 56 boundaries committed, every recorded
+tool result matched, and no session was blocked. Delays 13/28 s bracket the rerun's `medium` range; 52/133 s bracket
+`max`. These labels specify injected latency, not real reasoning runs. The provider rerun below remains 0/12,
+with four `tail`, seven `in-flight` and one `ambiguous-supersede`; this loopback oracle does not test ambiguity.
+
+| Route / writer delay | Package | Served | Fallbacks | Segments P50 / P95 | Sync P50 / P95 | Overlap calls / summed input | Rate-limit errors |
+| --- | --- | ---: | --- | ---: | ---: | ---: | ---: |
+| 200k / 13 s | main | 3/3 | — | 13.1 / 13.2 | 13.2 / 13.3 | 3 / 1,313,588 | 0 |
+| 200k / 13 s | branch | 2/3 | 1 `tail` | 14.4 / 25.5 | 13.4 / 13.8 | 1 / 939,554 | 0 |
+| 200k / 28 s | main | 0/3 | 3 `in-flight` | 43.7 / 43.9 | 28.6 / 28.6 | 3 / 1,314,670 | 0 |
+| 200k / 28 s | branch | 0/3 | 3 `in-flight` | 43.7 / 44.5 | 28.6 / 29.3 | 0 / 0 | 0 |
+| 272k / 13 s | main | 1/2 | 1 `tail` | 13.1 / 26.0 | 13.1 / 13.2 | 2 / 1,965,582 | 0 |
+| 272k / 13 s | branch | 2/2 | — | 14.6 / 14.9 | 13.4 / 13.5 | 0 / 0 | 0 |
+| 272k / 28 s | main | 0/2 | 2 `in-flight` | 43.3 / 43.8 | 28.6 / 28.6 | 2 / 1,965,582 | 0 |
+| 272k / 28 s | branch | 0/2 | 2 `in-flight` | 43.7 / 44.3 | 28.6 / 28.7 | 0 / 0 | 0 |
+| 272k / 52 s | main | 0/2 | 2 `in-flight` | 67.3 / 67.4 | 52.3 / 52.3 | 2 / 1,965,582 | 0 |
+| 272k / 52 s | branch | 0/2 | 2 `in-flight` | 67.5 / 67.5 | 52.6 / 53.9 | 0 / 0 | 0 |
+| 272k / 133 s | main | 0/2 | 2 `in-flight` | 148.4 / 148.4 | 133.3 / 133.5 | 2 / 1,965,588 | 0 |
+| 272k / 133 s | branch | 0/2 | 2 `in-flight` | 148.3 / 148.4 | 133.4 / 134.7 | 0 / 0 | 0 |
+
+“Overlap calls” counts distinct segment HTTP calls whose lifetimes intersect a main request. “Summed input”
+counts each intersecting segment and main request once, estimated as UTF-8 request bytes / 3, including the tools.
+`requestOverlap` also reports pair count, maximum pair input and the peak rolling 60-second input. The segments-on
+peak is 3.09–5.74 million on main and 1.82–5.61 million on the branch; immediate controls also exceed two million
+in several cells. These are synthetic input estimates. Cached input still counts toward Luna's real 2,000,000 TPM
+limit, so this cadence cannot be copied into a provider comparison. A future budget proposal must stop on the
+first rate-limit error, including one inside a successful HTTP stream, and account for main and segment inputs
+together. No rate-limit error was injected or observed in this matrix. At 133 s, both optional segments on each package
+failed at their 120-second deadline; the synchronous writer still committed both boundaries.
+
+### Reproduction and checks
+
+Build each checkout into its **own output parent**: its archive and `context-memory-preview-package-report.json`
+are siblings of `package`. Use the command below for each package, both `previewSegments=on|off`, and each route
+and delay in the table. `--replay-tools` removes the settled-only shortcut; omit it only to reproduce the original
+lost-boundary comparison. The 200k route uses cuts `1,3,5`, window `180000`; 272k uses `2,4`, window `240000`.
+
+```sh
+node scripts/context-memory-preview-build.mjs --output-dir <build-root>/package
+node scripts/context-memory-preview-bench.mjs --package-dir <build-root>/package --stock-root .artifacts/context-memory-preview-stock --output-dir <scratch> --mode probes --provider loopback --fixtures P5 --cache session --replay --replay-tools --pace immediate --cuts <cuts> --window <window> --reserve 30000 --compactions-only --latency-ms <13000|28000|52000|133000> --session-settings previewSegments=<on|off> --chain-attempts 1 --unit-minutes 12 --label <unique-cell>
+```
+
+All checks below are offline. `<build-root>/package` is the measured branch; `<pi>` names each clean official
+installation, and every output is a scratch directory. Primary acceptance also receives the three older roots
+through repeated `--compatible-stock-root` arguments.
+
+| Command | Result | Exit |
+| --- | --- | ---: |
+| `node scripts/context-memory-ops.mjs verify` | 727 runtime tests / 15 files; 161 script tests; core 221 twice, including isolation; 39 adapter tests; security 107 + 240 + 3 + 111 | 0 |
+| `node scripts/context-memory-ops.mjs preview` | segments off: Pi 1.4.0 42/42, older hosts 36/36 each; strict scenarios 157/157; release checks 37/37; local archive preparation | 0 |
+| `node scripts/context-memory-preview-acceptance.mjs --package-dir <build-root>/package --stock-root <pi> --segments on --output-dir <out>` | Pi 1.4.0: 42/42; 1.3.0, 1.2.0, 1.1.0: 36/36 each, including a full unmodified 1.1.0 rerun | 0 each |
+| `node scripts/context-memory-preview-scenarios.mjs --package-dir <build-root>/package --stock-root .artifacts/context-memory-preview-stock --other-stock-root .artifacts/context-memory-preview-stock-1.0.4 --segments on --acceptance-profile strict --output-dir <out>` | 157 passed; 0 failures, known gaps, skips or performance exceptions; 50 ms / growth bounds met | 0 |
+| From `packages/coding-agent`: `PI_OFFLINE=1 CONTEXT_MEMORY_FUZZ_SEEDS=200 CONTEXT_MEMORY_FUZZ_REPORT=<out>.json node ../../node_modules/vitest/dist/cli.js run test/context-memory-preview-fuzz.test.ts` | 201/201 tests, 200 seeds × 48 operations; every required reach condition met | 0 |
+| `node node_modules/vitest/dist/cli.js run packages/compaction-core/test` | 221/221 / 10 files; 34 base + 35 segment vectors; conformance manifest checked again by `verify` | 0 |
+| `node --test scripts/context-memory-preview-bench.test.mjs` (also in `verify`) | 9/9; includes all recorded P5 calls/text, native-ID mapping, overlap arithmetic and local-only CLI guards | 0 |
+| `node scripts/context-memory-equivalence-compare.mjs <main-200.jsonl> <branch-200.jsonl>`; same for 272k | 3 + 2 cases equal, notes/summary hashes, citations, coverage and error classes; native-mode comparison: another 3 + 2 equal cases, 10 cases across both modes | 0 each |
+| `git diff --check` | clean | 0 |
+
+Equivalence files come from the replay command above with segments off, latency 0 and `--equivalence-out <file>`,
+using both settled-only and native-batch modes. Only the existing top-level build provenance exclusion and
+positional aliases for native random IDs apply; no field was removed from comparison.
+
+The fuzz reached: segments 98, sync 507, compaction failure 120, ruling replacement 50, merge after wait 31,
+custom-focus fallback 52, tail fallback 30, hanging segment 73, hanging compaction 20, breaker 486, branch move
+before checkpoint 133 and restart dropping segments 190. As before, the fuzz shortens wait/deadline bounds;
+its coalescing delay is zero, with the production delay covered by the focused queued-snapshot regression.
+
+Failures retained: an early cut vector expected a refusal where the safe user cut retained the partial batch
+(72/73; corrected expected cut); a first runner draft stopped after a step's first reply and was discarded before
+the all-tool check; cancelling an already dispatched early call left no segments because U9 retained unknown
+usage; and the 200k `tail` counterexample above remains. A stock matrix first rejected three archive checks
+(33/36; primary 39/42) because a later build overwrote the shared sibling pack report. Final acceptance used the matching
+report/archive; reproduction uses one parent per build. The first final Pi 1.1.0 run was 35/36: under contention its one-second warming tick ran before the
+fixture's immediate `scheduled` assertion. An external diagnostic delaying observation 1.6 s reproduces the same
+`inactive / stopped by extension` assertion on main and branch; the original focused case makes two loopback
+requests and passes, and the full unchanged 1.1.0 acceptance passes. An earlier `preview` correctly refused release
+preparation when its package's source commit was no longer HEAD; the final clean-source command above passes.
+No host, cache-warming assertion, source/manifest gate, resident fingerprint, evaluation pin or release version
+was changed to clear a failure. The final runtime's nine CI checks also passed on `a92bb77`.
+
 ## 0.8.0 WP5 rerun: GPT-6 Luna with the bounded tail, 2026-11-04 UTC
 
 A real-provider run, recorded apart from the offline evidence below. Official Pi 1.4.0 with the independent preview at

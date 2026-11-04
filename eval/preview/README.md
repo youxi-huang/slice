@@ -198,6 +198,14 @@ session's own turns, with cache reads and catalog costs, and those segment resul
 breaker paused segments. A round's requests are its turns and every journaled call it
 dispatched, so the run's limits count segments too.
 
+With `--replay-tools`, the loopback replay drives official Pi through each recorded tool batch. Adjacent assistant
+records are coalesced into the next tool-call reply; their text, calls and arguments remain, and tools return the
+recorded results and error status without executing commands. P5 has no elapsed tool times, so no delays are invented.
+This mode requires `--replay --provider loopback --pace immediate --cache session`. `--latency-ms` delays writer
+replies. Round rows check every tool result and report HTTP request lifetimes; the replay summary adds overlapping
+segment calls, their summed input, peak rolling-minute input and rate-limit errors. These are loopback figures,
+with immediate main replies and estimated input sizes, separate from provider latency, cache and rate-limit evidence.
+
 ### Token-overhead report
 
 Writer and probes runs end `summary.json` with `overhead` (report `0.6-overhead-report.1`), which `overhead.ts`
