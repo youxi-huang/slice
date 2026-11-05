@@ -13,9 +13,9 @@ The aim is continuity with evidence, not perfect memory.
   <img src="docs/context-memory/assets/pi-context-compaction-hero-editorial.png" alt="A compact handover cites an earlier failure and a later decision, with references back to the original session entries.">
 </picture>
 
-SLICE currently runs as an independent extension for [Pi](https://github.com/earendil-works/pi). Its host-neutral core is in the source tree, with Pi as the first compaction adapter. [DSH and OpenCode packages](#dsh-and-opencode) add current-session history access; SLICE checkpoint writing on those hosts remains planned.
+SLICE currently runs as an independent extension for [Pi](https://github.com/earendil-works/pi). Its host-neutral core is in the source tree, with Pi as the first compaction adapter. [DSH and OpenCode packages](#dsh-and-opencode) add current-session history access; SLICE checkpoint writing on those hosts remains planned, apart from an opt-in manual preview for DSH.
 
-**Current release:** [v0.7.5](https://github.com/youxi-huang/slice/releases/tag/v0.7.5), for unmodified official Pi **1.4.0, 1.3.0, 1.2.0 and 1.1.0**, with history packages for OpenCode and DSH. All three install from npm, with no clone or build; the Pi extension compacts as v0.7.4 did, and the [changelog](CHANGELOG.md) records the rest. Before v0.7.1 the project was called Pi Context Compaction.
+**Current release:** [v0.8.0](https://github.com/youxi-huang/slice/releases/tag/v0.8.0), for unmodified official Pi **1.4.0, 1.3.0, 1.2.0 and 1.1.0**, with history packages for OpenCode and DSH. All three install from npm, with no clone or build. The Pi extension no longer fails when a tool batch leaves its writer no room, and adds segments as an experiment, off by default; the [changelog](CHANGELOG.md) records the rest. Before v0.7.1 the project was called Pi Context Compaction.
 
 [Get started](#get-started) · [How it works](#how-it-works) · [Current scope](#current-scope) · [Evidence](#evidence-and-limits)
 
@@ -30,7 +30,7 @@ You need a working installation of official Pi **1.4.0, 1.3.0, 1.2.0 or 1.1.0**,
 Install the published extension:
 
 ```sh
-pi install npm:slice-pi@0.7.5
+pi install npm:slice-pi@0.8.0
 ```
 
 Restart Pi and begin a new, persistent, text-only session. Then run:
@@ -47,7 +47,7 @@ If Pi says `Nothing to compact (session too small)`, there simply is not enough 
 
 There is no Pi source patch, separate model or second history service to set up. By default the extension writes with the session's own model, and Pi continues to manage authentication.
 
-The same package is on Git as the tag `extension-v0.7.5`. An installation made from Git, at this address or the old `youxi-huang/pi-context-compaction`, keeps loading and updating; [moving it to npm](#move-an-older-installation) is optional. **`v0.7.5` marks the source tree, which is not a Pi package.** Please use the installation command above rather than installing the development tree.
+The same package is on Git as the tag `extension-v0.8.0`. An installation made from Git, at this address or the old `youxi-huang/pi-context-compaction`, keeps loading and updating; [moving it to npm](#move-an-older-installation) is optional. **`v0.8.0` marks the source tree, which is not a Pi package.** Please use the installation command above rather than installing the development tree.
 
 ### DSH and OpenCode
 
@@ -56,18 +56,18 @@ On [OpenCode](https://github.com/anomalyco/opencode) from 1.19.4 and [DSH](https
 **OpenCode.** Add the package to `plugin` in `opencode.json`, in a project or in `~/.config/opencode/opencode.json`, and restart OpenCode, which installs it from npm:
 
 ```json
-{ "plugin": ["slice-opencode@0.7.5"] }
+{ "plugin": ["slice-opencode@0.8.0"] }
 ```
 
 **DSH.** `dsh plugin` runs pnpm, which must be on your `PATH`. Add the package to a profile built on DSH's base bundle, which provides the sessions, persistence and tools it needs:
 
 ```sh
-dsh plugin --profile <profile> add slice-dsh@0.7.5
+dsh plugin --profile <profile> add slice-dsh@0.8.0
 ```
 
 The package enables itself in that profile, and a profile without hot reload, such as `headless`, loads it at its next start. If you added a `slice-history` row to the profile's `cordis.patch.yml` for an earlier build, remove it: the tool refuses to register twice.
 
-The tool asks for OpenCode's `context_history` permission, which is allowed unless your configuration says otherwise. On both hosts it reads only the current session and refuses forked or child sessions. To uninstall, remove the `plugin` entry, or run `dsh plugin --profile <profile> remove slice-dsh`. Without npm, `github:youxi-huang/slice#opencode-v0.7.5` and `github:youxi-huang/slice#dsh-v0.7.5` install the same packages through Git. The [host adapter guide](docs/context-memory/host-adapters.md) covers the pinned APIs, building from source, the evidence and what is not yet supported.
+The tool asks for OpenCode's `context_history` permission, which is allowed unless your configuration says otherwise. On both hosts it reads only the current session and refuses forked or child sessions. To uninstall, remove the `plugin` entry, or run `dsh plugin --profile <profile> remove slice-dsh`. Without npm, `github:youxi-huang/slice#opencode-v0.8.0` and `github:youxi-huang/slice#dsh-v0.8.0` install the same packages through Git. The [host adapter guide](docs/context-memory/host-adapters.md) covers the pinned APIs, building from source, the evidence and what is not yet supported.
 
 ## Why keep the evidence?
 
@@ -113,6 +113,7 @@ The default path uses the session model to write a checked checkpoint. A fixed w
 - **Preparation and work notes:** prepare a checkpoint with the configured writer, or use data-only notes from the session model.
 - **Reversible context reduction:** shorten eligible earlier tool results in the active view while leaving the original entries unchanged.
 - **Selective excerpts and rendering:** bring back a small piece of earlier evidence when an identifier is mentioned, or render a more compact view of a stored note without changing that note.
+- **Segments:** have the session model write notes on recent turns in the background, so that a compaction can merge them without a writer call. On the 0.8.0 provider runs they did not shorten the pause.
 
 These experiments have narrower evidence than the default path. The [extension guide](docs/context-memory/extension-preview.md) explains how to enable them and what each one can and cannot do.
 
@@ -160,7 +161,7 @@ An installation made from Git keeps working: at this address it updates through 
 
 ```sh
 pi remove git:github.com/youxi-huang/slice &&
-pi install npm:slice-pi@0.7.5
+pi install npm:slice-pi@0.8.0
 ```
 
 For an installation from the old address, remove `git:github.com/youxi-huang/pi-context-compaction` instead. Add `-l` to both commands for a project installation. Then restart Pi, reopen the session and run `/compaction-doctor`. Do not continue a protected session between the two commands; a pending or failed compaction stays pending or failed after the move. An object-form package filter has to be copied to the new entry by hand.

@@ -1,5 +1,38 @@
 # Validation record
 
+## 0.8.0 release preparation: the reopen check and CI on the release build, 2026-11-04 UTC
+
+The release commit `adb5c4f` sets the version to 0.8.0 and pins every install command to it. Its package,
+`slice-pi@0.8.0`, is `stock-preview+src.7c815afa75319b7b`, the build `e758e11` produced and the
+[final checks](#final-checks) measured: the build ID hashes the bundled sources, and only the version string and
+documents changed since. No model service was called.
+
+Checkpoints reopen across versions, each with one request and one `context_history` read of an entry the first
+checkpoint covers, through a loopback provider on official Pi 1.4.0:
+
+| Checkpoints written by | Reopened by | Result |
+| --- | --- | --- |
+| This build, three on the segments path: P5's 200k route, loopback replay with segments on, every boundary merged from segments, eight segments linked | `slice-pi@0.7.5` from npm (`stock-preview+src.b0f389ab614f8cf3`) | ready and protected on the latest checkpoint, read back, no error |
+| `extension-v0.4.3` (`stock-preview+src.6d21d37d4e59aefe`), two, written on Pi 1.3.0 | This build | ready and protected on the latest checkpoint, read back, no error |
+| `extension-v0.5.3` (`stock-preview+src.cb5dcce5a76c043e`), two, written on Pi 1.3.0 | This build | ready and protected on the latest checkpoint, read back, no error |
+
+The checkpoints on the segments path come from `context-memory-preview-bench.mjs --provider loopback --fixtures P5
+--cache session --replay --replay-tools --pace immediate --cuts 1,3,5 --window 180000 --reserve 30000
+--compactions-only --session-settings previewSegments=on --keep-sessions`, and the reopen used the chain's last
+session copy. The older checkpoints come from each release's own acceptance worker, `--runtime-case
+repeat-compaction` from the `v0.4.3` and `v0.5.3` source tags, run against the package tags `extension-v0.4.3` and
+`extension-v0.5.3`: two Slice compactions each through its loopback writer, six requests, no failure record. Each
+reopen copied the session file into an empty agent directory that installs only the reopening package, read
+`/compaction-status`, sent one prompt whose loopback reply called `context_history` to read the first user entry,
+and required: `ready` and `protected` on the latest checkpoint before and after, two loopback requests and no
+writer request, the entry's own text in the tool result, no extension error, no failure record and an unchanged
+source file. The harness stays out of the repository, as for the
+[offline release gates](#080-offline-release-gates-with-segments-off-and-on-2026-11-03-utc).
+
+| Command | Result | Exit |
+| --- | --- | ---: |
+| `node scripts/context-memory-ops.mjs ci` at `adb5c4f`, Node 22.23.4 | core 224 + isolated 224; adapters 39; runtime 731; scripts 167; security 461; acceptance 42 on Pi 1.4.0 with three compatible roots, 36 each on 1.3.0, 1.2.0 and 1.1.0; strict scenarios 157, bounded growth included; release checks 37; release `--prepare`; full evaluation 149 passed, 3 skipped (the zero-record vectors on the adapter path) | 0 |
+
 ## 0.8.0 segment scheduling review: official-Pi P5 batch replay, offline and on GPT-6 Luna, 2026-11-04 UTC
 
 **Grid complete and V2 selected. The block GPT-6 Luna found is fixed, and every chain completed after the fix.

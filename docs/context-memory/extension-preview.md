@@ -1,28 +1,34 @@
-# SLICE for Pi: independent extension preview v0.7.5
+# SLICE for Pi: independent extension preview v0.8.0
 
-This extension runs on unmodified official Pi **1.4.0, 1.3.0, 1.2.0 and 1.1.0** as an ordinary Pi package. v0.7.5 retains the checkpoint schema and source-hash format used by v0.4.1, so existing preview checkpoints reopen unchanged, and a v0.5.0 checkpoint reopens under v0.4.3.
+This extension runs on unmodified official Pi **1.4.0, 1.3.0, 1.2.0 and 1.1.0** as an ordinary Pi package. v0.8.0 retains the checkpoint schema and source-hash format used by v0.4.1, so existing preview checkpoints reopen unchanged, a v0.5.0 checkpoint reopens under v0.4.3, and checkpoints v0.8.0 writes, segments included, reopen under v0.7.5.
 It is published on npm as `slice-pi` and on Git through the `extension-preview`
 branch and immutable `extension-v*` package tags, separately from the v0.3.0
 resident source build.
 
-**v0.7.5 supports manual `/compact` and completed-turn threshold compaction,
+**v0.8.0 supports manual `/compact` and completed-turn threshold compaction,
 and with the session writer compacts earlier, at a settled turn, when one more
 turn would leave the writer's handover no room.** Optional background
-preparation with the configured writer (A) and data-only work notes from the
-session model (B) are both disabled by default. B carries covered user
-messages in full or asks the configured writer to compact them. Sources are
-validated at trust boundaries, with incremental checks between them. The
+preparation with the configured writer (A), data-only work notes from the
+session model (B) and segments are all disabled by default. B carries covered
+user messages in full or asks the configured writer to compact them. Sources
+are validated at trust boundaries, with incremental checks between them. The
 synthetic long-session scenario requires both the 50 ms request target and the
 growth bound under the strict profile; the first request after each checkpoint
 still pays one full check.
 
-On GPT-6 Luna on 2026-11-01, the published `extension-v0.7.2` compacted two
-first-use sessions in 13.7 and 14.0 s, reading about 95% of the writer's input
-from cache, and a later development build started a prose session's
-compaction itself below Pi's trigger, finishing in 29 s. The final next-turn
-allowance is covered by a regression, not a provider run. v0.4.1 fixes how
-checkpoints carry notes; see the [release scope](v0.4.0-release.md), the
-[changelog](../../CHANGELOG.md) and the [validation record](validation.md).
+With every switch at its default, v0.8.0 changes two things. When a tool batch
+carries the session past Pi's trigger and leaves the session writer no room
+for its handover, the same writer reads the evidence in bounded chunks instead
+of failing with `CONTEXT_WRITER_CAPACITY`. On GPT-6 Luna that took 143 and
+155 s, where a handover that fits takes about 20 s, and one attempt in three
+was refused. The writer's rules also state the note schema's limit of 20
+source IDs per item, which Luna at Pi's default thinking level had broken often
+enough to block a session. Segments are new and stay off: on the 0.8.0
+provider runs they did not shorten the pause. Earlier, on 2026-11-01, the
+published `extension-v0.7.2` compacted two first-use sessions on Luna in 13.7
+and 14.0 s, reading about 95% of the writer's input from cache. The
+[changelog](../../CHANGELOG.md) and the [validation record](validation.md) give
+the details.
 
 Since 0.7.0 this extension is the first adapter of the host-neutral core
 package (`packages/compaction-core`), and the resident runtime is frozen as of
@@ -32,7 +38,9 @@ v0.7.1 is the first extension built on that core. It behaves as v0.6.0 did and
 adds official Pi 1.4.0 as the primary host. v0.7.2 installs from the new
 repository address and lets a second installed copy stand aside; it compacts
 as v0.7.1 did. v0.7.5 compacts as v0.7.4 did and is the first release on npm,
-beside packages that give OpenCode and DSH the same `context_history`.
+beside packages that give OpenCode and DSH the same `context_history`. v0.8.0
+adds segments as an experiment, and its DSH package an opt-in manual writing
+preview.
 
 The project is now called SLICE, Source-Linked Indexed Compaction of
 Everything. Its repository moved to `youxi-huang/slice`, and GitHub redirects
@@ -48,7 +56,7 @@ Official Pi 1.4.0, 1.3.0, 1.2.0 and 1.1.0 users can install the pinned release
 from npm:
 
 ```sh
-pi install npm:slice-pi@0.7.5
+pi install npm:slice-pi@0.8.0
 ```
 
 Restart Pi afterwards. A pinned version stays fixed. To follow later
@@ -70,7 +78,7 @@ version replaces the earlier entry.
 The same package is on Git, pinned by its package tag:
 
 ```sh
-pi install git:github.com/youxi-huang/slice@extension-v0.7.5
+pi install git:github.com/youxi-huang/slice@extension-v0.8.0
 ```
 
 or following the moving branch, which `pi update --extension
@@ -84,12 +92,12 @@ Pi records one source per package address, so installing the same address
 with another tag or branch replaces the recorded source.
 
 `pi update --extensions` updates every installed package. A plain `pi update`
-updates Pi itself and `pi update --all` updates Pi and all packages; the v0.7.5
+updates Pi itself and `pi update --all` updates Pi and all packages; the v0.8.0
 preview supports Pi 1.4.0, 1.3.0, 1.2.0 and 1.1.0.
 
 ### Before updating Pi
 
-Check that the installed preview lists the new Pi version first; v0.7.5, v0.7.4, v0.7.2 and
+Check that the installed preview lists the new Pi version first; v0.8.0, v0.7.5, v0.7.4, v0.7.2 and
 v0.7.1 list 1.4.0, 1.3.0, 1.2.0 and 1.1.0, and v0.6.0 lists 1.3.0, 1.2.0 and 1.1.0. On a Pi version the preview does not list, sessions it never protected are left to
 Pi's own compaction, but a session it protects stays blocked: requests stop and
 a failure record is written, because the preview cannot check its checkpoints
@@ -112,7 +120,7 @@ that address. To move it to npm, exit Pi and run:
 
 ```sh
 pi remove git:github.com/youxi-huang/slice &&
-pi install npm:slice-pi@0.7.5
+pi install npm:slice-pi@0.8.0
 ```
 
 For an installation from the old address, remove
@@ -133,7 +141,7 @@ Install the package from one scope only (global by default, or project-local
 with `-l`). A compatible older preview can reopen its own checkpoint schema;
 resident and native checkpoints are not migrated.
 
-The [v0.7.5 release](https://github.com/youxi-huang/slice/releases/tag/v0.7.5)
+The [v0.8.0 release](https://github.com/youxi-huang/slice/releases/tag/v0.8.0)
 also provides the extension `.tgz` npm serves, the OpenCode and DSH `.tgz`,
 source archive, provenance, exact-package scenario evidence and SHA256
 checksums. The package contains five reviewed files and no host runtime, and
