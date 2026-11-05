@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import { textTokens } from "../src/config.ts";
 import { type MemoryNote, sourceText } from "../src/notes.ts";
 import type { SessionRecord } from "../src/records.ts";
-import { withinSegmentRange, withoutOutOfScope } from "../src/scope-diagnostics.ts";
+import { withinSegmentRange, withoutOutOfScope, withoutUnreadableSources } from "../src/scope-diagnostics.ts";
 import {
 	quotableOriginals,
 	sessionHandoverTokens,
@@ -317,12 +317,100 @@ describe("compaction core: citations outside the branch", () => {
 		});
 	});
 
-	it("keeps the refusal when a fact would be left with no source", async () => {
-		const transport = scripted([answer(note({ state: [{ text: "Service on port 4317.", sources: ["u1x"] }] }))]);
+	it("asks the writer once for the sources of a fact whose only citation names no entry", async () => {
+		// GPT-6 Luna cited 1598f6dcb, the head of 1598fbb5 and the tail of 011f6dcb, as a fact's only source, and seven
+		// of eight attempts at one compaction were refused; the fact stays as written and the writer cites it again.
+		const ids = [user("1598fbb5", "Read src/ledger/writer.js."), user("011f6dcb", "Replication streams 24 shards.")];
+		const fact = { text: "Read src/ledger/writer.js.", sources: ["1598f6dcb"], quote: "src/ledger/writer.js" };
+		const transport = scripted([
+			answer(note({ state: [{ text: "24 shards.", sources: ["011f6dcb"] }], files: [fact] })),
+			answer({ repairs: [{ section: "files", index: 0, sources: ["1598fbb5"] }] }),
+		]);
 		const progress: WriterProgress[] = [];
-		await expect(writeMemory(options({}, progress), transport.open)).rejects.toThrow("CONTEXT_NOTE_SCOPE");
-		expect(transport.sent).toHaveLength(1);
+		const result = await writeMemory(options({ branch: ids, uncovered: ids }, progress), transport.open);
+		expect(result.note.files).toEqual([{ ...fact, sources: ["1598fbb5"] }]);
+		expect(transport.sent.map(({ request }) => [request.kind, request.reasoning])).toEqual([
+			["chunk", "medium"],
+			["repair", "off"],
+		]);
+		const repair = transport.sent[1].request;
+		if (repair.kind !== "repair") throw new Error("Expected the sources repair");
+		const asked = JSON.parse(repair.prompt) as { uncited: unknown };
+		expect(asked.uncited).toEqual([{ section: "files", index: 0, fact: { ...fact, sources: [] } }]);
+		expect(JSON.stringify(asked)).not.toContain("1598f6dcb");
+		expect(progress.at(-1)).toMatchObject({
+			scope: { missing: 1, unreadable: 0, inSupersedes: 0 },
+			scopeDropped: 1,
+			repairUsed: true,
+			repairKind: "sources",
+		});
+	});
+
+	it("keeps the scope refusal when that repair is off, spent or answered with another unknown ID", async () => {
+		const invented = () => answer(note({ state: [{ text: "Service on port 4317.", sources: ["u1x"] }] }));
+		const off = scripted([invented()]);
+		await expect(writeMemory(options({ config: { noteRepair: false } }), off.open)).rejects.toThrow(
+			/^CONTEXT_NOTE_SCOPE/,
+		);
+		expect(off.sent).toHaveLength(1);
+
+		const again = scripted([invented(), answer({ repairs: [{ section: "state", index: 0, sources: ["u1y"] }] })]);
+		const progress: WriterProgress[] = [];
+		await expect(writeMemory(options({}, progress), again.open)).rejects.toThrow(/^CONTEXT_NOTE_SCOPE/);
+		expect(again.sent).toHaveLength(2);
+		expect(progress.at(-1)).toMatchObject({ repairUsed: true, repairKind: "sources" });
+
+		// A quotation repair spends the one repair; an unknown ID in its answer is refused, not repaired again.
+		const misquoted = note({ instructions: [{ text: "No prod.", sources: ["u2"], quote: "Never touch prod." }] });
+		const spent = scripted([
+			answer(misquoted),
+			answer({
+				repairs: [{ section: "instructions", index: 0, fact: { ...misquoted.instructions[0], sources: ["u9"] } }],
+			}),
+		]);
+		await expect(writeMemory(options(), spent.open)).rejects.toThrow(/^CONTEXT_NOTE_SCOPE/);
+		expect(spent.sent).toHaveLength(2);
+	});
+
+	it("keeps the scope refusal for an unknown supersedes ID or more than five emptied facts", async () => {
+		const superseding = scripted([
+			answer(note({ state: [{ text: "Service on port 4317.", sources: ["u1x"], supersedes: ["old"] }] })),
+		]);
+		await expect(writeMemory(options(), superseding.open)).rejects.toThrow(/^CONTEXT_NOTE_SCOPE/);
+		expect(superseding.sent).toHaveLength(1);
+
+		const many = Array.from({ length: 6 }, (_, index) => ({ text: `Fact ${index}.`, sources: [`gone${index}`] }));
+		const six = scripted([answer(note({ state: many }))]);
+		const progress: WriterProgress[] = [];
+		await expect(writeMemory(options({}, progress), six.open)).rejects.toThrow(/^CONTEXT_NOTE_SCOPE/);
+		expect(six.sent).toHaveLength(1);
 		expect(progress.at(-1)?.scopeDropped).toBeUndefined();
+	});
+
+	it("empties only out-of-scope sources and adds nothing", () => {
+		const value = note({
+			state: [
+				{ text: "Service on port 4317.", sources: ["u1", "gone"] },
+				{ text: "Use blue-green.", sources: ["gone2"], quote: "Use blue-green." },
+			],
+		});
+		expect(withoutUnreadableSources(value, branch)).toEqual({
+			note: note({
+				state: [
+					{ text: "Service on port 4317.", sources: ["u1"] },
+					{ text: "Use blue-green.", sources: [], quote: "Use blue-green." },
+				],
+			}),
+			dropped: 2,
+		});
+		expect(value.state[1].sources).toEqual(["gone2"]);
+		// Every fact keeps a source: withoutOutOfScope's case, not this one.
+		expect(
+			withoutUnreadableSources(note({ state: [{ text: "x", sources: ["u1", "gone"] }] }), branch),
+		).toBeUndefined();
+		expect(
+			withoutUnreadableSources(note({ state: [{ text: "x", sources: ["gone"], supersedes: ["old"] }] }), branch),
+		).toBeUndefined();
 	});
 
 	it("adds nothing and leaves an out-of-scope supersedes to the refusal", () => {

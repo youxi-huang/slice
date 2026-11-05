@@ -197,8 +197,10 @@ with their kinds under `unreadableKinds`), and how many of either sit in
 `supersedes`; it never names the IDs. After v0.7.2, a source of that kind is
 dropped when every fact keeps a readable source and no `supersedes` ID is out
 of scope, and the note is checked again; `scopeDropped` counts the IDs dropped.
-Otherwise the refusal stands. For the first candidate refused on the
-note schema, `schema` counts its facts without sources by section (`uncited`)
+After v0.8.0, a fact left with no readable source has those sources emptied
+and goes to the sources repair below, as a fact written without any;
+`scopeDropped` counts those IDs too. Otherwise the refusal stands. For the
+first candidate refused on the note schema, `schema` counts its facts without sources by section (`uncited`)
 and says whether the note fails the schema for another reason too (`other`);
 it never names the facts. Pi maps a level the model does not declare to a
 supported one, so `sent` can differ from `effort`. Since Pi 1.3.0, a model that
@@ -346,7 +348,12 @@ and other user messages in full, excerpts of the entries the rest of the note
 cites, and the uncovered entries by their opening words. The answer may add
 sources only, and the whole note is checked again. A fact cannot be withdrawn
 here: most such facts are next steps, and dropping unfinished work to avoid
-citing it would commit a note that lost it silently. `noteRepair` governs
+citing it would commit a note that lost it silently. After v0.8.0 the same
+repair serves a fact whose every source names no entry or one without readable
+text. On GPT-6 Luna seven of eight attempts at one compaction were refused, and
+the answers read back gave one fact `1598f6dcb`, the head of one entry's ID and
+the tail of another's; the repair names such a fact with its sources emptied
+and never sends the invented ID back. `noteRepair` governs
 this repair, the quotation repair and the size repair, and a compaction spends
 at most one of them. A second failure blocks as before. The extension never
 moves a quotation to another entry or supplies a source on its own: text found

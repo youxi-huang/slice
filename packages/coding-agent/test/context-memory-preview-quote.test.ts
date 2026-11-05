@@ -282,7 +282,10 @@ describe("preview writer quotation failures", () => {
 	});
 
 	it("leaves other validation failures unclassified", async () => {
-		const test = quoteHarness([note({ state: [{ text: "x", sources: ["missing"] }] })]);
+		// With the repair on, a fact whose only source is unknown would go to the sources repair instead.
+		const test = quoteHarness([note({ state: [{ text: "x", sources: ["missing"] }] })], {
+			config: { ...DEFAULT_MEMORY_CONFIG, writerModel: "preview-quote-test/quote-writer", noteRepair: false },
+		});
 		await expect(writeMemory(test.options)).rejects.toThrow("CONTEXT_NOTE_SCOPE");
 		expect(test.progress.at(-1)?.quotations).toBeUndefined();
 	});
@@ -850,6 +853,24 @@ describe("schema diagnostics", () => {
 });
 
 describe("preview writer sources repair", () => {
+	it("asks for the sources of a fact whose only citation joins two IDs, and never sends that citation back", async () => {
+		// GPT-6 Luna cited 1598f6dcb for 1598fbb5, borrowing the tail of 011f6dcb, and seven attempts of eight failed.
+		const joined = { text: "The port rule.", sources: ["u1a1"], quote: "Keep the service on port 4317." };
+		const test = quoteHarness([note({ instructions: [joined] }), { repairs: [sourcesOf(["u1"], "instructions")] }]);
+		const result = await writeMemory(test.options);
+		expect(test.requests).toHaveBeenCalledTimes(2);
+		expect(result.note.instructions).toEqual([{ ...joined, sources: ["u1"] }]);
+		expect(test.prompts[1].startsWith(SOURCES_REPAIR_RULES)).toBe(true);
+		expect(test.prompts[1]).not.toContain("u1a1");
+		expect(test.progress.at(-1)).toMatchObject({
+			writerCalls: 2,
+			repairUsed: true,
+			repairKind: "sources",
+			scope: { missing: 1, unreadable: 0, inSupersedes: 0 },
+			scopeDropped: 1,
+		});
+	});
+
 	it("cites next steps left without sources with one request about those facts only", async () => {
 		const test = quoteHarness([
 			uncited([{ text: "Report the threshold." }, { text: "Keep port 4317.", sources: [] }]),

@@ -6,6 +6,10 @@ Changes under **Unreleased** are not included in an existing release tag or its 
 
 ## [Unreleased]
 
+### Fixed
+
+- Compaction no longer fails on every retry when the writer cites, as a fact's only source, an ID that names no entry. The fact now goes to the writer's one sources repair, as a fact written without sources does: the invented ID is not sent back, and the extension supplies no source of its own. On GPT-6 Luna a writer cited `1598f6dcb`, the head of one entry's ID and the tail of another's, and seven of eight attempts at one compaction were refused; with the fix, both refused answers, replayed, drew one repair of about 7,600 tokens that named the right entry. The refusal stands as before with `noteRepair` off, once the one repair is spent, for an unknown `supersedes` ID or when more than five facts lose every source. The Pi extension and DSH's opt-in writing preview both use this writer.
+
 ## [v0.8.0] — 2026-11-04
 
 v0.8.0 adds segments to the Pi extension as an experiment, off by default, and fixes three ways a session at default settings could block: a tool batch that left the writer no room for its handover, which the writer now reads in bounded chunks; notes that cited more than 20 sources in one item; and a branch moved with `/tree` that outgrew the writer's room. DSH gains an opt-in manual writing preview, and the OpenCode package is unchanged. No checkpoint format or source hash changed: checkpoints this release writes, segments included, reopen under v0.7.5. No resident build fingerprint or evaluation pin changed either.
