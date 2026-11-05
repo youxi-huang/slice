@@ -276,7 +276,15 @@ describe("preview writer provider-call reservations and settlements", () => {
 	it.each(["not JSON", "{}", JSON.stringify(note()).replace("source-1", "unavailable")])(
 		"settles malformed or invalid paid output before parsing fails: %s",
 		async (text) => {
-			const test = harness(() => completed(response(text)));
+			// One paid call each: with the repair on, the unknown only source would go to the sources repair.
+			const test = harness(() => completed(response(text)), {
+				config: {
+					...DEFAULT_MEMORY_CONFIG,
+					writerModel: `${model.provider}/${model.id}`,
+					writerEffort: "low",
+					noteRepair: false,
+				},
+			});
 			await expect(writeMemory(test.options)).rejects.toThrow(/CONTEXT_NOTE_(INVALID|SCOPE)/);
 			expect(test.after).toHaveLength(1);
 			expect(test.after[0]).toMatchObject({ outcome: "success", dispatched: true, usage });
@@ -716,11 +724,12 @@ describe("preview writer note format", () => {
 		const invalid = sessionWriter(JSON.stringify({ type: "object", properties: described, required: [] }));
 		await expect(writeMemory(invalid.options)).rejects.toThrow("CONTEXT_NOTE_INVALID");
 		expect(invalid.progress.at(-1)?.writerCallDetails[0].envelope).toBe("schema");
+		// An unknown supersedes ID refuses the note whatever the repair; an unknown only source would go to it.
 		const unscoped = note();
-		unscoped.state[0].sources = ["unknown-entry"];
+		unscoped.state[0].supersedes = ["unknown-entry"];
 		const scope = sessionWriter(JSON.stringify(typed(unscoped)));
 		await expect(writeMemory(scope.options)).rejects.toThrow("CONTEXT_NOTE_SCOPE");
-		expect(scope.progress.at(-1)?.scope).toMatchObject({ missing: 1 });
+		expect(scope.progress.at(-1)?.scope).toMatchObject({ missing: 1, inSupersedes: 1 });
 	});
 
 	it("removes an envelope from the size repair's answer, which is checked again", async () => {

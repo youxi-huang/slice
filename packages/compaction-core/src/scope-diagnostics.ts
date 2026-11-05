@@ -74,6 +74,37 @@ export function withoutOutOfScope(
 }
 
 /**
+ * The note without its out-of-scope sources, when that leaves a fact with none, so that the sources repair may ask
+ * the writer for them. Found on GPT-6 Luna: seven of eight attempts at one compaction were refused, and the answers
+ * read back cited `1598f6dcb`, the head of one entry's ID and the tail of another's, for one fact. Nothing is added:
+ * an emptied fact keeps its text, quote and supersedes, and its sources stay empty until the writer names them.
+ * Undefined when a `supersedes` ID is out of scope, as in `withoutOutOfScope`, or when every fact keeps a readable
+ * source, which `withoutOutOfScope` handles.
+ */
+export function withoutUnreadableSources(
+	note: MemoryNote,
+	branch: readonly SessionRecord[],
+): { note: MemoryNote; dropped: number } | undefined {
+	const byId = new Map(branch.map((entry) => [entry.id, entry]));
+	const readable = (id: string) => {
+		const entry = byId.get(id);
+		return entry !== undefined && sourceText(entry).length > 0;
+	};
+	const pruned = structuredClone(note);
+	let dropped = 0;
+	let emptied = false;
+	for (const section of noteSections)
+		for (const item of pruned[section]) {
+			if (item.supersedes?.some((id) => !readable(id))) return undefined;
+			const sources = item.sources.filter(readable);
+			dropped += item.sources.length - sources.length;
+			if (!sources.length) emptied = true;
+			item.sources = sources;
+		}
+	return emptied ? { note: pruned, dropped } : undefined;
+}
+
+/**
  * 0.8.0: a segment note without what lies outside its range. A segment records what its own entries add or change,
  * and the merge carries the previous note, so a fact that cites only earlier entries restates what that note holds or
  * claims what the segment cannot support: it is dropped. A fact that also cites the range keeps only those sources.

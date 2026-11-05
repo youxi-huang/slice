@@ -453,8 +453,13 @@ mechanical steps (envelope removal, citation pruning and line folding):
    `sources` when every fact keeps at least one readable source and no
    `supersedes` ID is out of scope, and the pruned candidate passes the
    pipeline again (`writer.ts` `writeMemory`); it adds nothing and changes no
-   text, quote, `supersedes` or remaining source. Otherwise the refusal
-   stands. Status counts the pruned IDs as `scopeDropped`.
+   text, quote, `supersedes` or remaining source. When pruning would leave a
+   fact with no source and no `supersedes` ID is out of scope,
+   `withoutUnreadableSources` empties those facts' out-of-scope sources
+   instead, and the candidate goes to the sources repair below as a candidate
+   whose only fault is facts without sources. Otherwise, and whenever that
+   repair is not eligible, the refusal stands as `CONTEXT_NOTE_SCOPE`. Status
+   counts the pruned or emptied IDs as `scopeDropped`.
 5. **Quotation.** Every fact's `quote` must occur character for character in
    at least one cited source's normalized text; otherwise
    `CONTEXT_NOTE_QUOTE` (`validateNoteContent`). `quote-diagnostics.ts`
@@ -508,8 +513,10 @@ tokens); a repair that cannot fit leaves the refusal as it was.
 
 - **Sources repair** (`sources-repair.ts`): eligible only when facts without
   sources are the candidate's *sole* schema fault and at most 5 facts are
-  affected (`sourcesRepairEligible`, `SOURCES_REPAIR_MAX_FACTS`). The request
-  names only those facts beside the evidence they may cite; the answer
+  affected (`sourcesRepairEligible`, `SOURCES_REPAIR_MAX_FACTS`), or, by the
+  same test, when the scope step emptied at most 5 facts whose every source
+  was out of scope. The request names only those facts, with their sources
+  empty, beside the evidence they may cite; the answer
   returns IDs only, exactly one repair per named fact. `applySourcesRepair`
   splices the IDs in and changes nothing else — text, quote and supersedes
   stay byte for byte; an answer off its schema or not answering each fact

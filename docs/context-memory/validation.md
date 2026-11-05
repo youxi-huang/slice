@@ -1,5 +1,168 @@
 # Validation record
 
+## 0.8.0 on GPT-6 Luna: `max` on both routes, more `medium` chains, and an invented citation that blocked a session, 2026-11-05 UTC
+
+A real-provider run on the release package, recorded apart from the offline evidence. `slice-pi@0.8.0`
+(`stock-preview+src.7c815afa75319b7b`, the build the [recovery check](#recovery-on-luna-with-v2-a-small-check) ran)
+on official Pi 1.4.0, with fixture P5 replayed as that check replayed it: `--replay --replay-tools --cache session
+--pace immediate --turn-latency-ms 10000`, the 200k route (cuts 1, 3 and 5, a 180,000-token window) and the 272k
+route (cuts 2 and 4, 240,000), Pi's reserve at 30,000, and P5's probes answered on each checkpoint's own copy with
+only `context_history` active (`--probe-conditions history --chain-attempts 4`). GPT-6 Luna on OpenAI's API was the
+session, writer and segment model.
+
+The maintainer approved 4,500 requests, 720 minutes and US$10 in all, one chain at a time, every request at most
+270,000 input tokens, stopping at the first 4xx or rate-limit error, each chain given only what the earlier ones
+left. The run used 2,465 requests, 363.5 minutes and US$2.56 at catalog prices: 2,458 in 18 chains, counting the
+cancelled item's one and a rerun, and seven to diagnose and re-check the block below. No request returned a 4xx or a
+rate-limit error. The largest was 223,101 input tokens, and the busiest 60 seconds read 1,493,055, below the
+organization's 2,000,000 a minute.
+
+**No probe was answered wrong, and segments stay an experiment: they served 4 of the 19 boundaries their chains
+reached. One session blocked at its first boundary on the writer's path, which segments do not change.** Luna cited
+`1598f6dcb`, the head of one entry's ID and the tail of another's, as the only source of a fact, and repeated it on
+every retry. The writer now sends such a fact to its existing sources repair. Replayed on Luna with the fix, each of
+the two answers refused for that ID alone drew one repair that named the right entry, and both checkpoints
+committed.
+
+### `max` on both routes
+
+At most 300 requests, 75 minutes and US$2 per chain, `--unit-minutes 45`. Before this run `max` had met 0.8.0's
+segments only on older packages: the 200k route in
+[WP5](#080-wp5-segments-on-gpt-6-luna-and-deepseek-v41-flash-2026-11-03-utc) and the 272k route in
+[its rerun](#080-wp5-rerun-gpt-6-luna-with-the-bounded-tail-2026-11-04-utc).
+
+| Route | Segments | Boundaries | Paths | Pause per boundary (s) | Probes passed (wrong, blocked, invalid) | Across a checkpoint | Requests | Minutes | Cost (US$) |
+| --- | --- | --- | --- | --- | --- | --- | ---: | ---: | ---: |
+| 200k | on | 3/3 | sync 3, each `in-flight` | 81.9, 79.6, 34.5 | 26 of 30 (0, 0, 4) | 12 of 13 | 203 | 53.9 | 0.1711 |
+| 200k | off | 3/3 | sync 3 | 34.7, 56.7, 48.5 | 27 of 30 (0, 0, 3) | 13 of 13 | 183 | 19.4 | 0.1425 |
+| 272k | on | 2/2, cut 4 on a retry | segments at cut 2; sync at cut 4, `unfinished-turn` | 0.06, 65.4 | 14 of 19 (0, 0, 4), one abstained | 4 of 7 | 138 | 15.2 | 0.3437 |
+| 272k | off | 2/2 | sync 2 | 60.8, 51.3 | 15 of 19 (0, 0, 4) | 6 of 7 | 149 | 15.7 | 0.1321 |
+
+- **At `max`, segments ran out of output and of time.** On the 200k route each interval's first segment call stopped
+  at exactly 8,000 output tokens after 74 to 81 s and failed with `CONTEXT_WRITER_FAILED`. The next was still
+  running at the boundary, so all three boundaries went to the writer as `in-flight`; one of them finished 50 s into
+  its writer's 82. At `medium` no segment call failed this way.
+- **The request guard met a tool batch on the 272k route.** Segments merged two notes at cut 2 in 56 ms. At cut 4 a
+  batch carried the next request to 227,971 tokens, past the guard's 223,616, the window less 16,384, and the guard
+  stopped it before it was sent (`CONTEXT_INPUT_TOO_LARGE`). The bench's retry, the `/compact` a user would run,
+  committed through the writer in 65.4 s. With a 30,000-token reserve, Pi's trigger lies 13,616 tokens below the
+  guard, and P5's largest batch is larger.
+- **That chain's probes cost seven times the control's**, US$0.20 against US$0.03. The two checkpoints kept their
+  later originals verbatim, so each probe began near 41,000 and 85,000 tokens instead of 3,000 to 4,000. It also
+  passed the fewest probes across a checkpoint, 4 of 7, though none was wrong.
+- **Invalid answers rose at `max`**, 3 or 4 a chain against 0 to 2 at `medium`. Most came from probes that reached
+  their round limit before giving an answer object.
+
+### Three more `medium` chains per cell
+
+At most 250 requests, 45 minutes and US$1.20 per chain, `--unit-minutes 30`, the limits of the recovery check, whose
+chains count as each cell's first.
+
+| Route | Segments | Chain | Boundaries | Paths | Pause per boundary (s) | Probes passed (wrong, blocked, invalid) | Requests | Minutes | Cost (US$) |
+| --- | --- | ---: | --- | --- | --- | --- | ---: | ---: | ---: |
+| 200k | on | 2 | 3/3 | sync 3 | 16.5, 21.2, 24.7 | 29 of 30 (0, 0, 1) | 176 | 25.1 | 0.1357 |
+| 200k | on | 3 | 3/3 | segments at cut 1; sync 2, cut 3 at Pi's own trigger | 0.05, 31.4, 24.2 | 27 of 28 (0, 1, 0), 2 not started | 161 | 45.0 | 0.1564 |
+| 200k | on | 4 | 3/3, two refused attempts at cut 3 | segments at cut 1; chunked at cut 3, at Pi's own trigger; sync at cut 5 | 0.05, 144.8, 24.9 | 29 of 30 (0, 0, 1) | 186 | 37.9 | 0.2507 |
+| 200k | off | 2 | 3/3 | sync 3 | 20.9, 16.9, 21.4 | 30 of 30 (0, 0, 0) | 171 | 15.0 | 0.1237 |
+| 200k | off | 3 | 3/3 | sync 3 | 14.3, 17.8, 20.2 | 28 of 30 (0, 0, 2) | 179 | 14.9 | 0.1223 |
+| 200k | off | 4 | 3/3 | sync 3 | 15.7, 18.6, 16.3 | 29 of 30 (0, 0, 1) | 180 | 15.1 | 0.1239 |
+| 272k | on | 2 | 2/2 | sync at cut 2; segments at cut 4 | 24.7, 0.1 | 17 of 19 (0, 0, 2) | 132 | 40.0 | 0.2033 |
+| 272k | on | 3 | 2/2 | sync 2 | 17.8, 21.2 | 17 of 19 (0, 0, 2) | 130 | 12.6 | 0.1315 |
+| 272k | on | 4 | **blocked at cut 2**, four attempts refused | | | not reached | 36 | 6.2 | 0.0711 |
+| 272k | off | 2 | 2/2 | sync 2 | 18.1, 17.7 | 17 of 19 (0, 0, 2) | 133 | 12.9 | 0.1156 |
+| 272k | off | 3 | 2/2, one refused attempt at cut 2 | sync 2 | 18.5, 21.6 | 17 of 19 (0, 0, 2) | 129 | 12.9 | 0.1202 |
+| 272k | off | 4 | 2/2, two refused attempts at cut 4 | sync 2 | 23.6, 19.2 | 18 of 19 (0, 0, 1) | 131 | 13.2 | 0.1232 |
+
+With the recovery check's chains, each cell has four:
+
+- **Recovery.** No answer was wrong and none fabricated. Without segments, 116 of 120 probes passed on the 200k
+  route and 70 of 76 on the 272k route. With them, 113 of the 118 that ran passed on the 200k route and 53 of 57 on
+  the 272k route's three chains that reached a checkpoint. Every superseded value was right wherever its chain
+  reached it.
+- **Segments served 3 of the 14 boundaries `medium` reached, in 45 to 111 ms.** For 9 of the other 10 the merge left
+  the boundary to the writer with `ambiguous-supersede`: a segment superseded an entry that more earlier facts cite
+  than it replaces, so the merge cannot tell which it corrects. The tenth was `instruction-superseded`.
+- **A writer call that fits takes about 20 s, with segments or without.** One call took 14.3 to 21.4 s on the 200k
+  route without segments, against 16.5 to 31.4 s with them, and 17.7 to 23.6 s on the 272k route against 17.8 to
+  24.7 s.
+- **The chunked path is slow and often refused.** In chain 4, cut 3 fell on Pi's own trigger at 161,654 tokens. Two
+  seven-chunk attempts were refused with `CONTEXT_NOTE_INVALID` and the third committed in 144.8 s, so the session
+  waited about seven minutes. Over the three runs on this runtime the chunked path has committed three times in six
+  attempts. Chain 3 met the same trigger at 161,215 tokens, and there the handover fitted one writer call of 31.4 s.
+- **Two chains stopped on the run, not on Slice.** Before cut 1 of the first fourth chain on 200k with segments, a
+  segment call to OpenAI ended after 4.7 s with no HTTP status and no usage. The bench stops forwarding after any
+  upstream failure, so Pi's retries were refused locally and the chain broke: 21 requests, 3.3 minutes, US$0.0281.
+  It ran again as chain 4. In chain 3 one probe request made no progress until its 30-minute unit limit ended it,
+  and the chain's 45-minute limit then left two probes unstarted.
+
+### An invented citation that blocked a session
+
+The fourth 272k chain with segments reached cut 2 at step 9. Its writer was called four times, 14.7 to 29.5 s each,
+reading 203,535 to 207,167 of 207,170 input tokens from the cache, and each note was refused with
+`CONTEXT_NOTE_SCOPE`: one cited ID named no entry (`missing: 1`). The chain recorded no checkpoint and its probes
+never ran. A user's `/compact` would have failed the same way. The bench records a refused attempt's writer calls as
+0; the forwarded calls show the four.
+
+**Diagnosis.** The chain's session file, as it stood at the refusal, was copied into an empty agent directory with
+the release package, and `/compact` ran on Luna through a local relay that saved each writer response: four
+requests, 1.2 minutes, US$0.0126, stopping at any 4xx. All four notes cited `1598f6dcb` in one `files` fact on
+`src/ledger/writer.js`. The entry that read that file is `1598fbb5`; the tail `6dcb` belongs to `011f6dcb`, another
+entry in the same index. Three notes cited nothing else for the fact and were refused, twice with
+`CONTEXT_NOTE_SCOPE` and once with `CONTEXT_NOTE_INVALID` for a schema fault the check reports first. The fourth
+also cited a valid entry for it, so the pruning releases after v0.7.2 apply dropped the invented ID and the note
+committed.
+
+**Why on every retry, and why not segments.** The writer's request carries no segment: it is the session's own
+context and one closing message, so the same request reaches the writer with segments off. Each retry sends it
+again, nearly all of it from the cache, and seven of the eight attempts at it were refused. Pi gives every entry a
+new random ID, so the other chains' writers saw other IDs, and none of the other 39 writer attempts in this run was
+refused for an unknown entry. Earlier releases check citations the same way, so they are exposed too.
+
+**The fix.** When pruning would leave a fact with no readable source, the out-of-scope IDs are removed and the
+candidate goes to the existing sources repair as one whose only fault is facts without sources: the same writer,
+without reasoning, is asked once for those facts' sources beside the evidence they may cite, never sees the invented
+ID and may add sources only. The repaired note passes every check again. The refusal stands, as before, when
+`noteRepair` is off, when the compaction's one repair is spent, when a `supersedes` ID is out of scope or when more
+than five facts lost every source. New regressions in `packages/compaction-core/test/writer.test.ts` and
+`context-memory-preview-quote.test.ts` fail on the 0.8.0 writer and pass with the fix.
+
+**On Luna with the fix.** Package `stock-preview+src.eef3f2403cd3f47b`, built from `138c641`, through the same
+relay. `/compact` on a fresh copy of the blocked session committed at the first attempt with one writer call, but
+that answer cited `1598fbb5` itself, read nothing from the cache, and never reached the repair. The two answers the
+release refused with `CONTEXT_NOTE_SCOPE` were therefore replayed locally as the writer's answer, and only what
+followed went to Luna. On the release package the replay is refused with no further request. On the fixed package
+each drew one repair request without reasoning, 7,504 and 7,763 input tokens, which did not contain the invented ID.
+Luna answered both with `1598fbb5` for the fact, in 27 output tokens, and both checkpoints committed. Three
+requests, 0.4 minutes, US$0.0231.
+
+### The other refusals
+
+Of 34 writer attempts at `medium`, 9 were refused: the 4 above and 5 with `CONTEXT_NOTE_INVALID`, each a schema
+fault outside the repairable classes (`schema.other`), and each followed by a commit on the next attempt or the one
+after. Three were on the 272k route without segments and two were the chunked attempts above. At `max` all 9 writer
+attempts committed.
+
+### The cancelled first item: the chunked path at Pi's default reserve
+
+The plan began with the chunked path at Pi's default reserve of 16,384, segments off, on the 200k route, to measure
+how often it is refused. Its first chain, at a 160,000-token window, committed cut 1 through the writer in 24.8 s at
+144,993 tokens. The preview's request guard then stopped two requests before they were sent, two of the chain's
+recorded replies were left unconsumed, and the chain could not go on: 20 requests, 3.6 minutes, US$0.0282. The guard
+admits at most the window less 16,384 tokens, so at Pi's default reserve it sits on Pi's trigger. A request that
+would cross the trigger is stopped before Pi's own compaction can begin, and the chunked path, which acts only
+inside that compaction, is never reached. A session at Pi's defaults meets `CONTEXT_INPUT_TOO_LARGE` and then
+`/compact`, as on 2026-11-01. The maintainer cancelled the item.
+
+### Not covered
+
+P5 and Luna only. Four chains per `medium` cell and one per `max` cell. The fix rests on one session and on offline
+regressions, not on a measured refusal rate. DeepSeek, OpenCode and DSH were not run: OpenCode writes no checkpoint,
+and DSH's opt-in writing preview uses the same core writer, so the fix reaches it unmeasured.
+
+Raw metrics, content-free: `luna-080/` at `fc93692` on `claude/sharp-bardeen-5a0j1m`, with the bench command and a
+key to the labels; the commit that adds this entry removes the directory. The relay's requests and answers hold note
+text and stay out of the repository.
+
 ## 0.8.0 release preparation: the reopen check and CI on the release build, 2026-11-04 UTC
 
 The release commit `adb5c4f` sets the version to 0.8.0 and pins every install command to it. Its package,

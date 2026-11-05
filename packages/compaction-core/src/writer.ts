@@ -48,7 +48,13 @@ import {
 	schemaCounts,
 	schemaFailureMessage,
 } from "./schema-diagnostics.ts";
-import { diagnoseScope, type ScopeCounts, withinSegmentRange, withoutOutOfScope } from "./scope-diagnostics.ts";
+import {
+	diagnoseScope,
+	type ScopeCounts,
+	withinSegmentRange,
+	withoutOutOfScope,
+	withoutUnreadableSources,
+} from "./scope-diagnostics.ts";
 import {
 	applySourcesRepair,
 	type CitableEvidence,
@@ -718,6 +724,20 @@ export async function writeMemory<TRequest, TResponse extends WriterResponse>(
 					scopeDropped += pruned.dropped;
 					report();
 					return validateCandidate(pruned.note, repaired);
+				}
+				// 0.8.1: a fact left with no source is a fact written without one, and the one sources repair asks the
+				// writer for its sources, as it does then. The host names none. The refusal stands, under its own code,
+				// when the repair is off or spent, when a supersedes ID is out of scope or when more than five facts
+				// lost every source.
+				const emptied =
+					options.config.noteRepair && !repairUsed
+						? withoutUnreadableSources(value as MemoryNote, options.branch)
+						: undefined;
+				const pending = emptied ? diagnoseSchema(emptied.note) : undefined;
+				if (emptied && pending && !pending.other && sourcesRepairEligible(pending)) {
+					scopeDropped += emptied.dropped;
+					report();
+					throw new SchemaRefusal(error.message, pending);
 				}
 				report();
 				throw error;
