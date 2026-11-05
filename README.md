@@ -1,28 +1,34 @@
-# SLICE for Pi: independent extension preview v0.7.5
+# SLICE for Pi: independent extension preview v0.8.0
 
-This extension runs on unmodified official Pi **1.4.0, 1.3.0, 1.2.0 and 1.1.0** as an ordinary Pi package. v0.7.5 retains the checkpoint schema and source-hash format used by v0.4.1, so existing preview checkpoints reopen unchanged, and a v0.5.0 checkpoint reopens under v0.4.3.
+This extension runs on unmodified official Pi **1.4.0, 1.3.0, 1.2.0 and 1.1.0** as an ordinary Pi package. v0.8.0 retains the checkpoint schema and source-hash format used by v0.4.1, so existing preview checkpoints reopen unchanged, a v0.5.0 checkpoint reopens under v0.4.3, and checkpoints v0.8.0 writes, segments included, reopen under v0.7.5.
 It is published on npm as `slice-pi` and on Git through the `extension-preview`
 branch and immutable `extension-v*` package tags, separately from the v0.3.0
 resident source build.
 
-**v0.7.5 supports manual `/compact` and completed-turn threshold compaction,
+**v0.8.0 supports manual `/compact` and completed-turn threshold compaction,
 and with the session writer compacts earlier, at a settled turn, when one more
 turn would leave the writer's handover no room.** Optional background
-preparation with the configured writer (A) and data-only work notes from the
-session model (B) are both disabled by default. B carries covered user
-messages in full or asks the configured writer to compact them. Sources are
-validated at trust boundaries, with incremental checks between them. The
+preparation with the configured writer (A), data-only work notes from the
+session model (B) and segments are all disabled by default. B carries covered
+user messages in full or asks the configured writer to compact them. Sources
+are validated at trust boundaries, with incremental checks between them. The
 synthetic long-session scenario requires both the 50 ms request target and the
 growth bound under the strict profile; the first request after each checkpoint
 still pays one full check.
 
-On GPT-6 Luna on 2026-11-01, the published `extension-v0.7.2` compacted two
-first-use sessions in 13.7 and 14.0 s, reading about 95% of the writer's input
-from cache, and a later development build started a prose session's
-compaction itself below Pi's trigger, finishing in 29 s. The final next-turn
-allowance is covered by a regression, not a provider run. v0.4.1 fixes how
-checkpoints carry notes; see the [release scope](v0.4.0-release.md), the
-[changelog](../../CHANGELOG.md) and the [validation record](validation.md).
+With every switch at its default, v0.8.0 changes two things. When a tool batch
+carries the session past Pi's trigger and leaves the session writer no room
+for its handover, the same writer reads the evidence in bounded chunks instead
+of failing with `CONTEXT_WRITER_CAPACITY`. On GPT-6 Luna that took 143 and
+155 s, where a handover that fits takes about 20 s, and one attempt in three
+was refused. The writer's rules also state the note schema's limit of 20
+source IDs per item, which Luna at Pi's default thinking level had broken often
+enough to block a session. Segments are new and stay off: on the 0.8.0
+provider runs they did not shorten the pause. Earlier, on 2026-11-01, the
+published `extension-v0.7.2` compacted two first-use sessions on Luna in 13.7
+and 14.0 s, reading about 95% of the writer's input from cache. The
+[changelog](../../CHANGELOG.md) and the [validation record](validation.md) give
+the details.
 
 Since 0.7.0 this extension is the first adapter of the host-neutral core
 package (`packages/compaction-core`), and the resident runtime is frozen as of
@@ -32,7 +38,9 @@ v0.7.1 is the first extension built on that core. It behaves as v0.6.0 did and
 adds official Pi 1.4.0 as the primary host. v0.7.2 installs from the new
 repository address and lets a second installed copy stand aside; it compacts
 as v0.7.1 did. v0.7.5 compacts as v0.7.4 did and is the first release on npm,
-beside packages that give OpenCode and DSH the same `context_history`.
+beside packages that give OpenCode and DSH the same `context_history`. v0.8.0
+adds segments as an experiment, and its DSH package an opt-in manual writing
+preview.
 
 The project is now called SLICE, Source-Linked Indexed Compaction of
 Everything. Its repository moved to `youxi-huang/slice`, and GitHub redirects
@@ -48,7 +56,7 @@ Official Pi 1.4.0, 1.3.0, 1.2.0 and 1.1.0 users can install the pinned release
 from npm:
 
 ```sh
-pi install npm:slice-pi@0.7.5
+pi install npm:slice-pi@0.8.0
 ```
 
 Restart Pi afterwards. A pinned version stays fixed. To follow later
@@ -70,7 +78,7 @@ version replaces the earlier entry.
 The same package is on Git, pinned by its package tag:
 
 ```sh
-pi install git:github.com/youxi-huang/slice@extension-v0.7.5
+pi install git:github.com/youxi-huang/slice@extension-v0.8.0
 ```
 
 or following the moving branch, which `pi update --extension
@@ -84,12 +92,12 @@ Pi records one source per package address, so installing the same address
 with another tag or branch replaces the recorded source.
 
 `pi update --extensions` updates every installed package. A plain `pi update`
-updates Pi itself and `pi update --all` updates Pi and all packages; the v0.7.5
+updates Pi itself and `pi update --all` updates Pi and all packages; the v0.8.0
 preview supports Pi 1.4.0, 1.3.0, 1.2.0 and 1.1.0.
 
 ### Before updating Pi
 
-Check that the installed preview lists the new Pi version first; v0.7.5, v0.7.4, v0.7.2 and
+Check that the installed preview lists the new Pi version first; v0.8.0, v0.7.5, v0.7.4, v0.7.2 and
 v0.7.1 list 1.4.0, 1.3.0, 1.2.0 and 1.1.0, and v0.6.0 lists 1.3.0, 1.2.0 and 1.1.0. On a Pi version the preview does not list, sessions it never protected are left to
 Pi's own compaction, but a session it protects stays blocked: requests stop and
 a failure record is written, because the preview cannot check its checkpoints
@@ -112,7 +120,7 @@ that address. To move it to npm, exit Pi and run:
 
 ```sh
 pi remove git:github.com/youxi-huang/slice &&
-pi install npm:slice-pi@0.7.5
+pi install npm:slice-pi@0.8.0
 ```
 
 For an installation from the old address, remove
@@ -133,7 +141,7 @@ Install the package from one scope only (global by default, or project-local
 with `-l`). A compatible older preview can reopen its own checkpoint schema;
 resident and native checkpoints are not migrated.
 
-The [v0.7.5 release](https://github.com/youxi-huang/slice/releases/tag/v0.7.5)
+The [v0.8.0 release](https://github.com/youxi-huang/slice/releases/tag/v0.8.0)
 also provides the extension `.tgz` npm serves, the OpenCode and DSH `.tgz`,
 source archive, provenance, exact-package scenario evidence and SHA256
 checksums. The package contains five reviewed files and no host runtime, and
@@ -358,10 +366,22 @@ session has already warmed: on DeepSeek, 95 to 97% of the writer's input over
 192 compactions. The closing message tells
 the model to call no tool. A tool call is never run: the first is answered as
 unavailable and the same request continues once. That continuation does not
-spend the compaction's one repair, so a compaction makes at most three writer
+spend the compaction's one repair, so a handover makes at most three writer
 calls. A second tool call, or one with `noteRepair` off, refuses the note with
 `CONTEXT_WRITER_FAILED`. On DeepSeek about one writer response in twenty called
 a tool.
+
+When a tool batch carries the session past Pi's compaction trigger and into
+its reserve, the full handover may not fit even with bare citation IDs. The
+same session model, at the same thinking level, then reads the original
+evidence in bounded chunks. The choice is made before the first writer request,
+never after a failure, so a writer that fails still blocks the session. Each
+chunk carries the note so far with the original IDs and offsets, and all chunks
+share the frozen note budget, the checks and the one repair. The price is more
+calls and no prefix cache: on GPT-6 Luna a chunked compaction took 143 and 155 s
+where a handover that fits took about 20 s. A larger `compaction.reserveTokens` in
+Pi's settings makes it rarer. Segment requests and the tail a segments
+checkpoint keeps are unchanged.
 
 Configuration is latched for the process; restart Pi after changing it. The
 preview uses the writer, note-budget, repair and retained-text settings from
@@ -373,9 +393,11 @@ This preview compacts at completed turns: on `/compact`, and when Pi's
 threshold compaction runs after a turn completes. With the session writer it
 also starts that compaction itself at a settled turn whose context, with one
 more turn as large as Pi's default reserve or as the turn just settled, would
-leave the writer's handover no room. On a 272,000-token route Pi's own trigger
-leaves 16,384 tokens, less than a handover takes. One-shot `print` and `json`
-runs, which exit when the turn settles, are left to Pi's trigger. Both lines
+leave the writer's handover no room. It checks again at once after `/tree`,
+whose new branch may already sit that close to the limit. On a 272,000-token
+route Pi's own trigger leaves 16,384 tokens, less than a handover takes.
+One-shot `print` and `json` runs, which exit when the turn settles, are left to
+Pi's trigger. Both lines
 read Pi's own count of the context, from the provider's reported usage, as do
 the request guards. While input is queued or a
 session is blocked, threshold compaction is left for a later turn and nothing is
@@ -647,6 +669,95 @@ until a note supersedes them or the writer rewrites the note, so a long task
 reaches the schema's bounds (40 facts per section, 20 gaps) and falls back to
 the writer more often. Both wait for a note schema with stable fact identities.
 
+### Segments (0.8.0)
+
+Segments have their own switch, off by default:
+
+```json
+{
+  "previewSegments": {
+    "enabled": true
+  }
+}
+```
+
+With it, the session model writes a segment note in the background after a
+completed turn, through the session's own request so the provider's cache
+serves it. The first segment of a checkpoint interval waits until the context
+reaches half the compaction threshold and covers everything since the previous
+checkpoint; each later one waits for 15% of the threshold, between 8,192 and
+32,000 tokens, of new history. A segment cites only the turns it covers. One
+runs at a time; the segments are kept in memory and lost on restart. A fixed
+`writerModel` writes none.
+
+Segments are written at the session's thinking level unless `effort` names
+another, one of `off`, `minimal`, `low`, `medium`, `high`, `xhigh` and `max`:
+
+```json
+{
+  "previewSegments": {
+    "enabled": true,
+    "effort": "low"
+  }
+}
+```
+
+A segment only records what its own turns add, and the merge carries the rest,
+so a lower level costs less where it matters least. With a level of their own,
+segments stay valid when the session's level changes; without one, a changed
+level discards them, since another level is another writer. An unknown level
+turns segments off, and `/compaction-doctor` says so.
+
+At compaction the extension merges the previous checkpoint's note with the
+segments, in order, without a model call, the way B merges work notes, except
+that a segment may add instructions found in its own turns. When the user
+changes an earlier ruling, the segment's new instruction replaces the old one,
+provided it cites the user's own message and names the old instruction's
+sources in `supersedes`. The merged note is
+committed through the prefix path, so the turns after the last segment stay
+verbatim, unless they hold more than one segment range (15% of Pi's trigger,
+between 8,192 and 32,000 tokens) or the result would leave half the compaction
+threshold or more in context. A segment still being written is waited for at most 15 seconds when
+only it would let the merge commit, and `details.preparation.segmentsWaitMs`
+records the wait. `details.preparation.path` is then
+`segments`, with `segmentIds` and the `callIds` that wrote them.
+
+The writer compacts synchronously instead, as before, when no segment is ready
+or valid, after an unfinished turn, with custom focus, when a segment would
+retire a carried instruction without a ruling from the user in its place, when
+the merge is ambiguous or exceeds the note schema or budget, when the turns
+after the last segment hold more than one range (`tail`), or when the prefix
+conditions fail.
+`details.preparation.segmentsFallback` records why.
+
+Segments are an experiment. On the 0.8.0 provider runs they did not shorten
+the pause over a whole session, and in one case they made it worse: the turns
+after the last segment then stayed verbatim up to half the threshold, and a very
+large paste or tool output soon after took the next request past the window,
+where the writer had no room to compact and the session blocked. The tail is
+now bounded to one range. In a rerun on GPT-6 Luna no session blocked, but
+segments served no compaction, and waiting for one still being written made
+each pause up to 15 seconds longer. Leave segments off unless you are
+measuring them. At a `max` thinking level a segment can also take longer than
+its two-minute deadline. The records are in
+[validation.md](validation.md#080-wp5-rerun-gpt-6-luna-with-the-bounded-tail-2026-11-04-utc).
+
+Segments never block work themselves. They stop for the rest of a checkpoint interval
+after eight calls, or once their calls have spent as many uncached tokens as
+the threshold holds, a call with unknown usage spending all of it. They also
+stop after three failures of one kind in a row, until the next checkpoint.
+`/compaction-status` shows `segments` with how many are ready, how far they
+reach and the share of history since the last checkpoint they cover, and
+`calls.segmentCalls`; `/compaction-doctor` says when they are paused and why.
+`segments.results` counts how this session's segments ended, without content:
+linked into the chain, cancelled in flight, no longer extending the chain,
+refused or failed by error code (`CONTEXT_SEGMENT_DEADLINE` for a run past its
+deadline), and links dropped when a later turn classified the chain again, by
+the reason it stopped. `limited` counts segments the writer kept to their own
+turns: writers often restate the previous checkpoint in a segment, and a fact
+that cites only earlier turns is dropped there, since the merge carries the
+previous note anyway.
+
 ## Verification
 
 Focused tests run through `scripts/context-memory-check.mjs`. The independent
@@ -784,19 +895,25 @@ npm provenance, and only then makes the release public. npm never accepts a
 version twice: a retry skips a package npm already holds with the same bytes,
 and different bytes stop the run.
 
-The workflow authenticates through npm's trusted publishing, which is set up
-once per package, and npm offers that only for a package that already exists.
-The first npm release therefore publishes with a token:
+The workflow authenticates through npm's trusted publishing with the run's own
+OIDC token. `slice-pi`, `slice-opencode` and `slice-dsh` have had a trusted
+publisher since v0.7.5 (GitHub Actions, repository `youxi-huang/slice`, workflow
+`context-memory-preview-release.yml`), so a release needs no token or secret.
 
-1. On npmjs.com, create a granular access token that can publish new
-   packages and may publish without an interactive two-factor prompt. Store it
-   as the repository secret `NPM_TOKEN`.
+npm sets up trusted publishing only for a package that already exists. A new
+package's first publication therefore needs a token, as v0.7.5 did:
+
+1. Create a granular access token that can publish new packages without an
+   interactive two-factor prompt, for example with
+   `npm token create --name <name> --packages-all --packages-and-scopes-permission read-write --bypass-2fa --expires 7`,
+   and store it as the repository secret `NPM_TOKEN`.
 2. Publish the release as usual.
-3. For `slice-pi`, `slice-opencode` and `slice-dsh`, add a trusted publisher:
-   GitHub Actions, repository `youxi-huang/slice`, workflow
-   `context-memory-preview-release.yml`.
-4. Delete the `NPM_TOKEN` secret and revoke the token. Later releases
-   authenticate with the workflow run's own OIDC token.
+3. Add the trusted publisher, for example with
+   `npm trust github <package> --repository youxi-huang/slice --file context-memory-preview-release.yml --allow-publish`.
+4. Delete the `NPM_TOKEN` secret and revoke the token.
+
+npm 11.21.1 warns that such tokens stop publishing directly in January 2027. A
+package added after that needs another route to its first version.
 
 If publication tooling needs a fix after a source tag was created, merge the
 fix through the normal PR checks. Retry **Publish extension preview** from that
@@ -804,4 +921,8 @@ main commit using its `source_tag` workflow input, or push that commit to
 `release/publish-v<version>`. The job uses the reviewed tooling while rebuilding
 and testing the immutable source tag; provenance records both commits. No tag
 or existing public asset is replaced, and uploaded assets are not downloaded
-again for verification.
+again for verification. A run that fails after uploading leaves a draft
+release. The retry keeps the draft's archives, which must match its rebuild
+byte for byte, and replaces only the evidence the failed run wrote about
+itself: `release-provenance.json`, `preview-acceptance-profile.json` and
+`SHA256SUMS`.

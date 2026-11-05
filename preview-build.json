@@ -1,7 +1,7 @@
 {
-  "build": "stock-preview+src.b0f389ab614f8cf3",
-  "version": "0.7.5",
-  "sourceCommit": "dcdb2702889e78f05ef6ba7c3052a433721ff6da",
+  "build": "stock-preview+src.7c815afa75319b7b",
+  "version": "0.8.0",
+  "sourceCommit": "2ac60f9f17f70358f69e150e6423f565b998f819",
   "supportedPi": "1.4.0",
   "supportedPiVersions": [
     "1.4.0",
@@ -10,7 +10,7 @@
     "1.1.0"
   ],
   "checkpointSchema": 1,
-  "sourceHash": "b0f389ab614f8cf31c13c7744dc80cebb875840cada8abdeffa08a24618e7ce9",
+  "sourceHash": "7c815afa75319b7b3561d024ccbab32f322af56b1963bb500d86b35727c9a505",
   "sources": [
     {
       "file": "packages/coding-agent/src/extensions/context-memory/config.ts",
@@ -38,7 +38,7 @@
     },
     {
       "file": "packages/coding-agent/src/extensions/context-memory/preview/call-journal.ts",
-      "sha256": "75f1ee19d1ea3e0745f99f63c238b4a8a5e00d43ae826c4c323d947489ca7be9"
+      "sha256": "c0087a449b01a7ebf18c1c2d8944a72c4dd7d83620e38f522e5182abf04291ca"
     },
     {
       "file": "packages/coding-agent/src/extensions/context-memory/preview/compatibility.ts",
@@ -46,7 +46,7 @@
     },
     {
       "file": "packages/coding-agent/src/extensions/context-memory/preview/controller.ts",
-      "sha256": "385882427d42e58cf06ebfa04ded3a64cb8f6aa4e6f0d4fce1deff4c15014252"
+      "sha256": "1f684ade1ffba5bc1faad0db3a077aaae3e5381fc48af5d1b6d507be4f1e94fe"
     },
     {
       "file": "packages/coding-agent/src/extensions/context-memory/preview/copies.ts",
@@ -58,7 +58,7 @@
     },
     {
       "file": "packages/coding-agent/src/extensions/context-memory/preview/extension.ts",
-      "sha256": "a2fb6b5185bf445d18966e936d2d1f4357e16d16d5ffcd07f79d5d0c8b1dc2bb"
+      "sha256": "39454a7207b90a67efb3709279ea4164cd1046e60eee7ed45dbab10bf24edf1f"
     },
     {
       "file": "packages/coding-agent/src/extensions/context-memory/preview/failure-io.ts",
@@ -70,15 +70,19 @@
     },
     {
       "file": "packages/coding-agent/src/extensions/context-memory/preview/notices.ts",
-      "sha256": "bea9156f62b7374480ad9edb6d06f57e891213e7515dc5431c85c082f9589d68"
+      "sha256": "d23c400d585145ea9d41f08c5c95e6784bc4d5d6f0cdb4be572829eb5e34e44f"
     },
     {
       "file": "packages/coding-agent/src/extensions/context-memory/preview/preparation.ts",
-      "sha256": "b4f0a254b70044516a41acc35a2249c94d0c9a772eb1c870b6e7d79829499a36"
+      "sha256": "2ca0cdce8e1ebd5c6a8a88137fd54c7255a48a81c5d34bdce68c2c20b44640a5"
     },
     {
       "file": "packages/coding-agent/src/extensions/context-memory/preview/render-projection.ts",
       "sha256": "3bb9639c2f0a1c14ea71690f279101a39425f2a449f40b5e3ba96f87e44269e4"
+    },
+    {
+      "file": "packages/coding-agent/src/extensions/context-memory/preview/segments.ts",
+      "sha256": "89564780598d5277d6b14c4669849c30b6e94273437ed516c3cd341cc44f984c"
     },
     {
       "file": "packages/coding-agent/src/extensions/context-memory/preview/status-line.ts",
@@ -86,11 +90,11 @@
     },
     {
       "file": "packages/coding-agent/src/extensions/context-memory/preview/writer.ts",
-      "sha256": "a5f6b1e3f34ab27f0beafc1542d6915078352d510977ec9fe05a3d4a88509555"
+      "sha256": "56c5b68802d6149df3b5d846200791585348ffad2970308ee9fe31371c467d4e"
     },
     {
       "file": "packages/compaction-core/src/call-journal.ts",
-      "sha256": "909b854b47eb412d872e1251e9a4e48a5cd89204a263fbcb747d6ac5b7638cc9"
+      "sha256": "e75e26a3791c21aa926e09f15dfcc2eb6360e33b48f356397c7333cd9ecc31fe"
     },
     {
       "file": "packages/compaction-core/src/canonical.ts",
@@ -102,7 +106,7 @@
     },
     {
       "file": "packages/compaction-core/src/cuts.ts",
-      "sha256": "3b2f2cff62e7bbbd4875530ef1c303aa95db245ea2c2c56e67eddc3a2e8470e3"
+      "sha256": "1c1f9a2f2a79ab616b3148110b391ec5a30f8ff473a5d7aa4c34fabca06aef99"
     },
     {
       "file": "packages/compaction-core/src/excerpts.ts",
@@ -134,7 +138,7 @@
     },
     {
       "file": "packages/compaction-core/src/preparation-candidate.ts",
-      "sha256": "b0d3e717145df5dbb439a56a5df53d16b75c68c48c28afa0c08e80503a2f2bd1"
+      "sha256": "a0bb79affdbd48c2c0467a387e40bdb682efc4030848dd45c89cf40baec7f632"
     },
     {
       "file": "packages/compaction-core/src/quote-diagnostics.ts",
@@ -154,7 +158,11 @@
     },
     {
       "file": "packages/compaction-core/src/scope-diagnostics.ts",
-      "sha256": "20bc6d698718520966f6ee4e306c761d3dec588830568728d192ae978ef9e823"
+      "sha256": "a03e10d34480bb5f0c0e5cd8f3434a980b86887685e4debdd825e8b6369d02e1"
+    },
+    {
+      "file": "packages/compaction-core/src/segments.ts",
+      "sha256": "fbc27654f4bcbdb5703133e0845dfe6dc94ce42ca0ff12a58cff4221e5eeb77f"
     },
     {
       "file": "packages/compaction-core/src/sources-repair.ts",
@@ -162,11 +170,11 @@
     },
     {
       "file": "packages/compaction-core/src/work-notes.ts",
-      "sha256": "63cd596fb1cc4b14252169c8b44bf84b7abe7439ce9175c12c279007d85baf08"
+      "sha256": "39caceeff48108a0f15477ce61db15d58c9f69ae752a247cc08a6a548c2c5ba3"
     },
     {
       "file": "packages/compaction-core/src/writer.ts",
-      "sha256": "3bc6e05d8ea17f7966c8c5708a76fa92f4dd4b2f965162694eeea25832af967f"
+      "sha256": "0c220c44f9810fd6fbdc26b890bbc3675f2f3ee08639281a43a145e4e5f35569"
     }
   ],
   "externalImports": [
