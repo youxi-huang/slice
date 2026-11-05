@@ -1,0 +1,27 @@
+{
+  "host": "dsh",
+  "mode": "manual-writing-opt-in",
+  "version": "0.8.0",
+  "sourceHash": "64ec3c42f6113fde02372de9f99a1f7d0f86a7eb6d7b6d01df18a382950f71ec",
+  "sources": [
+    "packages/compaction-core/src/canonical.ts",
+    "packages/compaction-core/src/config.ts",
+    "packages/compaction-core/src/cuts.ts",
+    "packages/compaction-core/src/guards.ts",
+    "packages/compaction-core/src/history.ts",
+    "packages/compaction-core/src/identity.ts",
+    "packages/compaction-core/src/note-envelope.ts",
+    "packages/compaction-core/src/notes.ts",
+    "packages/compaction-core/src/quote-diagnostics.ts",
+    "packages/compaction-core/src/quote-repair.ts",
+    "packages/compaction-core/src/schema-diagnostics.ts",
+    "packages/compaction-core/src/scope-diagnostics.ts",
+    "packages/compaction-core/src/sources-repair.ts",
+    "packages/compaction-core/src/writer.ts",
+    "packages/compaction-dsh/src/codec.ts",
+    "packages/compaction-dsh/src/compaction.ts",
+    "packages/compaction-dsh/src/history.ts",
+    "packages/compaction-dsh/src/index.ts",
+    "packages/compaction-dsh/src/writer.ts"
+  ]
+}
