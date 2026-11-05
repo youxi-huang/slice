@@ -1,0 +1,16 @@
+{
+  "host": "opencode",
+  "mode": "retrieval-only",
+  "version": "0.8.0",
+  "sourceHash": "262bbcfe5ddce8dea79ed8e0d760e38cf6ce9f1c336231fced9d34fab2bbbafb",
+  "sources": [
+    "packages/compaction-core/src/canonical.ts",
+    "packages/compaction-core/src/config.ts",
+    "packages/compaction-core/src/history.ts",
+    "packages/compaction-core/src/identity.ts",
+    "packages/compaction-core/src/notes.ts",
+    "packages/compaction-opencode/src/codec.ts",
+    "packages/compaction-opencode/src/history.ts",
+    "packages/compaction-opencode/src/index.ts"
+  ]
+}
