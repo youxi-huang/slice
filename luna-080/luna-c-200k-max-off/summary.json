@@ -1,0 +1,1412 @@
+{
+  "label": "luna-c-200k-max-off",
+  "mode": "probes",
+  "provider": "openai",
+  "model": "openai/gpt-6-luna",
+  "endpoint": "api.openai.com",
+  "thinking": "max",
+  "cache": "session",
+  "arm": "slice",
+  "cuts": [
+    1,
+    3,
+    5
+  ],
+  "probeConditions": [
+    "history"
+  ],
+  "compactionsOnly": false,
+  "chainAttempts": 4,
+  "concurrency": 1,
+  "build": "stock-preview+src.7c815afa75319b7b",
+  "piVersion": "1.4.0",
+  "fixtures": [
+    "P5"
+  ],
+  "sessionSettings": {
+    "previewSegments": "off"
+  },
+  "unitSettings": {
+    "previewSegments": {
+      "enabled": false
+    }
+  },
+  "control": null,
+  "limits": {
+    "requests": 300,
+    "minutes": 75,
+    "costUsd": 2,
+    "inputTokensPerRequest": 270000
+  },
+  "turnLatencyMs": 10000,
+  "toolReplay": {
+    "host": {
+      "host": "official npm Pi",
+      "version": "1.4.0",
+      "packages": [
+        {
+          "name": "@earendil-works/pi-coding-agent",
+          "version": "1.4.0",
+          "integrity": "sha512-Z41LpZ3yYHSC/UUps6Mr39UMFPwH8elhJBG9DY1P7kuzsE5qSK/6eMj2EHzO5evJRQWLbKSqUMw+4nCNtIyiQg==",
+          "resolved": "https://registry.npmjs.org/@earendil-works/pi-coding-agent/-/pi-coding-agent-1.4.0.tgz",
+          "dependencies": {
+            "@earendil-works/pi-agent-core": "1.4.0",
+            "@earendil-works/pi-ai": "1.4.0",
+            "@earendil-works/pi-codemode": "1.4.0",
+            "@earendil-works/pi-mcp": "1.4.0",
+            "@earendil-works/pi-tui": "1.4.0"
+          }
+        },
+        {
+          "name": "@earendil-works/pi-agent-core",
+          "version": "1.4.0",
+          "integrity": "sha512-PoKY84SKUwnt7S5QBZaGUqfNO1kjP3KHpHUA9QpFTj4cOjaVWMYIcBPJ6FDRCdE8Zen9OSECQUd0uUfVgtSmgA==",
+          "resolved": "https://registry.npmjs.org/@earendil-works/pi-agent-core/-/pi-agent-core-1.4.0.tgz",
+          "dependencies": {
+            "@earendil-works/pi-ai": "1.4.0"
+          }
+        },
+        {
+          "name": "@earendil-works/pi-ai",
+          "version": "1.4.0",
+          "integrity": "sha512-hQM/C4+1w8rHYACzDDf+0vQMnEnpzIop1tptIERVgR3ZeT/hHSzBNG8PaWPgxWQjqSeKCyBZSyp8uTT6eKK1pQ==",
+          "resolved": "https://registry.npmjs.org/@earendil-works/pi-ai/-/pi-ai-1.4.0.tgz",
+          "dependencies": {
+            "@earendil-works/pi-telemetry": "1.4.0"
+          }
+        },
+        {
+          "name": "@earendil-works/pi-codemode",
+          "version": "1.4.0",
+          "integrity": "sha512-23CNAXpS9DuLzPMyYuvrXVVio46x4YhffCgCqaWmF7F5H8PooqjrQvX4ucF6M0BhUd+x2tV6r1J0dv8cCME4Cg==",
+          "resolved": "https://registry.npmjs.org/@earendil-works/pi-codemode/-/pi-codemode-1.4.0.tgz",
+          "dependencies": {}
+        },
+        {
+          "name": "@earendil-works/pi-mcp",
+          "version": "1.4.0",
+          "integrity": "sha512-92aZmmGsUpHHknYuKXZHRINQfahntw5hU9If0I0ZM49GojOaFHpkl5/GF3/aatqpt7v7GjZbBfpfSygGKW+pnw==",
+          "resolved": "https://registry.npmjs.org/@earendil-works/pi-mcp/-/pi-mcp-1.4.0.tgz",
+          "dependencies": {}
+        },
+        {
+          "name": "@earendil-works/pi-tui",
+          "version": "1.4.0",
+          "integrity": "sha512-4obPOjgOD7g4mGSlngIvxyujC1UPdmyI9zdVthbr8GufacFEX+Ce0+scPgHg++k2xj5+QjESM2d5TxvIuzCVmg==",
+          "resolved": "https://registry.npmjs.org/@earendil-works/pi-tui/-/pi-tui-1.4.0.tgz",
+          "dependencies": {}
+        },
+        {
+          "name": "@earendil-works/pi-telemetry",
+          "version": "1.4.0",
+          "integrity": "sha512-MLIfowwUYIY65jSjMX82paZOrX/NTvLk6D08h+3Jq42a99RzUOewzuCR0zOlPul3D6UBfddat76VT6LvsHEs1w==",
+          "resolved": "https://registry.npmjs.org/@earendil-works/pi-telemetry/-/pi-telemetry-1.4.0.tgz",
+          "dependencies": {}
+        }
+      ]
+    },
+    "tools": "recorded content, no commands executed or invented delays",
+    "mainLatencyMs": 10000,
+    "adjacentAssistants": "coalesced until the next recorded tool batch or user",
+    "writerCache": "provider-reported",
+    "forwarding": "every task, writer and segment body unchanged; task output capped before serialisation and discarded; recorded reply after upstream completion and turn delay",
+    "replaySessions": 1
+  },
+  "probes": {
+    "compactions": {
+      "attempts": 3,
+      "committed": 3,
+      "refusedByCode": {},
+      "toolCallResponses": 0,
+      "toolCallsDeclined": 0,
+      "notes": {
+        "measured": 3,
+        "bytesMedian": 7839,
+        "contextBytesMedian": 404975,
+        "ratioMedian": 0.0194,
+        "factsMedian": 33,
+        "quotedMedian": 5,
+        "coverage": {
+          "current": {
+            "cited": 0,
+            "total": 27
+          },
+          "carried": {
+            "cited": 0,
+            "total": 49
+          }
+        }
+      }
+    },
+    "history": {
+      "scorerVersion": "0.5-preview-scorer.2",
+      "overall": {
+        "planned": 30,
+        "passed": 27,
+        "correct": 25,
+        "incorrect": 0,
+        "abstained": 0,
+        "unknownCorrect": 2,
+        "fabricated": 0,
+        "invalid": 3,
+        "blocked": 0,
+        "supported": 0,
+        "unknownEvidence": 36,
+        "prose": 0
+      },
+      "crossCheckpoint": {
+        "planned": 13,
+        "passed": 13,
+        "correct": 13,
+        "incorrect": 0,
+        "abstained": 0,
+        "unknownCorrect": 0,
+        "fabricated": 0,
+        "invalid": 0,
+        "blocked": 0,
+        "supported": 0,
+        "unknownEvidence": 20,
+        "prose": 0
+      },
+      "byKind": {
+        "fact": {
+          "planned": 6,
+          "passed": 6,
+          "correct": 6,
+          "incorrect": 0,
+          "abstained": 0,
+          "unknownCorrect": 0,
+          "fabricated": 0,
+          "invalid": 0,
+          "blocked": 0,
+          "supported": 0,
+          "unknownEvidence": 8,
+          "prose": 0
+        },
+        "current": {
+          "planned": 5,
+          "passed": 4,
+          "correct": 4,
+          "incorrect": 0,
+          "abstained": 0,
+          "unknownCorrect": 0,
+          "fabricated": 0,
+          "invalid": 1,
+          "blocked": 0,
+          "supported": 0,
+          "unknownEvidence": 7,
+          "prose": 0
+        },
+        "previous": {
+          "planned": 3,
+          "passed": 3,
+          "correct": 3,
+          "incorrect": 0,
+          "abstained": 0,
+          "unknownCorrect": 0,
+          "fabricated": 0,
+          "invalid": 0,
+          "blocked": 0,
+          "supported": 0,
+          "unknownEvidence": 5,
+          "prose": 0
+        },
+        "count": {
+          "planned": 1,
+          "passed": 1,
+          "correct": 1,
+          "incorrect": 0,
+          "abstained": 0,
+          "unknownCorrect": 0,
+          "fabricated": 0,
+          "invalid": 0,
+          "blocked": 0,
+          "supported": 0,
+          "unknownEvidence": 3,
+          "prose": 0
+        },
+        "constraint": {
+          "planned": 1,
+          "passed": 1,
+          "correct": 1,
+          "incorrect": 0,
+          "abstained": 0,
+          "unknownCorrect": 0,
+          "fabricated": 0,
+          "invalid": 0,
+          "blocked": 0,
+          "supported": 0,
+          "unknownEvidence": 1,
+          "prose": 0
+        },
+        "forbidden": {
+          "planned": 4,
+          "passed": 4,
+          "correct": 4,
+          "incorrect": 0,
+          "abstained": 0,
+          "unknownCorrect": 0,
+          "fabricated": 0,
+          "invalid": 0,
+          "blocked": 0,
+          "supported": 0,
+          "unknownEvidence": 5,
+          "prose": 0
+        },
+        "withdrawn": {
+          "planned": 1,
+          "passed": 1,
+          "correct": 1,
+          "incorrect": 0,
+          "abstained": 0,
+          "unknownCorrect": 0,
+          "fabricated": 0,
+          "invalid": 0,
+          "blocked": 0,
+          "supported": 0,
+          "unknownEvidence": 2,
+          "prose": 0
+        },
+        "attribution": {
+          "planned": 2,
+          "passed": 2,
+          "correct": 2,
+          "incorrect": 0,
+          "abstained": 0,
+          "unknownCorrect": 0,
+          "fabricated": 0,
+          "invalid": 0,
+          "blocked": 0,
+          "supported": 0,
+          "unknownEvidence": 2,
+          "prose": 0
+        },
+        "authority": {
+          "planned": 1,
+          "passed": 0,
+          "correct": 0,
+          "incorrect": 0,
+          "abstained": 0,
+          "unknownCorrect": 0,
+          "fabricated": 0,
+          "invalid": 1,
+          "blocked": 0,
+          "supported": 0,
+          "unknownEvidence": 0,
+          "prose": 0
+        },
+        "absent": {
+          "planned": 3,
+          "passed": 2,
+          "correct": 0,
+          "incorrect": 0,
+          "abstained": 0,
+          "unknownCorrect": 2,
+          "fabricated": 0,
+          "invalid": 1,
+          "blocked": 0,
+          "supported": 0,
+          "unknownEvidence": 0,
+          "prose": 0
+        },
+        "continuation": {
+          "planned": 3,
+          "passed": 3,
+          "correct": 3,
+          "incorrect": 0,
+          "abstained": 0,
+          "unknownCorrect": 0,
+          "fabricated": 0,
+          "invalid": 0,
+          "blocked": 0,
+          "supported": 0,
+          "unknownEvidence": 3,
+          "prose": 0
+        }
+      }
+    },
+    "callsPerQuestion": {
+      "history": {
+        "questions": 30,
+        "total": 106,
+        "search": 57,
+        "read": 41,
+        "list": 8,
+        "other": 0
+      },
+      "none": {
+        "questions": 0,
+        "total": 0,
+        "search": 0,
+        "read": 0,
+        "list": 0,
+        "other": 0
+      }
+    },
+    "missedEntry": {
+      "history": {
+        "cited": {
+          "planned": 3,
+          "passed": 2
+        },
+        "uncited": {
+          "planned": 27,
+          "passed": 25
+        }
+      },
+      "none": {
+        "cited": {
+          "planned": 0,
+          "passed": 0
+        },
+        "uncited": {
+          "planned": 0,
+          "passed": 0
+        }
+      }
+    }
+  },
+  "overhead": {
+    "version": "0.6-overhead-report.1",
+    "overall": {
+      "writer": {
+        "committed": 3,
+        "tokens": {
+          "calls": 3,
+          "usageMissing": 0,
+          "input": 9,
+          "cacheRead": 433956,
+          "cacheWrite": 22962,
+          "cacheWrite1h": "not reported",
+          "output": 18577,
+          "reasoning": 11898,
+          "totalInput": 456927
+        },
+        "perCheckpoint": {
+          "input": 3,
+          "cacheRead": 144652,
+          "cacheWrite": 7654,
+          "cacheWrite1h": "not reported",
+          "output": 6192.3,
+          "reasoning": 3966,
+          "totalInput": 152309
+        },
+        "perNoteByte": {
+          "input": 0.0004,
+          "cacheRead": 19.3307,
+          "cacheWrite": 1.0229,
+          "cacheWrite1h": "not reported",
+          "output": 0.8275,
+          "reasoning": 0.53,
+          "totalInput": 20.354
+        },
+        "noteBytes": 22449,
+        "noteTokens": 7483,
+        "replacedBytes": 1224065,
+        "replacedTokens": 381845,
+        "noteToReplaced": 0.0196
+      },
+      "retrieval": {
+        "questions": 30,
+        "calls": 106,
+        "callTokens": 4961,
+        "returnedTokens": 112239,
+        "byOperation": {
+          "search": {
+            "calls": 57,
+            "callTokens": 3192,
+            "returnedTokens": 81416
+          },
+          "read": {
+            "calls": 41,
+            "callTokens": 1403,
+            "returnedTokens": 20791
+          },
+          "list": {
+            "calls": 8,
+            "callTokens": 366,
+            "returnedTokens": 10032
+          },
+          "other": {
+            "calls": 0,
+            "callTokens": 0,
+            "returnedTokens": 0
+          }
+        },
+        "probeUsage": {
+          "history": {
+            "calls": 119,
+            "usageMissing": 3,
+            "input": 348,
+            "cacheRead": 460393,
+            "cacheWrite": 195132,
+            "cacheWrite1h": "not reported",
+            "output": 22511,
+            "reasoning": 16701,
+            "totalInput": 655873
+          },
+          "none": {
+            "calls": 0,
+            "usageMissing": 0,
+            "input": 0,
+            "cacheRead": 0,
+            "cacheWrite": "not reported",
+            "cacheWrite1h": "not reported",
+            "output": 0,
+            "reasoning": 0,
+            "totalInput": 0
+          }
+        }
+      },
+      "discarded": {
+        "total": {
+          "calls": 0,
+          "usageMissing": 0,
+          "input": 0,
+          "cacheRead": 0,
+          "cacheWrite": "not reported",
+          "cacheWrite1h": "not reported",
+          "output": 0,
+          "reasoning": 0,
+          "totalInput": 0
+        },
+        "refused": {
+          "calls": 0,
+          "usageMissing": 0,
+          "input": 0,
+          "cacheRead": 0,
+          "cacheWrite": "not reported",
+          "cacheWrite1h": "not reported",
+          "output": 0,
+          "reasoning": 0,
+          "totalInput": 0
+        },
+        "crashed": {
+          "calls": 0,
+          "usageMissing": 0,
+          "input": 0,
+          "cacheRead": 0,
+          "cacheWrite": "not reported",
+          "cacheWrite1h": "not reported",
+          "output": 0,
+          "reasoning": 0,
+          "totalInput": 0
+        },
+        "toolCallDeclined": {
+          "calls": 0,
+          "usageMissing": 0,
+          "input": 0,
+          "cacheRead": 0,
+          "cacheWrite": "not reported",
+          "cacheWrite1h": "not reported",
+          "output": 0,
+          "reasoning": 0,
+          "totalInput": 0
+        },
+        "preparation": {
+          "calls": 0,
+          "usageMissing": 0,
+          "input": 0,
+          "cacheRead": 0,
+          "cacheWrite": "not reported",
+          "cacheWrite1h": "not reported",
+          "output": 0,
+          "reasoning": 0,
+          "totalInput": 0
+        },
+        "repairNotCommitted": {
+          "calls": 0,
+          "usageMissing": 0,
+          "input": 0,
+          "cacheRead": 0,
+          "cacheWrite": "not reported",
+          "cacheWrite1h": "not reported",
+          "output": 0,
+          "reasoning": 0,
+          "totalInput": 0
+        }
+      },
+      "usageMissing": {
+        "count": 3,
+        "phases": {
+          "probe": 3
+        },
+        "purposes": {
+          "probe": 3
+        }
+      },
+      "cache": {
+        "cacheRead": 894349,
+        "cacheWrite": 218094,
+        "cacheWrite1h": "not reported"
+      },
+      "net": {
+        "savedTokens": 374362,
+        "pageBackTokens": 112239,
+        "pageBack": {
+          "history": 112239,
+          "excerpts": 0
+        },
+        "netTokens": 262123
+      }
+    },
+    "byCut": {
+      "P5-cut1": {
+        "tier": 2,
+        "sourceTokens": 132164,
+        "writer": {
+          "committed": 1,
+          "tokens": {
+            "calls": 1,
+            "usageMissing": 0,
+            "input": 3,
+            "cacheRead": 146103,
+            "cacheWrite": 3101,
+            "cacheWrite1h": "not reported",
+            "output": 4279,
+            "reasoning": 2724,
+            "totalInput": 149207
+          },
+          "perCheckpoint": {
+            "input": 3,
+            "cacheRead": 146103,
+            "cacheWrite": 3101,
+            "cacheWrite1h": "not reported",
+            "output": 4279,
+            "reasoning": 2724,
+            "totalInput": 149207
+          },
+          "perNoteByte": {
+            "input": 0.0005,
+            "cacheRead": 23.3915,
+            "cacheWrite": 0.4965,
+            "cacheWrite1h": "not reported",
+            "output": 0.6851,
+            "reasoning": 0.4361,
+            "totalInput": 23.8884
+          },
+          "noteBytes": 6246,
+          "noteTokens": 2082,
+          "replacedBytes": 427577,
+          "replacedTokens": 132164,
+          "noteToReplaced": 0.0158
+        },
+        "retrieval": {
+          "questions": 9,
+          "calls": 35,
+          "callTokens": 1760,
+          "returnedTokens": 34462,
+          "byOperation": {
+            "search": {
+              "calls": 24,
+              "callTokens": 1418,
+              "returnedTokens": 27856
+            },
+            "read": {
+              "calls": 10,
+              "callTokens": 315,
+              "returnedTokens": 6600
+            },
+            "list": {
+              "calls": 1,
+              "callTokens": 27,
+              "returnedTokens": 6
+            },
+            "other": {
+              "calls": 0,
+              "callTokens": 0,
+              "returnedTokens": 0
+            }
+          },
+          "probeUsage": {
+            "history": {
+              "calls": 37,
+              "usageMissing": 3,
+              "input": 102,
+              "cacheRead": 121972,
+              "cacheWrite": 53178,
+              "cacheWrite1h": "not reported",
+              "output": 5035,
+              "reasoning": 2982,
+              "totalInput": 175252
+            },
+            "none": {
+              "calls": 0,
+              "usageMissing": 0,
+              "input": 0,
+              "cacheRead": 0,
+              "cacheWrite": "not reported",
+              "cacheWrite1h": "not reported",
+              "output": 0,
+              "reasoning": 0,
+              "totalInput": 0
+            }
+          }
+        },
+        "discarded": {
+          "total": {
+            "calls": 0,
+            "usageMissing": 0,
+            "input": 0,
+            "cacheRead": 0,
+            "cacheWrite": "not reported",
+            "cacheWrite1h": "not reported",
+            "output": 0,
+            "reasoning": 0,
+            "totalInput": 0
+          },
+          "refused": {
+            "calls": 0,
+            "usageMissing": 0,
+            "input": 0,
+            "cacheRead": 0,
+            "cacheWrite": "not reported",
+            "cacheWrite1h": "not reported",
+            "output": 0,
+            "reasoning": 0,
+            "totalInput": 0
+          },
+          "crashed": {
+            "calls": 0,
+            "usageMissing": 0,
+            "input": 0,
+            "cacheRead": 0,
+            "cacheWrite": "not reported",
+            "cacheWrite1h": "not reported",
+            "output": 0,
+            "reasoning": 0,
+            "totalInput": 0
+          },
+          "toolCallDeclined": {
+            "calls": 0,
+            "usageMissing": 0,
+            "input": 0,
+            "cacheRead": 0,
+            "cacheWrite": "not reported",
+            "cacheWrite1h": "not reported",
+            "output": 0,
+            "reasoning": 0,
+            "totalInput": 0
+          },
+          "preparation": {
+            "calls": 0,
+            "usageMissing": 0,
+            "input": 0,
+            "cacheRead": 0,
+            "cacheWrite": "not reported",
+            "cacheWrite1h": "not reported",
+            "output": 0,
+            "reasoning": 0,
+            "totalInput": 0
+          },
+          "repairNotCommitted": {
+            "calls": 0,
+            "usageMissing": 0,
+            "input": 0,
+            "cacheRead": 0,
+            "cacheWrite": "not reported",
+            "cacheWrite1h": "not reported",
+            "output": 0,
+            "reasoning": 0,
+            "totalInput": 0
+          }
+        },
+        "usageMissing": {
+          "count": 3,
+          "phases": {
+            "probe": 3
+          },
+          "purposes": {
+            "probe": 3
+          }
+        },
+        "cache": {
+          "cacheRead": 268075,
+          "cacheWrite": 56279,
+          "cacheWrite1h": "not reported"
+        },
+        "net": {
+          "savedTokens": 130082,
+          "pageBackTokens": 34462,
+          "pageBack": {
+            "history": 34462,
+            "excerpts": 0
+          },
+          "netTokens": 95620
+        }
+      },
+      "P5-cut3": {
+        "tier": 2,
+        "sourceTokens": 124569,
+        "writer": {
+          "committed": 1,
+          "tokens": {
+            "calls": 1,
+            "usageMissing": 0,
+            "input": 3,
+            "cacheRead": 144893,
+            "cacheWrite": 9616,
+            "cacheWrite1h": "not reported",
+            "output": 7543,
+            "reasoning": 5077,
+            "totalInput": 154512
+          },
+          "perCheckpoint": {
+            "input": 3,
+            "cacheRead": 144893,
+            "cacheWrite": 9616,
+            "cacheWrite1h": "not reported",
+            "output": 7543,
+            "reasoning": 5077,
+            "totalInput": 154512
+          },
+          "perNoteByte": {
+            "input": 0.0004,
+            "cacheRead": 18.4836,
+            "cacheWrite": 1.2267,
+            "cacheWrite1h": "not reported",
+            "output": 0.9622,
+            "reasoning": 0.6477,
+            "totalInput": 19.7107
+          },
+          "noteBytes": 7839,
+          "noteTokens": 2613,
+          "replacedBytes": 404975,
+          "replacedTokens": 126651,
+          "noteToReplaced": 0.0206
+        },
+        "retrieval": {
+          "questions": 9,
+          "calls": 30,
+          "callTokens": 1459,
+          "returnedTokens": 32564,
+          "byOperation": {
+            "search": {
+              "calls": 13,
+              "callTokens": 807,
+              "returnedTokens": 20861
+            },
+            "read": {
+              "calls": 12,
+              "callTokens": 384,
+              "returnedTokens": 4119
+            },
+            "list": {
+              "calls": 5,
+              "callTokens": 268,
+              "returnedTokens": 7584
+            },
+            "other": {
+              "calls": 0,
+              "callTokens": 0,
+              "returnedTokens": 0
+            }
+          },
+          "probeUsage": {
+            "history": {
+              "calls": 34,
+              "usageMissing": 0,
+              "input": 102,
+              "cacheRead": 132978,
+              "cacheWrite": 56824,
+              "cacheWrite1h": "not reported",
+              "output": 7259,
+              "reasoning": 5518,
+              "totalInput": 189904
+            },
+            "none": {
+              "calls": 0,
+              "usageMissing": 0,
+              "input": 0,
+              "cacheRead": 0,
+              "cacheWrite": "not reported",
+              "cacheWrite1h": "not reported",
+              "output": 0,
+              "reasoning": 0,
+              "totalInput": 0
+            }
+          }
+        },
+        "discarded": {
+          "total": {
+            "calls": 0,
+            "usageMissing": 0,
+            "input": 0,
+            "cacheRead": 0,
+            "cacheWrite": "not reported",
+            "cacheWrite1h": "not reported",
+            "output": 0,
+            "reasoning": 0,
+            "totalInput": 0
+          },
+          "refused": {
+            "calls": 0,
+            "usageMissing": 0,
+            "input": 0,
+            "cacheRead": 0,
+            "cacheWrite": "not reported",
+            "cacheWrite1h": "not reported",
+            "output": 0,
+            "reasoning": 0,
+            "totalInput": 0
+          },
+          "crashed": {
+            "calls": 0,
+            "usageMissing": 0,
+            "input": 0,
+            "cacheRead": 0,
+            "cacheWrite": "not reported",
+            "cacheWrite1h": "not reported",
+            "output": 0,
+            "reasoning": 0,
+            "totalInput": 0
+          },
+          "toolCallDeclined": {
+            "calls": 0,
+            "usageMissing": 0,
+            "input": 0,
+            "cacheRead": 0,
+            "cacheWrite": "not reported",
+            "cacheWrite1h": "not reported",
+            "output": 0,
+            "reasoning": 0,
+            "totalInput": 0
+          },
+          "preparation": {
+            "calls": 0,
+            "usageMissing": 0,
+            "input": 0,
+            "cacheRead": 0,
+            "cacheWrite": "not reported",
+            "cacheWrite1h": "not reported",
+            "output": 0,
+            "reasoning": 0,
+            "totalInput": 0
+          },
+          "repairNotCommitted": {
+            "calls": 0,
+            "usageMissing": 0,
+            "input": 0,
+            "cacheRead": 0,
+            "cacheWrite": "not reported",
+            "cacheWrite1h": "not reported",
+            "output": 0,
+            "reasoning": 0,
+            "totalInput": 0
+          }
+        },
+        "usageMissing": {
+          "count": 0,
+          "phases": {},
+          "purposes": {}
+        },
+        "cache": {
+          "cacheRead": 277871,
+          "cacheWrite": 66440,
+          "cacheWrite1h": "not reported"
+        },
+        "net": {
+          "savedTokens": 124038,
+          "pageBackTokens": 32564,
+          "pageBack": {
+            "history": 32564,
+            "excerpts": 0
+          },
+          "netTokens": 91474
+        }
+      },
+      "P5-cut5": {
+        "tier": 2,
+        "sourceTokens": 120417,
+        "writer": {
+          "committed": 1,
+          "tokens": {
+            "calls": 1,
+            "usageMissing": 0,
+            "input": 3,
+            "cacheRead": 142960,
+            "cacheWrite": 10245,
+            "cacheWrite1h": "not reported",
+            "output": 6755,
+            "reasoning": 4097,
+            "totalInput": 153208
+          },
+          "perCheckpoint": {
+            "input": 3,
+            "cacheRead": 142960,
+            "cacheWrite": 10245,
+            "cacheWrite1h": "not reported",
+            "output": 6755,
+            "reasoning": 4097,
+            "totalInput": 153208
+          },
+          "perNoteByte": {
+            "input": 0.0004,
+            "cacheRead": 17.0923,
+            "cacheWrite": 1.2249,
+            "cacheWrite1h": "not reported",
+            "output": 0.8076,
+            "reasoning": 0.4898,
+            "totalInput": 18.3176
+          },
+          "noteBytes": 8364,
+          "noteTokens": 2788,
+          "replacedBytes": 391513,
+          "replacedTokens": 123030,
+          "noteToReplaced": 0.0227
+        },
+        "retrieval": {
+          "questions": 12,
+          "calls": 41,
+          "callTokens": 1742,
+          "returnedTokens": 45213,
+          "byOperation": {
+            "search": {
+              "calls": 20,
+              "callTokens": 967,
+              "returnedTokens": 32699
+            },
+            "read": {
+              "calls": 19,
+              "callTokens": 704,
+              "returnedTokens": 10072
+            },
+            "list": {
+              "calls": 2,
+              "callTokens": 71,
+              "returnedTokens": 2442
+            },
+            "other": {
+              "calls": 0,
+              "callTokens": 0,
+              "returnedTokens": 0
+            }
+          },
+          "probeUsage": {
+            "history": {
+              "calls": 48,
+              "usageMissing": 0,
+              "input": 144,
+              "cacheRead": 205443,
+              "cacheWrite": 85130,
+              "cacheWrite1h": "not reported",
+              "output": 10217,
+              "reasoning": 8201,
+              "totalInput": 290717
+            },
+            "none": {
+              "calls": 0,
+              "usageMissing": 0,
+              "input": 0,
+              "cacheRead": 0,
+              "cacheWrite": "not reported",
+              "cacheWrite1h": "not reported",
+              "output": 0,
+              "reasoning": 0,
+              "totalInput": 0
+            }
+          }
+        },
+        "discarded": {
+          "total": {
+            "calls": 0,
+            "usageMissing": 0,
+            "input": 0,
+            "cacheRead": 0,
+            "cacheWrite": "not reported",
+            "cacheWrite1h": "not reported",
+            "output": 0,
+            "reasoning": 0,
+            "totalInput": 0
+          },
+          "refused": {
+            "calls": 0,
+            "usageMissing": 0,
+            "input": 0,
+            "cacheRead": 0,
+            "cacheWrite": "not reported",
+            "cacheWrite1h": "not reported",
+            "output": 0,
+            "reasoning": 0,
+            "totalInput": 0
+          },
+          "crashed": {
+            "calls": 0,
+            "usageMissing": 0,
+            "input": 0,
+            "cacheRead": 0,
+            "cacheWrite": "not reported",
+            "cacheWrite1h": "not reported",
+            "output": 0,
+            "reasoning": 0,
+            "totalInput": 0
+          },
+          "toolCallDeclined": {
+            "calls": 0,
+            "usageMissing": 0,
+            "input": 0,
+            "cacheRead": 0,
+            "cacheWrite": "not reported",
+            "cacheWrite1h": "not reported",
+            "output": 0,
+            "reasoning": 0,
+            "totalInput": 0
+          },
+          "preparation": {
+            "calls": 0,
+            "usageMissing": 0,
+            "input": 0,
+            "cacheRead": 0,
+            "cacheWrite": "not reported",
+            "cacheWrite1h": "not reported",
+            "output": 0,
+            "reasoning": 0,
+            "totalInput": 0
+          },
+          "repairNotCommitted": {
+            "calls": 0,
+            "usageMissing": 0,
+            "input": 0,
+            "cacheRead": 0,
+            "cacheWrite": "not reported",
+            "cacheWrite1h": "not reported",
+            "output": 0,
+            "reasoning": 0,
+            "totalInput": 0
+          }
+        },
+        "usageMissing": {
+          "count": 0,
+          "phases": {},
+          "purposes": {}
+        },
+        "cache": {
+          "cacheRead": 348403,
+          "cacheWrite": 95375,
+          "cacheWrite1h": "not reported"
+        },
+        "net": {
+          "savedTokens": 120242,
+          "pageBackTokens": 45213,
+          "pageBack": {
+            "history": 45213,
+            "excerpts": 0
+          },
+          "netTokens": 75029
+        }
+      }
+    },
+    "byTier": {
+      "1": {
+        "fromTokens": 0,
+        "toTokens": 80000,
+        "cuts": [],
+        "writer": {
+          "committed": 0,
+          "tokens": {
+            "calls": 0,
+            "usageMissing": 0,
+            "input": 0,
+            "cacheRead": 0,
+            "cacheWrite": "not reported",
+            "cacheWrite1h": "not reported",
+            "output": 0,
+            "reasoning": 0,
+            "totalInput": 0
+          },
+          "perCheckpoint": null,
+          "perNoteByte": null,
+          "noteBytes": 0,
+          "noteTokens": 0,
+          "replacedBytes": 0,
+          "replacedTokens": 0,
+          "noteToReplaced": null
+        },
+        "notes": {
+          "tokensMedian": null,
+          "tokensMax": null,
+          "baseTokensMedian": null,
+          "hardTokensMedian": null
+        }
+      },
+      "2": {
+        "fromTokens": 80001,
+        "toTokens": 200000,
+        "cuts": [
+          "P5-cut1",
+          "P5-cut3",
+          "P5-cut5"
+        ],
+        "writer": {
+          "committed": 3,
+          "tokens": {
+            "calls": 3,
+            "usageMissing": 0,
+            "input": 9,
+            "cacheRead": 433956,
+            "cacheWrite": 22962,
+            "cacheWrite1h": "not reported",
+            "output": 18577,
+            "reasoning": 11898,
+            "totalInput": 456927
+          },
+          "perCheckpoint": {
+            "input": 3,
+            "cacheRead": 144652,
+            "cacheWrite": 7654,
+            "cacheWrite1h": "not reported",
+            "output": 6192.3,
+            "reasoning": 3966,
+            "totalInput": 152309
+          },
+          "perNoteByte": {
+            "input": 0.0004,
+            "cacheRead": 19.3307,
+            "cacheWrite": 1.0229,
+            "cacheWrite1h": "not reported",
+            "output": 0.8275,
+            "reasoning": 0.53,
+            "totalInput": 20.354
+          },
+          "noteBytes": 22449,
+          "noteTokens": 7483,
+          "replacedBytes": 1224065,
+          "replacedTokens": 381845,
+          "noteToReplaced": 0.0196
+        },
+        "notes": {
+          "tokensMedian": 2613,
+          "tokensMax": 2788,
+          "baseTokensMedian": 4000,
+          "hardTokensMedian": 5000
+        }
+      },
+      "3": {
+        "fromTokens": 200001,
+        "toTokens": 400000,
+        "cuts": [],
+        "writer": {
+          "committed": 0,
+          "tokens": {
+            "calls": 0,
+            "usageMissing": 0,
+            "input": 0,
+            "cacheRead": 0,
+            "cacheWrite": "not reported",
+            "cacheWrite1h": "not reported",
+            "output": 0,
+            "reasoning": 0,
+            "totalInput": 0
+          },
+          "perCheckpoint": null,
+          "perNoteByte": null,
+          "noteBytes": 0,
+          "noteTokens": 0,
+          "replacedBytes": 0,
+          "replacedTokens": 0,
+          "noteToReplaced": null
+        },
+        "notes": {
+          "tokensMedian": null,
+          "tokensMax": null,
+          "baseTokensMedian": null,
+          "hardTokensMedian": null
+        }
+      },
+      "4": {
+        "fromTokens": 400001,
+        "toTokens": null,
+        "cuts": [],
+        "writer": {
+          "committed": 0,
+          "tokens": {
+            "calls": 0,
+            "usageMissing": 0,
+            "input": 0,
+            "cacheRead": 0,
+            "cacheWrite": "not reported",
+            "cacheWrite1h": "not reported",
+            "output": 0,
+            "reasoning": 0,
+            "totalInput": 0
+          },
+          "perCheckpoint": null,
+          "perNoteByte": null,
+          "noteBytes": 0,
+          "noteTokens": 0,
+          "replacedBytes": 0,
+          "replacedTokens": 0,
+          "noteToReplaced": null
+        },
+        "notes": {
+          "tokensMedian": null,
+          "tokensMax": null,
+          "baseTokensMedian": null,
+          "hardTokensMedian": null
+        }
+      }
+    }
+  },
+  "replay": {
+    "window": 180000,
+    "forwarded": {
+      "requests": 64,
+      "byKind": {
+        "main": 61,
+        "writer": 3
+      },
+      "usageMissing": 0,
+      "reportedInput": 5144774,
+      "knownCostUsd": 0.10217514
+    },
+    "overlap": {
+      "segmentCalls": 0,
+      "pairs": 0,
+      "summedInput": 0,
+      "maxPairInput": 0,
+      "peakMinuteInput": 830014
+    },
+    "rateLimitErrors": 0,
+    "intervals": [
+      {
+        "fixture": "P5",
+        "cut": 1,
+        "id": "none",
+        "links": 0,
+        "calls": 0,
+        "uncachedSpend": 0,
+        "unknown": false
+      },
+      {
+        "fixture": "P5",
+        "cut": 3,
+        "id": "ba34a59d",
+        "links": 0,
+        "calls": 0,
+        "uncachedSpend": 0,
+        "unknown": false
+      },
+      {
+        "fixture": "P5",
+        "cut": 5,
+        "id": "8807567c",
+        "links": 0,
+        "calls": 0,
+        "uncachedSpend": 0,
+        "unknown": false
+      }
+    ],
+    "reserve": 30000,
+    "pace": "immediate",
+    "segments": "off",
+    "steps": 16,
+    "boundaries": {
+      "total": 3,
+      "committed": 3,
+      "failed": 0,
+      "byTrigger": {
+        "gold": 3
+      },
+      "paths": {
+        "sync": 3
+      },
+      "fallbacks": {},
+      "waited": {
+        "count": 0,
+        "total": 0,
+        "p50": null,
+        "p95": null,
+        "max": null
+      }
+    },
+    "pauseMs": {
+      "all": {
+        "count": 3,
+        "total": 139982,
+        "p50": 48536,
+        "p95": 56720,
+        "max": 56720
+      },
+      "covered": {
+        "count": 0,
+        "total": 0,
+        "p50": null,
+        "p95": null,
+        "max": null
+      },
+      "writer": {
+        "count": 3,
+        "total": 139982,
+        "p50": 48536,
+        "p95": 56720,
+        "max": 56720
+      }
+    },
+    "coverageAtGold": [
+      null,
+      null,
+      null
+    ],
+    "segmentCalls": {
+      "calls": 0,
+      "usageMissing": 0,
+      "input": 0,
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "output": 0,
+      "cacheReadShare": null,
+      "costUsd": 0,
+      "merged": 0,
+      "outcomes": {},
+      "discarded": {
+        "calls": 0,
+        "usageMissing": 0,
+        "input": 0,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "output": 0,
+        "cacheReadShare": null,
+        "costUsd": 0
+      }
+    },
+    "segmentResults": {
+      "linked": 0,
+      "cancelled": 0,
+      "stale": 0,
+      "failed": {},
+      "dropped": {}
+    },
+    "pausedRounds": [],
+    "writerCalls": {
+      "calls": 3,
+      "usageMissing": 0,
+      "input": 9,
+      "cacheRead": 433956,
+      "cacheWrite": 22962,
+      "output": 18577,
+      "cacheReadShare": 1,
+      "costUsd": 0.0165
+    },
+    "warmups": {
+      "rounds": 61,
+      "input": 183,
+      "cacheRead": 4255808,
+      "cacheWrite": 431856,
+      "output": 976,
+      "costUsd": 0.097,
+      "cacheReadShare": 1
+    }
+  },
+  "used": {
+    "requests": 183,
+    "costUsd": 0.1425,
+    "units": 33,
+    "unstarted": 0,
+    "timedOut": 0,
+    "warmups": 0,
+    "warmupCostUsd": 0,
+    "largestInput": 154512,
+    "inputBreaches": 0,
+    "minutes": 19.4
+  }
+}
