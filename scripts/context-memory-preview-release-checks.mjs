@@ -22,8 +22,8 @@ export const NPM_PACKAGES = Object.freeze(["slice-pi", "slice-opencode", "slice-
  * lowest version each package admits and the newest one tested.
  */
 export const ADAPTER_HOSTS = Object.freeze({
-	opencode: Object.freeze(["1.19.4", "1.19.5"]),
-	dsh: Object.freeze(["0.2.1-rc.3", "0.2.1-rc.5"]),
+	opencode: Object.freeze(["1.19.4", "1.19.5", "1.19.6", "2.3.2"]),
+	dsh: Object.freeze(["0.2.1-rc.3", "0.2.1-rc.5", "0.2.2-rc.1", "0.2.2-rc.5"]),
 });
 
 /** Whether a reviewed version is published on npm as well as on Git. */
@@ -244,7 +244,8 @@ function npmInstall({ repository, branch, tag, packageTag, version, adapterHosts
 	return `Install this release from npm, then restart Pi:\n\n\`\`\`sh\npi install npm:slice-pi@${version}\n\`\`\`\n\n`
 		+ `Start a new persistent text session and run \`/compaction-doctor\` to check it without calling a model. To follow later releases, install \`npm:slice-pi\` without a version and update only this package with \`pi update --extension npm:slice-pi\`. A plain \`pi update\` updates Pi itself. The same package is on Git as the fixed tag \`${packageTag}\`; source tag \`${tag}\` selects the development monorepo, not the package:\n\n\`\`\`sh\npi install git:github.com/${repository}@${packageTag}\n\`\`\`\n\n`
 		+ `An installation from Git keeps working and updating through \`${branch}\`. To move it to npm, run \`pi remove git:github.com/${repository}\` and install from npm; sessions and settings carry over.\n\n`
-		+ `OpenCode and DSH get SLICE's \`context_history\` from npm too, with no build. For OpenCode, add the package to \`plugin\` in \`opencode.json\` and restart it:\n\n\`\`\`json\n{ "plugin": ["slice-opencode@${version}"] }\n\`\`\`\n\n`
+		+ `OpenCode and DSH get SLICE's \`context_history\` from npm too, with no build. For OpenCode 1.x, add the package to \`plugin\` in \`opencode.json\` and restart it:\n\n\`\`\`json\n{ "plugin": ["slice-opencode@${version}"] }\n\`\`\`\n\n`
+		+ (adapterHosts.opencode.some((host) => host.startsWith("2.")) ? `On OpenCode 2.3.2 use \`plugins\` in \`opencode.json\` and the managed local service. For a one-off run, start it with \`opencode service start\`.\n\n` : "")
 		+ `For DSH, add it to a profile built on DSH's base bundle; the package enables itself there:\n\n\`\`\`sh\ndsh plugin --profile <profile> add slice-dsh@${version}\n\`\`\`\n\n`
 		+ `Before publication each package was installed by name from a loopback registry on official OpenCode ${hostList(adapterHosts.opencode)} and DSH ${hostList(adapterHosts.dsh)}, where a scripted session compacted natively and read its original history back. Both are retrieval only: compaction stays the host's.\n\n`;
 }

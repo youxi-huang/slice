@@ -25,7 +25,7 @@ const PUBLISHED = {
 		description: "SLICE context_history for OpenCode: search and read this session's original history after compaction",
 		keywords: ["opencode", "opencode-plugin", "slice", "context-compaction", "coding-agent"],
 		// OpenCode refuses an npm plugin outside this range before loading it.
-		engines: { opencode: ">=1.19.4 <2.0.0" },
+		engines: { opencode: ">=1.19.4 <2.0.0 || 2.3.2" },
 		extraFiles: [],
 	},
 	dsh: {
@@ -33,13 +33,13 @@ const PUBLISHED = {
 		previousName: "slice-dsh-preview",
 		description: "SLICE context_history for DeepSeek Harness: search and read this session's original history after compaction",
 		keywords: ["dsh", "dsh-plugin", "deepseek-harness", "slice", "context-compaction", "coding-agent"],
-		// DSH admits a plugin by its peers on DSH packages; the APIs this adapter uses are unchanged from rc.3 to rc.5.
+		// npm admits prereleases per minor/patch tuple. DSH's 0.2.2 line also uses Cordis 4.1.
 		peerDependencies: {
-			"@deepseek-ai/cordis": "~4.0.5",
-			"@deepseek-ai/dsh-compaction": "^0.2.1-rc.3",
-			"@deepseek-ai/dsh-session": "^0.2.1-rc.3",
-			"@deepseek-ai/dsh-session-persistence": "^0.2.1-rc.3",
-			"@deepseek-ai/dsh-tools": "^0.2.1-rc.3",
+			"@deepseek-ai/cordis": "~4.0.5 || ~4.1.0",
+			"@deepseek-ai/dsh-compaction": "^0.2.1-rc.3 || ^0.2.2-rc.1",
+			"@deepseek-ai/dsh-session": "^0.2.1-rc.3 || ^0.2.2-rc.1",
+			"@deepseek-ai/dsh-session-persistence": "^0.2.1-rc.3 || ^0.2.2-rc.1",
+			"@deepseek-ai/dsh-tools": "^0.2.1-rc.3 || ^0.2.2-rc.1",
 		},
 		// A bundle patch makes `dsh plugin add` enable the tool, with no hand edit of the profile's patch.
 		dsh: { bundle: { patch: "./cordis.patch.yml" } },
@@ -60,7 +60,7 @@ for (const host of ["dsh", "opencode"]) {
 	}
 	const bundled = await build({
 		absWorkingDir: root,
-		entryPoints: { index: `${source}/src/index.ts`, ...(host === "dsh" ? { compaction: `${source}/src/compaction.ts` } : {}) },
+		entryPoints: { index: `${source}/src/index.ts`, ...(host === "dsh" ? { compaction: `${source}/src/compaction.ts` } : { v2: `${source}/src/v2.ts` }) },
 		bundle: true, write: false, metafile: true,
 		format: "esm", platform: "node", target: "node22", packages: "external",
 		tsconfigRaw: { compilerOptions: {} },
@@ -81,7 +81,7 @@ for (const host of ["dsh", "opencode"]) {
 	for (const file of inputs) hash.update(file).update("\0").update(readFileSync(resolve(root, file))).update("\0");
 	const sourceHash = hash.digest("hex");
 	const extraFiles = published.extraFiles.map(([file]) => file);
-	const files = ["dist/index.js", ...(host === "dsh" ? ["dist/compaction.js"] : []), "README.md", "LICENSE", "adapter-build.json", ...extraFiles];
+	const files = ["dist/index.js", host === "dsh" ? "dist/compaction.js" : "dist/v2.js", "README.md", "LICENSE", "adapter-build.json", ...extraFiles];
 	const packageManifest = {
 		name: published.name,
 		version: SLICE_VERSION,
@@ -94,7 +94,8 @@ for (const host of ["dsh", "opencode"]) {
 		keywords: published.keywords,
 		...(published.engines ? { engines: published.engines } : {}),
 		main: "./dist/index.js",
-		exports: { ".": "./dist/index.js", ...(host === "dsh" ? { "./compaction": "./dist/compaction.js" } : {}) },
+		// The 1.x loader reads import/default. The 2.x server resolves the node export.
+		exports: { ".": "./dist/index.js", ...(host === "dsh" ? { "./compaction": "./dist/compaction.js" } : { "./server": { node: "./dist/v2.js", default: "./dist/index.js" } }) },
 		files,
 		dependencies: manifest.dependencies,
 		...(peerDependencies ? { peerDependencies } : {}),

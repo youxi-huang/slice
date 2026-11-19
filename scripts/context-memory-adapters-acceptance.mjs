@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { startVitest } from "vitest/node";
 import { parseOptions, run } from "./context-memory-host-run.mjs";
+import { acceptOpenCodeV2 } from "./context-memory-opencode-v2-acceptance.mjs";
 import { ADAPTER_HOSTS } from "./context-memory-preview-release-checks.mjs";
 
 /** `dsh plugin` runs the pnpm on PATH; acceptance pins the release DSH's own repository uses. */
@@ -54,7 +55,9 @@ export async function acceptAdapters({ packageRoot, hostsRoot, outputDir }) {
 			assert.equal(sha256(join(packageRoot, item.archive)), item.sha256, `${item.archive} changed after the build`);
 			for (const version of versions) {
 				const hostRoot = join(hostsRoot, `${host}-${version}`);
-				npmInstall(hostRoot, `${OFFICIAL[host]}@${version}`, host === "opencode");
+				const v2 = host === "opencode" && version.startsWith("2.");
+				const official = v2 ? "@opencode/cli" : OFFICIAL[host];
+				npmInstall(hostRoot, `${official}@${version}`, host === "opencode");
 				const row = { host, version, package: `${item.name}@${built.version}` };
 				summary.runs.push(row);
 				const evidence = join(outputDir, `${host}-${version}`);
@@ -63,7 +66,7 @@ export async function acceptAdapters({ packageRoot, hostsRoot, outputDir }) {
 				const runDir = realpathSync(mkdtempSync(join(tmpdir(), "slice-adapter-run-")));
 				try {
 					assert(!runDir.startsWith(`${realpathSync(root)}${sep}`), "The session must run outside this repository");
-					assert.equal(installedVersion(hostRoot, OFFICIAL[host]), version);
+					assert.equal(installedVersion(hostRoot, official), version);
 					if (host === "dsh") {
 						// Use this loop's already installed and verified host; do not maintain another installer.
 						const require = createRequire(join(hostRoot, "package.json"));
@@ -76,34 +79,50 @@ export async function acceptAdapters({ packageRoot, hostsRoot, outputDir }) {
 							assert.equal(probes.state.getUnhandledErrors().length, 0);
 						} finally { await probes.close(); }
 					}
-					const options = parseOptions(["--host", host, "--route", "200k", "--provider", "loopback", "--install", "registry", "--host-root", hostRoot, "--package-dir", join(packageRoot, item.directory), "--output-dir", runDir]);
-					const report = await run(options, { dshWriting: host === "dsh" && version === versions.at(-1) }).finally(() => {
-						mkdirSync(evidence, { recursive: true });
-						for (const file of ["report.json", "turns.jsonl", "loopback.jsonl", "host.log"]) {
-							if (existsSync(join(runDir, file))) cpSync(join(runDir, file), join(evidence, file));
+					if (v2) {
+						Object.assign(row, await acceptOpenCodeV2({ hostRoot, packageRoot, item, version, work: runDir }));
+					} else {
+						const options = parseOptions(["--host", host, "--route", "200k", "--provider", "loopback", "--install", "registry", "--host-root", hostRoot, "--package-dir", join(packageRoot, item.directory), "--output-dir", runDir]);
+						const report = await run(options);
+						Object.assign(row, {
+							archiveSha256: report.install.sha256,
+							fetched: report.install.fetched,
+							compactions: report.compactions.filter((entry) => entry.ok).length,
+							historyResults: report.historyResults,
+							stop: report.stop,
+						});
+						if (host === "dsh" && version !== "0.2.1-rc.3") {
+							const writing = await run({ ...options, outputDir: join(runDir, "writing") }, { dshWriting: true });
+							assert.equal(writing.stop, null, writing.stop);
+							assert(writing.install.fetched && writing.writing?.twoChainedCheckpoints, "Manual writing acceptance did not complete");
+							assert.equal(writing.install.sha256, item.sha256);
+							Object.assign(row, { writing: writing.writing, compactorConflict: writing.compactorConflict });
 						}
-					});
-					Object.assign(row, {
-						archiveSha256: report.install.sha256,
-						fetched: report.install.fetched,
-						compactions: report.compactions.filter((entry) => entry.ok).length,
-						historyResults: report.historyResults,
-						stop: report.stop,
-						...(report.writing ? { writing: report.writing, compactorConflict: report.compactorConflict } : {}),
-					});
-					assert.equal(report.install.sha256, item.sha256, "The host installed other bytes than the built archive");
-					assert.equal(report.stop, null, `The session stopped: ${report.stop}`);
+					}
+					assert.equal(row.archiveSha256, item.sha256, "The host installed other bytes than the built archive");
+					assert(row.fetched && row.historyResults?.some((count) => count > 0), "The installed archive must return original history");
+					assert.equal(row.stop, null, `The session stopped: ${row.stop}`);
 					assert(row.compactions >= 1, "The host never compacted natively");
 					row.passed = true;
 				} catch (error) {
 					row.passed = false;
 					row.error = error.message;
-					// What the host asked the registry for, and the end of its own log, so a CI failure can be read.
-					const reportFile = join(evidence, "report.json");
-					if (existsSync(reportFile)) row.requests = JSON.parse(readFileSync(reportFile, "utf8")).install?.requests;
-					const log = join(evidence, "host.log");
-					if (existsSync(log)) row.hostLog = readFileSync(log, "utf8").split("\n").slice(-40).join("\n");
 				} finally {
+					for (const subdir of ["", "writing"]) {
+						const from = join(runDir, subdir);
+						const to = join(evidence, subdir);
+						if (!existsSync(from)) continue;
+						mkdirSync(to, { recursive: true });
+						for (const file of ["report.json", "turns.jsonl", "loopback.jsonl", "host.log"]) {
+							if (existsSync(join(from, file))) cpSync(join(from, file), join(to, file));
+						}
+					}
+					if (!row.passed) {
+						const reportFile = join(evidence, "report.json");
+						if (existsSync(reportFile)) row.requests = JSON.parse(readFileSync(reportFile, "utf8")).install?.requests;
+						const log = join(evidence, "host.log");
+						if (existsSync(log)) row.hostLog = readFileSync(log, "utf8").split("\n").slice(-40).join("\n");
+					}
 					rmSync(runDir, { recursive: true, force: true });
 				}
 				process.stdout.write(`${row.passed ? "PASS" : "FAIL"} ${row.package} on ${host} ${version}${row.error ? `: ${row.error}` : ""}\n`);

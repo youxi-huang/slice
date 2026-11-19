@@ -37,7 +37,7 @@ from the second. A push to main always runs it: publication accepts a tagged
 commit only after its `verify` check passed, and a skipped job does not count.
 The publication workflow also re-verifies every release on its tag.
 
-Node 22 is the only Node a release is verified on.
+Pi release verification runs on Node 22. The adapter job runs on Node 24 because DSH 0.2.2 requires at least 24.9. Publication restores Node 22 after adapter acceptance.
 [`context-memory-newer-node.yml`](../../.github/workflows/context-memory-newer-node.yml)
 runs `verify` on Node 24 and 26 for pull requests and pushes to main, with the
 same SHA-pinned actions, full clone and offline variables, and skips a change of
@@ -67,8 +67,7 @@ Both preview runners load a copy of the package from a temporary directory
 outside any Node project, so its Pi imports reach the official host under test
 rather than this repository's workspace build; do not bypass that check.
 Every official Pi version uses `context-memory-preview-stock-install.mjs`, which
-pins seven runtime components for 1.4.0, 1.3.0 and 1.2.0 and eight for 1.1.0 and 1.0.4,
-including `chord`, and checks registry provenance and SDK startup with networking
+pins eight runtime components for 1.5.2 (including `pi-schema`), seven for 1.4.0, 1.3.0 and 1.2.0, and eight for 1.1.0 and 1.0.4 (including `chord`). It checks registry provenance and SDK startup with networking
 denied. The host list comes from the candidate's `preview-build.json`
 (`context-memory-preview-release-checks.mjs --plan`), the same source CI and
 publication read; no script branches on a release or host version. npm
