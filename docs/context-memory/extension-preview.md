@@ -1,9 +1,11 @@
 # SLICE for Pi: independent extension preview v0.8.0
 
-This extension runs on unmodified official Pi **1.4.0, 1.3.0, 1.2.0 and 1.1.0** as an ordinary Pi package. v0.8.0 retains the checkpoint schema and source-hash format used by v0.4.1, so existing preview checkpoints reopen unchanged, a v0.5.0 checkpoint reopens under v0.4.3, and checkpoints v0.8.0 writes, segments included, reopen under v0.7.5.
+The published v0.8.0 extension runs on unmodified official Pi **1.4.0, 1.3.0, 1.2.0 and 1.1.0** as an ordinary Pi package. v0.8.0 retains the checkpoint schema and source-hash format used by v0.4.1, so existing preview checkpoints reopen unchanged, a v0.5.0 checkpoint reopens under v0.4.3, and checkpoints v0.8.0 writes, segments included, reopen under v0.7.5.
 It is published on npm as `slice-pi` and on Git through the `extension-preview`
 branch and immutable `extension-v*` package tags, separately from the v0.3.0
 resident source build.
+
+The source build on `main` also supports stock Pi **1.5.2**. Its checkpoints interoperate with all four earlier hosts. The npm package and released Git tags gain that support with the next release.
 
 **v0.8.0 supports manual `/compact` and completed-turn threshold compaction,
 and with the session writer compacts earlier, at a settled turn, when one more
@@ -223,14 +225,14 @@ The preview distinguishes three kinds of session:
 - **Protected:** the session has a checkpoint written by this preview, or a
   pending or failed attempt recorded by it. Every check below is strict, and a
   failure is recorded durably.
-- **Eligible:** a persistent, text-only session on Pi 1.4.0, 1.3.0, 1.2.0 or 1.1.0 with no
+- **Eligible:** a persistent, text-only session on a supported Pi version (1.5.2 on main, or 1.4.0, 1.3.0, 1.2.0 or 1.1.0) with no
   checkpoint from another compactor. Manual `/compact`, Pi's threshold
   compaction after a completed turn, and earlier settled-turn compaction with
   the session writer all write checked checkpoints. Overflow recovery is
   cancelled until `/compact`. The first attempt, or a cancelled overflow
   recovery, makes it protected.
 - **Not protected:** a session the preview has never protected and cannot
-  check: Pi outside 1.4.0, 1.3.0, 1.2.0 and 1.1.0, an in-memory session, a native or other
+  check: a Pi version outside the installed extension’s host list, an in-memory session, a native or other
   compactor's checkpoint, an image or other non-text content, or an
   unsupported context edit. The preview stands aside. It writes no failure
   record, does not stop requests, leaves manual and automatic compaction and
@@ -774,12 +776,10 @@ that official Pi first:
 
 ```sh
 node scripts/context-memory-preview-stock-install.mjs \
-  --stock-root ./.artifacts/context-memory-preview-stock --version 1.4.0
+  --stock-root ./.artifacts/context-memory-preview-stock --version 1.5.2
 ```
 
-The installer pins all seven official runtime packages for Pi 1.4.0, 1.3.0 and 1.2.0,
-or all eight for 1.1.0 and 1.0.4, which still require `chord`, to the same
-release. A newer host that still depended on `chord` would fail the installer's
+The installer pins the entire official runtime to one release. Pi 1.5.2 has eight packages including `pi-schema`, Pi 1.4.0, 1.3.0 and 1.2.0 have seven, and 1.1.0 and 1.0.4 have eight including `chord`. A newer host that still depended on `chord` would fail the installer's
 dependency review rather than receive it silently. npm verifies download
 integrity; the installer checks registry provenance, exact versions and isolated
 resolution, then starts the SDK with networking blocked. Unused manifest and
@@ -793,19 +793,20 @@ Install each older supported host for the same-package and cross-version
 checks:
 
 ```sh
-for host in 1.3.0 1.2.0 1.1.0; do
+for host in 1.4.0 1.3.0 1.2.0 1.1.0; do
   node scripts/context-memory-preview-stock-install.mjs \
     --stock-root ./.artifacts/context-memory-preview-stock-$host --version $host
 done
 ```
 
 Then run acceptance on every host. The first command also writes a checkpoint,
-compacts it on each older host in turn and reopens it on 1.4.0 after each:
+compacts it on each older host in turn and reopens it on 1.5.2 after each:
 
 ```sh
 node scripts/context-memory-preview-acceptance.mjs \
   --package-dir ./.artifacts/context-memory-preview-package \
   --stock-root ./.artifacts/context-memory-preview-stock \
+  --compatible-stock-root ./.artifacts/context-memory-preview-stock-1.4.0 \
   --compatible-stock-root ./.artifacts/context-memory-preview-stock-1.3.0 \
   --compatible-stock-root ./.artifacts/context-memory-preview-stock-1.2.0 \
   --compatible-stock-root ./.artifacts/context-memory-preview-stock-1.1.0 \
@@ -813,7 +814,7 @@ node scripts/context-memory-preview-acceptance.mjs \
 ```
 
 ```sh
-for host in 1.3.0 1.2.0 1.1.0; do
+for host in 1.4.0 1.3.0 1.2.0 1.1.0; do
   node scripts/context-memory-preview-acceptance.mjs \
     --package-dir ./.artifacts/context-memory-preview-package \
     --stock-root ./.artifacts/context-memory-preview-stock-$host \

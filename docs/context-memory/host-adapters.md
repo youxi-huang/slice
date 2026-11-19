@@ -9,8 +9,7 @@ failed or unconfirmed attempt.
 
 The scope and writing prerequisites are in
 [the adapter design](dsh-opencode-adapter-design.md). The default installation is
-retrieval-only; DSH writing is enabled as described under [DSH writing](#dsh-writing). OpenCode
-V2, released as `@opencode/cli` 2.x, is not included.
+retrieval-only; DSH writing is enabled as described under [DSH writing](#dsh-writing). The source build adds the OpenCode 2.3.2 managed service and DSH 0.2.2-rc.1 and rc.5. The npm 0.8.0 release predates those adaptations.
 
 Native compaction settings for a given route, such as 200k with a 32k output
 cap, and the three-cycle pressure fixtures for both hosts are in
@@ -44,12 +43,12 @@ shows.
 
 | Package | Hosts | Load |
 | --- | --- | --- |
-| `slice-dsh` | DSH from `0.2.1-rc.3` through later 0.2.x releases, Cordis `~4.0.5`; installed on rc.3 and rc.5 | From npm, `dsh plugin --profile <profile> add slice-dsh@<version>`; from a build, `add file:<dir>/dsh`. Either way DSH runs pnpm from `PATH`, and the package's own bundle patch inserts `{ id: slice-history, name: slice-dsh }`, so the profile needs no hand edit. A profile without hot reload, such as `headless`, loads it at its next start. Profiles built on `dsh-base` provide the sessions, persistence and tools it injects. It exports `name`, `inject`, `apply`. |
-| `slice-opencode` | OpenCode 1.x plugin contract and SDK `1.19.4`; `engines.opencode` admits `>=1.19.4 <2.0.0`; installed on 1.19.4 and 1.19.5 | From npm, add `slice-opencode@<version>` to `plugin` in `opencode.json`, and OpenCode installs it with its two dependencies at start. From a build, `npm install --prefix <dir>/opencode --omit=dev`, then add the absolute `file://` URL of `<dir>/opencode/dist/index.js`. It exports only `SliceHistory`. |
+| `slice-dsh` | DSH `0.2.1-rc.3` and `rc.5` with Cordis 4.0, and `0.2.2-rc.1` and `rc.5` with Cordis 4.1 | From npm, `dsh plugin --profile <profile> add slice-dsh@<version>`; from a build, `add file:<dir>/dsh`. Either way DSH runs pnpm from `PATH`, and the package's own bundle patch inserts `{ id: slice-history, name: slice-dsh }`, so the profile needs no hand edit. A profile without hot reload, such as `headless`, loads it at its next start. Profiles built on `dsh-base` provide the sessions, persistence and tools it injects. It exports `name`, `inject`, `apply`. |
+| `slice-opencode` | OpenCode 1.19.4, 1.19.5 and 1.19.6 with the 1.x SDK | From npm, add `slice-opencode@<version>` to `plugin` in `opencode.json`, and OpenCode installs it with its runtime dependencies at start. From a build, `npm install --prefix <dir>/opencode --omit=dev`, then add the absolute `file://` URL of `<dir>/opencode/dist/index.js`. It exports only `SliceHistory`. |
+| `slice-opencode` | OpenCode 2.3.2 (`@opencode/cli`), managed service | For a source build, run `npm install --prefix <dir>/opencode --omit=dev` and add that package directory as an absolute path to `plugins` in `opencode.json`. After publication the same field accepts the npm package name. |
 
 DSH admits a plugin by its peers on DSH packages, checked before a registry
-install downloads anything. The published ranges admit every release from rc.3
-because nothing this adapter uses changed between rc.3 and rc.5. pnpm 11 waits
+install downloads anything. The peer ranges explicitly admit prereleases from both tested version lines. pnpm 11 waits
 a day before it installs a newly published version under a bare name; a named
 version installs at once. A profile that carries a hand-added `slice-history`
 row from a build before 0.7.5 must drop it: the tool refuses to register twice.
@@ -69,10 +68,11 @@ assistant message is excluded because its parts can still change. The pinned
 returns complete stored messages when `limit` is omitted; output
 pagination belongs to the existing core, not a second host-side index.
 
-The OpenCode entry returns the public hook/tool object directly; the official
+The OpenCode 1.x entry returns the public hook/tool object directly; the official
 `tool()` helper is an identity function. It uses Zod 4.6.7 without importing
-the full plugin package or its unused V2 dependency graph. The SDK is used for
-development typing and acceptance only; the running host supplies its client.
+the 2.x entry. The running 1.x host supplies its client.
+
+On OpenCode 2.3.2 the plugin checks the tool permission, discovers the local managed service using the official client and verifies its process ID. It checks the current session, project and directory and pages `message.list` in ascending order up to the calling assistant. It cites user and assistant text by message ID and completed tool results by native tool call ID. Forked, child and reverted sessions are refused. The interactive CLI normally starts the service. For one-off runs, start it with `opencode service start`. A private `--standalone` server has no discoverable history endpoint for this plugin.
 DSH `0.2.1-rc.3` pins Zod 4.4.3, which GHSA-mrhx-c7xc-m3w5 affects, so the
 repository's root override lifts its development graph to 4.6.7. This does not
 modify an installed host or its dependencies.
@@ -134,12 +134,12 @@ node scripts/context-memory-adapters-build.mjs
 node --experimental-strip-types scripts/context-memory-adapters-acceptance.mjs --hosts-root <dir>
 ```
 
-It installs official OpenCode 1.19.4 and 1.19.5 and DSH 0.2.1-rc.3 and rc.5
+It installs official OpenCode 1.19.4, 1.19.5, 1.19.6 and 2.3.2, and DSH 0.2.1-rc.3, 0.2.1-rc.5, 0.2.2-rc.1 and 0.2.2-rc.5
 from npm into `<dir>`, with pnpm 11.28.5 for DSH, and serves each built archive
 by name from a loopback npm registry that sends every other package to npm. On
-each host `context-memory-host-run.mjs --install registry --provider loopback`
+DSH and OpenCode 1.x, `context-memory-host-run.mjs --install registry --provider loopback`
 installs the package as a user would, runs fixture P5 through two native
-compactions and asks `context_history` for an earlier detail. Each session runs in a temporary directory outside any Node project, as a
+compactions and asks `context_history` for an earlier detail. On 2.3.2 a separate service runs two manual native compactions and retrieves both earlier values with the registered tool. Each session runs in a temporary directory outside any Node project, as a
 user's does, so this repository's `.npmrc`, whose `min-release-age=2` holds back
 a version published that minute, cannot reach the host's installer. A run passes
 when the host fetched the exact archive, the session finished without a stop and

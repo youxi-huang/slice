@@ -86,14 +86,16 @@ test("publication workflow preserves version-aware installation and historical s
 	assert.match(sourceRelease.run, /GITHUB_STEP_SUMMARY/);
 	// Only an explicit source-release decision skips; a missing output must still run every gate and the publisher.
 	// The npm steps also skip only on an explicit npm=false, which candidates before 0.7.5 report.
-	const npmSteps = ["Build the OpenCode and DSH packages", "Install each package by name on official OpenCode and DSH", "Install the npm client publication requires"];
+	const npmSteps = ["Build the OpenCode and DSH packages", "Use the Node runtime required by DSH", "Install each package by name on official OpenCode and DSH", "Restore the release Node runtime", "Install the npm client publication requires"];
 	for (const step of steps.slice(steps.indexOf(plan) + 1)) {
 		if (step === sourceRelease) continue;
 		assert.equal(step.if, npmSteps.includes(step.name) ? "steps.plan.outputs.publish != 'false' && steps.plan.outputs.npm != 'false'" : "steps.plan.outputs.publish != 'false'", step.name);
 	}
 	assert.deepEqual(npmSteps.map((name) => steps.findIndex((step) => step.name === name)).every((index, i, all) => index > steps.indexOf(plan) && (i === 0 || index > all[i - 1])), true, "npm steps must run in order after the plan");
-	assert.match(steps.find((step) => step.name === npmSteps[1]).run, /context-memory-adapters-acceptance\.mjs --hosts-root/);
-	assert.match(steps.find((step) => step.name === npmSteps[2]).run, /test -n "\$PLAN_NPM_CLI"/);
+	assert.equal(steps.find((step) => step.name === "Use the Node runtime required by DSH").with["node-version"], "24");
+	assert.equal(steps.find((step) => step.name === "Restore the release Node runtime").with["node-version"], "22");
+	assert.match(steps.find((step) => step.name === "Install each package by name on official OpenCode and DSH").run, /context-memory-adapters-acceptance\.mjs --hosts-root/);
+	assert.match(steps.find((step) => step.name === "Install the npm client publication requires").run, /test -n "\$PLAN_NPM_CLI"/);
 	assert.equal(document.toJS().permissions["id-token"], "write");
 	const install = steps.find((step) => step.name === "Install every official Pi host the candidate declares");
 	assert.match(install.run, /context-preview-publisher\/scripts\/context-memory-preview-stock-install\.mjs/);
@@ -103,7 +105,7 @@ test("publication workflow preserves version-aware installation and historical s
 	const publish = steps.find((step) => step.name === "Publish checked package and source archives");
 	assert.match(publish.run, /context-preview-publisher\/scripts\/context-memory-preview-release\.mjs" --publish/);
 	assert.equal(publish.env.NODE_AUTH_TOKEN, "${{ secrets.NPM_TOKEN }}");
-	assert(steps.indexOf(publish) > steps.findIndex((step) => step.name === npmSteps[2]), "npm acceptance precedes publication");
+	assert(steps.indexOf(publish) > steps.findIndex((step) => step.name === "Install the npm client publication requires"), "npm acceptance precedes publication");
 	const acceptance = steps.find((step) => step.name === "Verify the release package on stock Pi");
 	assert.match(acceptance.run, /--compatible-stock-root/);
 	assert.match(acceptance.run, /context-memory-preview-acceptance-\$host/);
@@ -283,9 +285,10 @@ test("newer Node majors run verify outside the workflow that gates publication",
 		assert.deepEqual(document.errors, []);
 		return document.toJS();
 	};
-	const steps = Object.values(read("context-memory.yml").jobs).flatMap((job) => job.steps);
-	const nodes = steps.filter((step) => step.uses?.startsWith("actions/setup-node@")).map((step) => step.with["node-version"]);
-	assert(nodes.length > 0 && nodes.every((node) => node === "22"), "Every job of the publication-gating workflow runs Node 22");
+	const workflow = read("context-memory.yml");
+	const nodeVersions = (job) => job.steps.filter((step) => step.uses?.startsWith("actions/setup-node@")).map((step) => step.with["node-version"]);
+	assert.deepEqual(nodeVersions(workflow.jobs.verify), ["22"], "Pi's release gate runs Node 22");
+	assert.deepEqual(nodeVersions(workflow.jobs.adapters), ["24"], "DSH requires Node 24.9 or newer");
 	const jobs = Object.values(read("context-memory-newer-node.yml").jobs);
 	assert.equal(jobs.length, 1);
 	const [job] = jobs;

@@ -1,5 +1,5 @@
 import type { createOpencodeClient } from "@opencode-ai/sdk";
-import { z } from "zod";
+import { historyArguments } from "./arguments.ts";
 import type { HistoryQuery } from "../../compaction-core/src/history.ts";
 import { readOpenCodeHistory } from "./history.ts";
 
@@ -23,12 +23,7 @@ export const SliceHistory = async ({ client }: { client: ReturnType<typeof creat
 		context_history: {
 			description:
 				"Search or read original text from this session's stored history. Summaries drop exact values, quotes and timestamps: search here before answering that an earlier detail is unknown. Results cite native part IDs. Repeat the query with its cursor for more. This tool does not compact history.",
-			args: {
-				operation: z.enum(["search", "read"]),
-				query: z.string().max(1000).optional(),
-				entryId: z.string().max(64).optional(),
-				cursor: z.string().max(2000).optional(),
-			},
+			args: historyArguments,
 			async execute(args: HistoryQuery, context: HistoryToolContext) {
 				await context.ask({
 					permission: "context_history",

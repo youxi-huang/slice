@@ -183,7 +183,7 @@ function itemText(item) {
 const isUser = (item) => item.role === "user" && !itemText(item).startsWith("Current runtime context.");
 const loopbackTokens = (text) => Math.ceil(Buffer.byteLength(text) / 3);
 
-export function startLoopback({ log } = {}) {
+export function startLoopback({ log, summaryHeading = "## Summary" } = {}) {
 	const previous = new Map();
 	const historyResults = [];
 	let calls = 0;
@@ -226,7 +226,7 @@ export function startLoopback({ log } = {}) {
 			failWriter = false;
 		} else if (/summar/i.test(last) || /summar/i.test(body.instructions ?? "")) {
 			kind = "compaction";
-			reply = `## Summary\n${"The ledger migration moves eu-west to eu-central. ".repeat(120)}`;
+			reply = `${summaryHeading}\n${"The ledger migration moves eu-west to eu-central. ".repeat(120)}`;
 		} else if (asked >= 0) {
 			// The questionnaire is the run's last turn: one history search, then an answer.
 			const output = input.slice(asked).findLast((item) => item.type === "function_call_output");

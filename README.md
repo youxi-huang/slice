@@ -17,6 +17,8 @@ SLICE currently runs as an independent extension for [Pi](https://github.com/ear
 
 **Current release:** [v0.8.0](https://github.com/youxi-huang/slice/releases/tag/v0.8.0), for unmodified official Pi **1.4.0, 1.3.0, 1.2.0 and 1.1.0**, with history packages for OpenCode and DSH. All three install from npm, with no clone or build. The Pi extension no longer fails when a tool batch leaves its writer no room, and adds segments as an experiment, off by default; the [changelog](CHANGELOG.md) records the rest. Before v0.7.1 the project was called Pi Context Compaction.
 
+**On main, awaiting release.** The source builds also support Pi 1.5.2, OpenCode 1.19.6 and 2.3.2 (managed service), and DSH 0.2.2-rc.1 and rc.5. The stock-Pi extension and host adapter build instructions are in the [Pi guide](docs/context-memory/extension-preview.md) and [host adapter guide](docs/context-memory/host-adapters.md).
+
 [Get started](#get-started) · [How it works](#how-it-works) · [Current scope](#current-scope) · [Evidence](#evidence-and-limits)
 
 ## Get started

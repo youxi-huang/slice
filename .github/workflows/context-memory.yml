@@ -49,12 +49,12 @@ jobs:
     needs: scope
     if: needs.scope.outputs.docs_only != 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
         with:
-          node-version: '22'
+          node-version: '24' # DSH 0.2.2 requires Node >=24.9.
           cache: npm
       - run: npm ci --ignore-scripts
       - run: node scripts/context-memory-adapters-check.mjs

@@ -6,6 +6,15 @@ Changes under **Unreleased** are not included in an existing release tag or its 
 
 ## [Unreleased]
 
+### Added
+
+- The independent Pi extension supports stock Pi 1.5.2. Existing checkpoints reopen and compact in both directions with Pi 1.4.0, 1.3.0, 1.2.0 and 1.1.0.
+- `slice-opencode` provides `context_history` on OpenCode 2.3.2 with its managed local service. It pages the public message API up to the calling message and cites originals from before native compaction. OpenCode 1.19.6 uses the existing 1.x entry.
+
+### Changed
+
+- `slice-dsh` accepts the DSH 0.2.2 prerelease line and Cordis 4.1. The official-host checks cover both 0.2.2-rc.1 and rc.5 for default history and opt-in manual writing.
+
 ### Fixed
 
 - Compaction no longer fails on every retry when the writer cites, as a fact's only source, an ID that names no entry. The fact now goes to the writer's one sources repair, as a fact written without sources does: the invented ID is not sent back, and the extension supplies no source of its own. On GPT-6 Luna a writer cited `1598f6dcb`, the head of one entry's ID and the tail of another's, and seven of eight attempts at one compaction were refused; with the fix, both refused answers, replayed, drew one repair of about 7,600 tokens that named the right entry. The refusal stands as before with `noteRepair` off, once the one repair is spent, for an unknown `supersedes` ID or when more than five facts lose every source. The Pi extension and DSH's opt-in writing preview both use this writer.

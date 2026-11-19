@@ -12,7 +12,7 @@ dsh plugin --profile <profile> add slice-dsh
 
 The profile must be built on DSH's base bundle, which provides the sessions, persistence and tools the plugin needs. The package declares a DSH bundle, so the same command enables it; a profile without hot reload, such as `headless`, picks it up at its next start. For about a day after a release pnpm installs the previous version of a bare name; `slice-dsh@<version>` installs the one you name.
 
-It supports DSH 0.2.1-rc.3 and later 0.2.x releases. DSH refuses it on other versions before anything is downloaded.
+The source build is tested on DSH 0.2.1-rc.3 and rc.5 with Cordis 4.0, and 0.2.2-rc.1 and rc.5 with Cordis 4.1. The published 0.8.0 manifest predates the Cordis 4.1 peer update.
 
 If you added a `slice-history` row to the profile's `cordis.patch.yml` for an earlier build, remove that row: the tool refuses to register twice.
 
@@ -20,7 +20,7 @@ To remove the plugin, run `dsh plugin --profile <profile> remove slice-dsh`.
 
 ## Manual writing preview
 
-On DSH 0.2.1-rc.5, add this to the profile's `cordis.patch.yml` after installing the package:
+On DSH 0.2.1-rc.5, 0.2.2-rc.1 or 0.2.2-rc.5, add this to the profile's `cordis.patch.yml` after installing the package:
 
 ```yaml
 - id: compaction-basic

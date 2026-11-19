@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
-import { CHORD_PI_VERSIONS, OFFICIAL_PI_COHORT, OFFICIAL_PI_VERSIONS, inspectOfficialPi, installOfficialPi, officialPiCohort, officialPiReady, parseStockInstallArguments } from "./context-memory-preview-stock-install.mjs";
+import { CHORD_PI_VERSIONS, OFFICIAL_PI_VERSIONS, inspectOfficialPi, installOfficialPi, officialPiCohort, officialPiReady, parseStockInstallArguments } from "./context-memory-preview-stock-install.mjs";
 
 const integrity = `sha512-${createHash("sha512").update("synthetic package bytes").digest("base64")}`;
 const script = fileURLToPath(new URL("./context-memory-preview-stock-install.mjs", import.meta.url));
@@ -60,7 +60,8 @@ test("all reviewed cohorts report exact versions and npm provenance without redu
 		fixture(directory, version);
 		const report = inspectOfficialPi(directory, version);
 		assert.equal(report.version, version);
-		assert.equal(report.packages.length, CHORD_PI_VERSIONS.includes(version) ? 8 : 7);
+		assert.equal(report.packages.length, CHORD_PI_VERSIONS.includes(version) || version === "1.5.2" ? 8 : 7);
+		assert.equal(report.packages.some((pkg) => pkg.name === "@earendil-works/pi-schema"), version === "1.5.2");
 		assert.ok(report.packages.every((record) => record.version === version && record.integrity === integrity));
 		assert.deepEqual(Object.keys(report).sort(), ["host", "packages", "version"]);
 		assert.ok(report.packages.every((record) => !Object.hasOwn(record, "manifestSha256")));
@@ -134,7 +135,7 @@ test("installation explicitly pins the older eight-package cohort without overri
 		return { status: 0, stdout: "official-sdk-ready\n", stderr: "" };
 	});
 	assert.equal(report.installed, true);
-	assert.deepEqual(calls[0].args.slice(-8), OFFICIAL_PI_COHORT.map((name) => `${name}@1.0.4`));
+	assert.deepEqual(calls[0].args.slice(-8), officialPiCohort("1.0.4").map((name) => `${name}@1.0.4`));
 	assert.ok(calls[0].args.includes("--ignore-scripts") && calls[0].args.includes("--save-exact") && calls[0].args.includes("--fetch-retries=0"));
 	assert.equal(calls[0].options.timeout, 180_000);
 	assert.equal(calls[1].options.env.PI_OFFLINE, "1");
