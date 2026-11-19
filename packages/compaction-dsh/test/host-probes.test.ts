@@ -128,7 +128,7 @@ describe("DSH stage 1 native lifecycle admission (D7)", () => {
 			const read = await handle.read();
 			expect(read.events.at(-1)?.type).toBe("compaction/start");
 			// Resume into the live store before appending the blocked turn, as the agent loop does.
-			const resumed = ctx.sessions.create(id, {
+			const resumed = ctx.sessions.prepare(id, {
 				seed: [...read.events],
 				meta: structuredClone(handle.header),
 				inheritedEventCount: handle.inheritedEventCount,
@@ -138,9 +138,15 @@ describe("DSH stage 1 native lifecycle admission (D7)", () => {
 			expect(resumed.snapshotEvents().at(-1)?.type).toBe("session/end-seed");
 			// The agent loop persists the new seed marker. JSONL receives subsequent live events from the store.
 			await handle.append(resumed.snapshotEvents().slice(read.events.length));
-			resumed.append("turn/start", { turn: 1 });
-			resumed.append("turn/end", { turn: 1, reason: { kind: "blocked" } });
-			expect(await ctx.sessions.flush(resumed)).toBe(true);
+			const detach = ctx.sessions.enter(resumed);
+			try {
+				ctx.sessions.announce(resumed);
+				resumed.append("turn/start", { turn: 1 });
+				resumed.append("turn/end", { turn: 1, reason: { kind: "blocked" } });
+				expect(await ctx.sessions.flush(resumed)).toBe(true);
+			} finally {
+				detach();
+			}
 			await handle.close();
 			handle = undefined;
 			await ctx.fiber.dispose();

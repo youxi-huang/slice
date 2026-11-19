@@ -59,7 +59,7 @@ session with no persistence listener is refused. The tool opens a **read**
 handle and always closes it. It does not acquire the host's write handle.
 DSH rejects an existing `context_history` registration before installing.
 
-OpenCode uses the plugin-supplied SDK, current directory, session ID and
+OpenCode 1.x uses the plugin-supplied SDK, current directory, session ID and
 calling message ID. It asks the host's `context_history` permission before
 reading. Configure that permission through OpenCode's ordinary allow/ask/deny
 policy. The tool has no session selector or parent grant. The current in-flight
