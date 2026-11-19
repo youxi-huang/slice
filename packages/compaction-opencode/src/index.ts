@@ -1,6 +1,6 @@
 import type { createOpencodeClient } from "@opencode-ai/sdk";
-import { historyArguments } from "./arguments.ts";
 import type { HistoryQuery } from "../../compaction-core/src/history.ts";
+import { historyArguments } from "./arguments.ts";
 import { readOpenCodeHistory } from "./history.ts";
 
 /** Fields consumed from the public 1.x tool context, without a V2 dependency. */
