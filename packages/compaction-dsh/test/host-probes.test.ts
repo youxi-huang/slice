@@ -127,8 +127,8 @@ describe("DSH stage 1 native lifecycle admission (D7)", () => {
 			handle = await ctx.sessionPersistence.open(id, "write");
 			const read = await handle.read();
 			expect(read.events.at(-1)?.type).toBe("compaction/start");
-			// Mirrors agent-loop resumeWith's prepare call after its turn repair (empty for this manual attempt).
-			const resumed = ctx.sessions.prepare(id, {
+			// Resume into the live store before appending the blocked turn, as the agent loop does.
+			const resumed = ctx.sessions.create(id, {
 				seed: [...read.events],
 				meta: structuredClone(handle.header),
 				inheritedEventCount: handle.inheritedEventCount,
@@ -136,9 +136,11 @@ describe("DSH stage 1 native lifecycle admission (D7)", () => {
 			});
 			expect(resumed.header.isSeeded).toBe(false);
 			expect(resumed.snapshotEvents().at(-1)?.type).toBe("session/end-seed");
+			// The agent loop persists the new seed marker. JSONL receives subsequent live events from the store.
+			await handle.append(resumed.snapshotEvents().slice(read.events.length));
 			resumed.append("turn/start", { turn: 1 });
 			resumed.append("turn/end", { turn: 1, reason: { kind: "blocked" } });
-			await handle.append(resumed.snapshotEvents().slice(read.events.length));
+			expect(await ctx.sessions.flush(resumed)).toBe(true);
 			await handle.close();
 			handle = undefined;
 			await ctx.fiber.dispose();

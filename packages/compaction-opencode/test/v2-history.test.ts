@@ -1,6 +1,7 @@
 import { OpenCode, type SessionMessageAssistant, type SessionMessageUser } from "@opencode/client";
 import { describe, expect, it } from "vitest";
 import { queryHistory } from "../../compaction-core/src/history.ts";
+import plugin from "../src/v2.ts";
 import { openCodeV2Snapshot, readOpenCodeV2History } from "../src/v2-history.ts";
 
 const scope = { sessionID: "ses_current", messageID: "msg_call", directory: "/synthetic", projectID: "project" };
@@ -26,6 +27,43 @@ function sdk(response: (url: URL) => unknown) {
 }
 
 describe("OpenCode 2 persisted history", () => {
+	it("asks permission for the calling tool before opening the history service", async () => {
+		const denied = new Error("denied by host policy");
+		await plugin.setup({
+			app: { version: "2.3.2" },
+			location: {
+				directory: scope.directory,
+				project: { id: scope.projectID, directory: scope.directory, canonical: scope.directory },
+			},
+			permission: {
+				async assert(input) {
+					expect(input).toMatchObject({
+						sessionID: scope.sessionID,
+						action: "context_history",
+						resources: ["current-session"],
+						source: { type: "tool", id: "call", messageID: scope.messageID },
+					});
+					throw denied;
+				},
+			},
+			tool: {
+				async transform(register) {
+					let result: Promise<unknown> | undefined;
+					register({
+						add(tool) {
+							expect(tool.name).toBe("context_history");
+							result = tool.execute(
+								{ operation: "search", query: "original" },
+								{ ...scope, id: "call", agent: "build", signal },
+							);
+						},
+					});
+					await expect(result).rejects.toBe(denied);
+				},
+			},
+		});
+	});
+
 	it("pages the current session across compaction and stops before the calling assistant", async () => {
 		const listed: URL[] = [];
 		const client = sdk((url) => {
